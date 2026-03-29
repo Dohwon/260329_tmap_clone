@@ -38,3 +38,6 @@ venv/
 Thumbs.db
 .vscode/
 # <<< codex-auto-ignore <<<
+
+
+project_memory
