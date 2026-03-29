@@ -1,0 +1,40 @@
+
+# >>> codex-auto-ignore >>>
+# secrets/env
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# private/local data
+*.db
+*.sqlite
+*.sqlite3
+*.local.json
+*.local.yaml
+*.local.yml
+*.local.toml
+
+# runtime/log/cache
+logs/
+*.log
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# node/web build
+node_modules/
+dist/
+build/
+.next/
+
+# python venv
+.venv/
+venv/
+
+# os/editor
+.DS_Store
+Thumbs.db
+.vscode/
+# <<< codex-auto-ignore <<<
