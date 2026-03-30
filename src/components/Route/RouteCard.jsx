@@ -1,0 +1,115 @@
+import React from 'react'
+import { CONGESTION_INFO } from '../../data/mockData'
+
+export default function RouteCard({ route, isSelected, onClick }) {
+  const congestion = CONGESTION_INFO[route.congestionScore]
+
+  const tagColors = {
+    blue:   'bg-tmap-blue text-white',
+    green:  'bg-tmap-green text-white',
+    orange: 'bg-tmap-orange text-white',
+  }
+
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full rounded-2xl p-4 text-left transition-all active:scale-[0.98] ${
+        isSelected ? 'route-card-active' : 'route-card-inactive'
+      }`}
+    >
+      {/* 헤더 행 */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <span className="text-base font-bold text-gray-900">{route.title}</span>
+          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${tagColors[route.tagColor]}`}>
+            {route.tag}
+          </span>
+        </div>
+        {isSelected && (
+          <div className="w-5 h-5 rounded-full bg-tmap-blue flex items-center justify-center">
+            <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+            </svg>
+          </div>
+        )}
+      </div>
+
+      {/* 한 줄 설명 */}
+      <div className="text-xs text-gray-500 mb-3">{route.explanation}</div>
+
+      {/* 주요 지표 행 */}
+      <div className="flex items-center gap-3 mb-3">
+        <div>
+          <span className="text-2xl font-black text-gray-900">{route.eta}</span>
+          <span className="text-sm text-gray-500 ml-1">분</span>
+        </div>
+        <div className="text-sm text-gray-400">·</div>
+        <div className="text-sm text-gray-600 font-medium">{route.distance}km</div>
+        <div className="text-sm text-gray-400">·</div>
+        <span
+          className="text-xs font-semibold px-2 py-0.5 rounded-full"
+          style={{ color: congestion.color, background: congestion.bg }}
+        >
+          {congestion.label}
+        </span>
+      </div>
+
+      {/* 도로 구성 바 */}
+      <div className="mb-3">
+        <div className="flex rounded-full overflow-hidden h-2">
+          <div
+            className="bg-tmap-blue transition-all"
+            style={{ width: `${route.highwayRatio}%` }}
+          />
+          <div
+            className="bg-tmap-green transition-all"
+            style={{ width: `${route.nationalRoadRatio}%` }}
+          />
+        </div>
+        <div className="flex gap-3 mt-1">
+          <div className="flex items-center gap-1">
+            <div className="w-2 h-2 rounded-full bg-tmap-blue"/>
+            <span className="text-xs text-gray-400">고속 {route.highwayRatio}%</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-2 h-2 rounded-full bg-tmap-green"/>
+            <span className="text-xs text-gray-400">국도 {route.nationalRoadRatio}%</span>
+          </div>
+        </div>
+      </div>
+
+      {/* 세부 지표 그리드 */}
+      <div className="grid grid-cols-4 gap-2">
+        <MetricBadge icon="🔀" value={route.mergeCount} label="합류" />
+        <MetricBadge icon="📷" value={route.fixedCameraCount} label="고정" color={route.fixedCameraCount > 3 ? 'red' : 'gray'} />
+        <MetricBadge icon="🚧" value={route.sectionCameraCount} label="구간" color={route.sectionCameraCount > 0 ? 'orange' : 'gray'} />
+        <MetricBadge icon="💰" value={`${(route.tollFee / 1000).toFixed(0)}천`} label="통행료" />
+      </div>
+
+      {/* 구간단속 있을 때 */}
+      {route.sectionEnforcementDistance > 0 && (
+        <div className="mt-2 flex items-center gap-1.5 bg-orange-50 rounded-lg px-3 py-1.5">
+          <span className="text-xs">🚧</span>
+          <span className="text-xs text-orange-600 font-medium">
+            구간단속 {route.sectionEnforcementDistance}km 포함
+          </span>
+        </div>
+      )}
+    </button>
+  )
+}
+
+function MetricBadge({ icon, value, label, color = 'gray' }) {
+  const colors = {
+    gray:   'text-gray-600',
+    red:    'text-tmap-red',
+    orange: 'text-tmap-orange',
+  }
+  return (
+    <div className="flex flex-col items-center bg-gray-50 rounded-xl py-2">
+      <div className="text-sm mb-0.5">{icon}</div>
+      <div className={`text-sm font-bold ${colors[color]}`}>{value}</div>
+      <div className="text-xs text-gray-400">{label}</div>
+    </div>
+  )
+}

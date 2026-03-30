@@ -1,0 +1,88 @@
+@import 'leaflet/dist/leaflet.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+}
+
+/* iOS safe area */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Bottom sheet */
+.bottom-sheet {
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.12);
+}
+
+/* Leaflet fix */
+.leaflet-container {
+  height: 100%;
+  width: 100%;
+  z-index: 0;
+}
+.leaflet-control-attribution {
+  font-size: 10px;
+}
+
+/* Smooth transitions */
+.slide-up {
+  animation: slideUp 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+}
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+/* Route card active */
+.route-card-active {
+  border: 1.5px solid #0064FF;
+  background: #F0F5FF;
+}
+.route-card-inactive {
+  border: 1.5px solid #E5E5EA;
+  background: #FAFAFA;
+}
+
+/* Preset button */
+.preset-btn-active {
+  background: #0064FF;
+  color: #fff;
+}
+.preset-btn-inactive {
+  background: #F2F2F7;
+  color: #3A3A3C;
+}
+
+/* Speed limit badge */
+.speed-badge {
+  border: 3px solid #FF3B30;
+  border-radius: 50%;
+  font-weight: 800;
+}
+
+/* Section enforcement bar */
+.section-bar {
+  background: linear-gradient(90deg, #FF6B00 0%, #FF3B30 100%);
+}
+
+/* Scrollbar hide */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
