@@ -30,7 +30,7 @@ app.use('/api/tmap', createProxyMiddleware({
 app.use(express.static(join(__dirname, 'dist')))
 
 // SPA 라우팅 — 모든 경로를 index.html로
-app.get('*', (_, res) => {
+app.get('/{*path}', (_, res) => {
   res.sendFile(join(__dirname, 'dist', 'index.html'))
 })
 
