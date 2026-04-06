@@ -5,82 +5,76 @@ struct SearchMainView: View {
     @EnvironmentObject var mapVM: MapViewModel
     @EnvironmentObject var appState: AppState
     @State private var query: String = ""
-    @State private var isSearching: Bool = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                // Search input
-                HStack(spacing: 10) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundColor(.secondary)
-                        TextField("목적지를 검색하세요", text: $query)
-                            .focused($searchFocused)
-                            .submitLabel(.search)
-                            .onSubmit { performSearch() }
-                        if !query.isEmpty {
-                            Button {
-                                query = ""
-                                mapVM.searchService.results = []
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .background(Color(.systemGray6))
-                    .cornerRadius(12)
-
-                    if searchFocused {
-                        Button("취소") {
+        VStack(spacing: 0) {
+            // Search input
+            HStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                    TextField("목적지를 검색하세요", text: $query)
+                        .focused($searchFocused)
+                        .submitLabel(.search)
+                        .onSubmit { performSearch() }
+                    if !query.isEmpty {
+                        Button {
                             query = ""
-                            searchFocused = false
                             mapVM.searchService.results = []
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
                         }
-                        .foregroundColor(TmapColor.primary)
-                        .font(.system(size: 15))
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 14)
                 .padding(.vertical, 12)
-                .background(Color(.systemBackground))
+                .background(Color(.systemGray6))
+                .cornerRadius(12)
 
-                Divider()
-
-                ScrollView {
-                    if mapVM.searchService.isLoading {
-                        ProgressView()
-                            .padding(.top, 40)
-                    } else if !mapVM.searchService.results.isEmpty {
-                        SearchResultsList(
-                            results: mapVM.searchService.results,
-                            onSelect: handleSelection
-                        )
-                    } else if query.isEmpty {
-                        SearchHomeContent(onSelect: handleSelection)
-                    } else {
-                        EmptySearchView(query: query)
+                if searchFocused {
+                    Button("취소") {
+                        query = ""
+                        searchFocused = false
+                        mapVM.searchService.results = []
                     }
+                    .foregroundColor(TmapColor.primary)
+                    .font(.system(size: 15))
                 }
             }
-            .navigationTitle("")
-            .navigationBarHidden(true)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color(.systemBackground))
+
+            Divider()
+
+            ScrollView {
+                if mapVM.searchService.isLoading {
+                    ProgressView()
+                        .padding(.top, 40)
+                } else if !mapVM.searchService.results.isEmpty {
+                    SearchResultsList(
+                        results: mapVM.searchService.results,
+                        onSelect: handleSelection
+                    )
+                } else if query.isEmpty {
+                    SearchHomeContent(onSelect: handleSelection)
+                } else {
+                    EmptySearchView(query: query)
+                }
+            }
         }
         .onChange(of: query) { _, newVal in
-            guard !newVal.isEmpty else { return }
-            Task {
-                try? await Task.sleep(nanoseconds: 300_000_000)
-                await mapVM.searchService.search(
-                    query: newVal,
-                    near: mapVM.locationService.currentLocation?.coordinate
-                )
+            guard !newVal.isEmpty else {
+                mapVM.searchService.results = []
+                return
             }
+            mapVM.searchService.searchWithDebounce(
+                query: newVal,
+                near: mapVM.locationService.currentLocation?.coordinate
+            )
         }
-        .onAppear { searchFocused = true }
     }
 
     private func performSearch() {
@@ -97,7 +91,8 @@ struct SearchMainView: View {
         appState.destination = result
         appState.selectedTab = .home
         Task {
-            await mapVM.startNavigation(to: result)
+            await mapVM.startNavigation(to: result, profile: appState.driverProfile)
+            await MainActor.run { appState.showRouteSheet = true }
         }
     }
 }
@@ -159,15 +154,6 @@ struct SearchHomeContent: View {
     @EnvironmentObject var mapVM: MapViewModel
     let onSelect: (SearchResult) -> Void
 
-    private let categories: [(String, String, String)] = [
-        ("주유소", "fuelpump", "gas"),
-        ("주차장", "p.square", "parking"),
-        ("편의점", "bag", "convenience"),
-        ("카페", "cup.and.saucer", "cafe"),
-        ("음식점", "fork.knife", "restaurant"),
-        ("병원", "cross.case", "hospital"),
-    ]
-
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             // Quick category shortcuts
@@ -176,8 +162,53 @@ struct SearchHomeContent: View {
                     .font(.system(size: 16, weight: .bold))
                     .padding(.horizontal, 16)
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 12) {
-                    ForEach(categories, id: \.0) { cat in
-                        QuickCategoryButton(name: cat.0, icon: cat.1)
+                    QuickCategoryButton(name: "주유소", icon: "fuelpump") {
+                        Task {
+                            await mapVM.searchService.searchNearby(
+                                category: .gasStation,
+                                near: mapVM.locationService.currentLocation?.coordinate
+                            )
+                        }
+                    }
+                    QuickCategoryButton(name: "주차장", icon: "p.square") {
+                        Task {
+                            await mapVM.searchService.searchNearby(
+                                category: .parking,
+                                near: mapVM.locationService.currentLocation?.coordinate
+                            )
+                        }
+                    }
+                    QuickCategoryButton(name: "편의점", icon: "bag") {
+                        Task {
+                            await mapVM.searchService.search(
+                                query: "편의점",
+                                near: mapVM.locationService.currentLocation?.coordinate
+                            )
+                        }
+                    }
+                    QuickCategoryButton(name: "카페", icon: "cup.and.saucer") {
+                        Task {
+                            await mapVM.searchService.search(
+                                query: "카페",
+                                near: mapVM.locationService.currentLocation?.coordinate
+                            )
+                        }
+                    }
+                    QuickCategoryButton(name: "음식점", icon: "fork.knife") {
+                        Task {
+                            await mapVM.searchService.search(
+                                query: "음식점",
+                                near: mapVM.locationService.currentLocation?.coordinate
+                            )
+                        }
+                    }
+                    QuickCategoryButton(name: "병원", icon: "cross.case") {
+                        Task {
+                            await mapVM.searchService.search(
+                                query: "병원",
+                                near: mapVM.locationService.currentLocation?.coordinate
+                            )
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -198,22 +229,41 @@ struct SearchHomeContent: View {
                     }
                     .padding(.horizontal, 16)
 
-                    ForEach(mapVM.searchService.recentSearches.prefix(5)) { result in
-                        Button { onSelect(result) } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: "clock")
-                                    .foregroundColor(.secondary)
-                                    .frame(width: 24)
-                                Text(result.name)
-                                    .font(.system(size: 15))
-                                    .foregroundColor(.primary)
-                                Spacer()
+                    ForEach(Array(mapVM.searchService.recentSearches.enumerated()), id: \.element.id) { index, result in
+                        HStack {
+                            Button { onSelect(result) } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "clock")
+                                        .foregroundColor(.secondary)
+                                        .frame(width: 24)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(result.name)
+                                            .font(.system(size: 15))
+                                            .foregroundColor(.primary)
+                                        if !result.address.isEmpty {
+                                            Text(result.address)
+                                                .font(.system(size: 12))
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .contentShape(Rectangle())
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
+
+                            Button {
+                                mapVM.searchService.recentSearches.remove(at: index)
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .foregroundColor(.secondary)
+                                    .font(.system(size: 12))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 10)
+                            }
                         }
-                        .buttonStyle(.plain)
                         Divider().padding(.leading, 52)
                     }
                 }
@@ -226,21 +276,25 @@ struct SearchHomeContent: View {
 struct QuickCategoryButton: View {
     let name: String
     let icon: String
+    let action: () -> Void
 
     var body: some View {
-        VStack(spacing: 8) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(TmapColor.primary.opacity(0.1))
-                    .frame(height: 52)
-                Image(systemName: icon)
-                    .font(.system(size: 20))
-                    .foregroundColor(TmapColor.primary)
+        Button(action: action) {
+            VStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(TmapColor.primary.opacity(0.1))
+                        .frame(height: 52)
+                    Image(systemName: icon)
+                        .font(.system(size: 20))
+                        .foregroundColor(TmapColor.primary)
+                }
+                Text(name)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.primary)
             }
-            Text(name)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.primary)
         }
+        .buttonStyle(.plain)
     }
 }
 

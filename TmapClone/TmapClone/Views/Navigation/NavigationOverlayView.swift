@@ -3,6 +3,8 @@ import MapKit
 
 struct NavigationOverlayView: View {
     let route: MKRoute
+    let routeSummary: RouteSummary?
+    let mergeOptions: [MergeOption]
     let onEnd: () -> Void
 
     @State private var currentStepIndex: Int = 0
@@ -11,6 +13,10 @@ struct NavigationOverlayView: View {
     private var currentStep: MKRoute.Step? {
         guard currentStepIndex < route.steps.count else { return nil }
         return route.steps[currentStepIndex]
+    }
+
+    private var speedLimit: Int {
+        routeSummary?.dominantSpeedLimit ?? 100
     }
 
     var body: some View {
@@ -61,7 +67,6 @@ struct NavigationOverlayView: View {
                     endPoint: .trailing
                 )
             )
-            .cornerRadius(0)
 
             // MARK: - Route Stats Bar
             HStack {
@@ -85,7 +90,6 @@ struct NavigationOverlayView: View {
 
                 Spacer()
 
-                // Speed display
                 if let speed = locationService.currentLocation.map({ max(0, $0.speed * 3.6) }),
                    speed > 0 {
                     VStack(spacing: 2) {
@@ -103,6 +107,90 @@ struct NavigationOverlayView: View {
             .padding(.vertical, 10)
             .background(Color.white)
             .shadow(color: .black.opacity(0.08), radius: 4, y: 2)
+
+            // MARK: - Camera & Speed Limit Info Bar
+            HStack(spacing: 0) {
+                // Speed limit badge
+                HStack(spacing: 6) {
+                    ZStack {
+                        Circle()
+                            .stroke(Color.red, lineWidth: 2.5)
+                            .frame(width: 32, height: 32)
+                        Text("\(speedLimit)")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.red)
+                    }
+                    Text("제한")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 14)
+
+                Divider().frame(height: 28)
+
+                // Next fixed camera (mock Phase 1)
+                HStack(spacing: 6) {
+                    Image(systemName: "camera.fill")
+                        .foregroundColor(.orange)
+                        .font(.system(size: 14))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("다음 카메라")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                        Text("2.3km")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                }
+                .padding(.horizontal, 14)
+
+                if let summary = routeSummary, summary.sectionCameraCount > 0 {
+                    Divider().frame(height: 28)
+
+                    // Section enforcement
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.red)
+                            .font(.system(size: 13))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("구간단속")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                            Text(String(format: "%.1fkm 남음", summary.sectionEnforcementKm))
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                }
+
+                Spacer()
+            }
+            .padding(.vertical, 8)
+            .background(Color(.systemGray6))
+
+            // MARK: - Next Merge Preview
+            if let nextMerge = mergeOptions.first {
+                HStack(spacing: 10) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .foregroundColor(.purple)
+                        .font(.system(size: 14))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("\(nextMerge.distanceText) • \(nextMerge.name)")
+                            .font(.system(size: 13, weight: .semibold))
+                            .lineLimit(1)
+                        Text(nextMerge.note)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Text(nextMerge.addedTimeText)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(nextMerge.addedTime <= 60 ? .green : .orange)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color.white)
+                .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
+            }
         }
         .onAppear { locationService.startUpdating() }
         .onDisappear { locationService.stopUpdating() }

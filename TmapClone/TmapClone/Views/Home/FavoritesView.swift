@@ -1,32 +1,55 @@
 import SwiftUI
 
 struct FavoritesView: View {
-    @State private var favorites: [FavoritePlace] = FavoritesView.mockFavorites()
+    @EnvironmentObject var appState: AppState
+    @State private var favorites: [FavoritePlace] = []
     @State private var showAddFavorite: Bool = false
+    @State private var showEditHomeSheet: Bool = false
+    @State private var showEditWorkSheet: Bool = false
 
     var body: some View {
         NavigationStack {
-            Group {
-                if favorites.isEmpty {
-                    EmptyFavoritesView(onAdd: { showAddFavorite = true })
-                } else {
-                    List {
-                        Section {
-                            ForEach(favorites) { place in
-                                FavoritePlaceRow(place: place)
-                            }
-                            .onDelete { indexSet in
-                                favorites.remove(atOffsets: indexSet)
-                            }
-                        } header: {
-                            Text("저장된 장소")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.secondary)
-                        }
+            List {
+                // Pinned: 집 and 회사 from appState
+                Section {
+                    PinnedPlaceRow(
+                        label: "집",
+                        icon: "house.fill",
+                        place: appState.homePlace
+                    ) {
+                        showEditHomeSheet = true
                     }
-                    .listStyle(.insetGrouped)
+
+                    PinnedPlaceRow(
+                        label: "회사",
+                        icon: "building.2.fill",
+                        place: appState.workPlace
+                    ) {
+                        showEditWorkSheet = true
+                    }
+                } header: {
+                    Text("자주 가는 곳")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.secondary)
+                }
+
+                // Other saved favorites
+                if !favorites.isEmpty {
+                    Section {
+                        ForEach(favorites) { place in
+                            FavoritePlaceRow(place: place)
+                        }
+                        .onDelete { indexSet in
+                            favorites.remove(atOffsets: indexSet)
+                        }
+                    } header: {
+                        Text("저장된 장소")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
+            .listStyle(.insetGrouped)
             .navigationTitle("즐겨찾기")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
@@ -40,13 +63,80 @@ struct FavoritesView: View {
                 }
             }
         }
+        .sheet(isPresented: $showEditHomeSheet) {
+            QuickSearchSheet(onSelect: { result in
+                showEditHomeSheet = false
+                let place = FavoritePlace(
+                    id: UUID(),
+                    name: "집",
+                    address: result.address,
+                    latitude: result.coordinate.latitude,
+                    longitude: result.coordinate.longitude,
+                    isFavorite: true
+                )
+                appState.saveHomePlace(place)
+            })
+        }
+        .sheet(isPresented: $showEditWorkSheet) {
+            QuickSearchSheet(onSelect: { result in
+                showEditWorkSheet = false
+                let place = FavoritePlace(
+                    id: UUID(),
+                    name: "회사",
+                    address: result.address,
+                    latitude: result.coordinate.latitude,
+                    longitude: result.coordinate.longitude,
+                    isFavorite: true
+                )
+                appState.saveWorkPlace(place)
+            })
+        }
     }
+}
 
-    static func mockFavorites() -> [FavoritePlace] {
-        [
-            FavoritePlace(id: UUID(), name: "집", address: "서울시 강남구", latitude: 37.5170, longitude: 127.0473, isFavorite: true),
-            FavoritePlace(id: UUID(), name: "회사", address: "서울시 중구 을지로", latitude: 37.5665, longitude: 126.9780, isFavorite: true),
-        ]
+// MARK: - Pinned Place Row (집/회사)
+
+struct PinnedPlaceRow: View {
+    let label: String
+    let icon: String
+    let place: FavoritePlace?
+    let onEdit: () -> Void
+
+    var body: some View {
+        HStack(spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(TmapColor.primary.opacity(0.1))
+                    .frame(width: 42, height: 42)
+                Image(systemName: icon)
+                    .font(.system(size: 18))
+                    .foregroundColor(TmapColor.primary)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(label)
+                    .font(.system(size: 15, weight: .semibold))
+                if let place = place, place.latitude != 0 {
+                    Text(place.address)
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("주소를 설정하세요")
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary.opacity(0.6))
+                }
+            }
+            Spacer()
+            Button(action: onEdit) {
+                Image(systemName: "pencil")
+                    .font(.system(size: 14))
+                    .foregroundColor(TmapColor.primary)
+                    .padding(8)
+                    .background(TmapColor.primary.opacity(0.1))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 4)
     }
 }
 
@@ -59,7 +149,7 @@ struct FavoritePlaceRow: View {
                 Circle()
                     .fill(TmapColor.primary.opacity(0.1))
                     .frame(width: 42, height: 42)
-                Image(systemName: place.name == "집" ? "house.fill" : "building.2.fill")
+                Image(systemName: "mappin")
                     .font(.system(size: 18))
                     .foregroundColor(TmapColor.primary)
             }

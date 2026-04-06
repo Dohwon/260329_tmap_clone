@@ -3,7 +3,34 @@
 - [completed] 프로젝트 구조 및 Xcode 프로젝트 파일 생성
 - [completed] SwiftUI 기반 T맵 클론 핵심 뷰 구현 (MapView, SearchView, NavigationView, FavoritesView, MoreView)
 - [completed] 서비스 레이어 구현 (LocationService, RouteService, SearchService)
+- [completed] Phase 1: 장거리 드라이버 MVP 프런트엔드 목업 구현
+  - Models/RouteModels.swift: DriverProfile, RoutePreferences, LayerVisibility, RouteSummary, MergeOption
+  - AppState: driverProfile, routePreferences 추가
+  - MapViewModel: routeSummaries, mergeOptions, layerVisibility 추가
+  - RouteService.generateSummaries() 추가 (mock 보강)
+  - RoutePreviewPanel: 프리셋 피커, 필터 칩, RouteSummaryCard, MergeOptionCard로 개편
+  - NavigationOverlayView: 제한속도 배지, 다음 카메라 바, 구간단속, 다음 합류 예고 추가
+  - MapLayerView: 합류 지점 annotation, 레이어 가시성 연결
+  - HomeMapView: 레이어 설정 시트(지도 버튼), 전체 상태 연결
+- [completed] 버그 수정 및 UX 개선 (16개 이슈)
+  - 주소검색: SearchService Korea 기본 지역 + debounce 경쟁 조건 수정
+  - GPS 위치: LocationService.requestPermission 권한 기존 허용 시 즉시 시작
+  - 지도 줌: 초기 span 0.05→0.008, 추적 span 0.01→0.006 (도로 수준)
+  - 홈탭 버튼: QuickActionChip으로 교체, 집/회사/최근/주유소/주차장 실동작
+  - 검색탭 하단메뉴 사라짐: NavigationStack 제거 (SearchMainView plain VStack으로)
+  - TmapSearchBar: 마이크 제거, 교통 상황 자막 추가
+  - HomeBottomPanel: 현위치 표시, 고속도로 칩 스크롤 추가, 완전 재설계
+  - 최근 검색 개별 삭제: xmark 버튼 추가
+  - 즐겨찾기 집/회사 편집: 연필 버튼 + 주소검색 시트 연결 (appState 저장)
+  - 경로 필터 3개로 변경: 해당도로 선호/산길도로 선호/좁은 길 포함
+  - 고속도로 선택기: KoreanHighway 7개, 지도 이동+카메라 표시
+  - 야간 자동 다크모드: 21시~06시 isNightMode 적용 (ContentView)
+  - 검색→경로패널 연결: appState.showRouteSheet로 통합 (검색탭에서도 경로 표시)
+  - addToRecent: UUID→name+address 비교로 중복 제거
+  - QuickSearchSheet: 자동 포커스, debounce 수정, 빈 결과 화면 추가
+- [pending] Phase 2: 데이터 모델 및 상태 연결 (MKRoute → RouteSummary 실데이터 전환)
+- [pending] Phase 3: 실제 경로 계산 보강 (highway/national road 비율, 카메라 집계)
+- [pending] Phase 4: 다음 10km 합류 선택 기능 실데이터 연결
 - [pending] 실기기 테스트 및 MapKit 연동 검증
 - [pending] 과속 카메라 실시간 데이터 연동 (공공 API)
-- [pending] 대중교통 경로 탭 구현
 - [pending] 음성 안내 AVSpeechSynthesizer 연동

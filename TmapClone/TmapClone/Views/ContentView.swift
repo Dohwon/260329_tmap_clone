@@ -16,12 +16,14 @@ struct ContentView: View {
 
                 SearchMainView()
                     .environmentObject(mapVM)
+                    .environmentObject(appState)
                     .tag(AppState.TabItem.search)
                     .tabItem {
                         Label("검색", systemImage: "magnifyingglass")
                     }
 
                 FavoritesView()
+                    .environmentObject(appState)
                     .tag(AppState.TabItem.favorites)
                     .tabItem {
                         Label("즐겨찾기", systemImage: "heart.fill")
@@ -36,5 +38,6 @@ struct ContentView: View {
             .tint(TmapColor.primary)
         }
         .ignoresSafeArea(edges: .bottom)
+        .preferredColorScheme(appState.isNightMode ? .dark : .light)
     }
 }

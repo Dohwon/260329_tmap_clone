@@ -8,7 +8,6 @@ struct TmapCloneApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(appState)
-                .preferredColorScheme(.light)
         }
     }
 }

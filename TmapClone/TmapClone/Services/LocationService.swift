@@ -19,7 +19,12 @@ class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
 
     func requestPermission() {
-        manager.requestWhenInUseAuthorization()
+        let status = manager.authorizationStatus
+        if status == .authorizedWhenInUse || status == .authorizedAlways {
+            startUpdating()
+        } else {
+            manager.requestWhenInUseAuthorization()
+        }
     }
 
     func startUpdating() {
