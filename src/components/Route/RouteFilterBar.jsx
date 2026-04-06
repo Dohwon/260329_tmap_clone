@@ -33,7 +33,7 @@ export default function RouteFilterBar() {
       </div>
 
       {/* 도로 취향 옵션 */}
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         <button
           onClick={() => setRoutePreference('includeScenic', !routePreferences.includeScenic)}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
@@ -42,7 +42,7 @@ export default function RouteFilterBar() {
               : 'bg-white border-gray-200 text-gray-400'
           }`}
         >
-          🌊 해안도로 선호
+          🛣️ 해당도로 선호
         </button>
         <button
           onClick={() => setRoutePreference('includeMountain', !routePreferences.includeMountain)}
@@ -52,7 +52,17 @@ export default function RouteFilterBar() {
               : 'bg-white border-gray-200 text-gray-400'
           }`}
         >
-          🌲 산길도로 포함
+          🌲 산길도로 선호
+        </button>
+        <button
+          onClick={() => setRoutePreference('allowNarrowRoads', !routePreferences.allowNarrowRoads)}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+            routePreferences.allowNarrowRoads
+              ? 'bg-red-50 border-red-400 text-red-500'
+              : 'bg-white border-gray-200 text-gray-400'
+          }`}
+        >
+          🚗 좁은 길 포함
         </button>
       </div>
     </div>

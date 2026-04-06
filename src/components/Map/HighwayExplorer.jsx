@@ -4,10 +4,11 @@ import useAppStore from '../../store/appStore'
 
 export default function HighwayExplorer({ onClose }) {
   const [selected, setSelected] = useState(null)
-  const { setMapCenter, searchRoute } = useAppStore()
+  const { setMapCenter, searchRoute, selectRoad } = useAppStore()
 
   const handleSelect = (hw) => {
     setSelected(hw)
+    selectRoad(hw.id)
     // 고속도로 전체가 보이는 중간 좌표로 지도 이동
     const midLat = (hw.startCoord[0] + hw.endCoord[0]) / 2
     const midLng = (hw.startCoord[1] + hw.endCoord[1]) / 2
@@ -108,6 +109,17 @@ export default function HighwayExplorer({ onClose }) {
                             {jc.name} ({jc.km}km)
                           </span>
                         ))}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="bg-white rounded-xl px-3 py-2">
+                        <div className="text-[11px] font-semibold text-gray-400">시점 주소</div>
+                        <div className="text-xs text-gray-700 mt-1">{hw.startName}</div>
+                      </div>
+                      <div className="bg-white rounded-xl px-3 py-2">
+                        <div className="text-[11px] font-semibold text-gray-400">종점 주소</div>
+                        <div className="text-xs text-gray-700 mt-1">{hw.endName}</div>
                       </div>
                     </div>
 

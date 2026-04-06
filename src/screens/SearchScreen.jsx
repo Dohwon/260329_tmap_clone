@@ -5,6 +5,6 @@ import useAppStore from '../store/appStore'
 export default function SearchScreen() {
   const { setActiveTab } = useAppStore()
   return (
-    <SearchSheet onClose={() => setActiveTab('home')} />
+    <SearchSheet embedded onClose={() => setActiveTab('home')} />
   )
 }

@@ -21,6 +21,24 @@ export const HIGHWAYS = [
     description: '서울~부산 416km, 한국 고속도로의 중심축'
   },
   {
+    id: 'sejongPocheon',
+    number: '29',
+    name: '세종포천고속도로',
+    shortName: '세종포천',
+    color: '#7A3EFF',
+    totalKm: 128,
+    startName: '세종 연서JC',
+    endName: '포천 신북IC',
+    startCoord: [36.6205, 127.2548],
+    endCoord: [37.9443, 127.1974],
+    majorJunctions: [
+      { name: '남안성JC', coord: [36.9731, 127.2475], km: 34 },
+      { name: '구리JC', coord: [37.6038, 127.1438], km: 95 },
+      { name: '소흘JC', coord: [37.8147, 127.1345], km: 118 },
+    ],
+    description: '세종~포천 128km, 일부 구간 120km/h가 적용된 남북 축 노선'
+  },
+  {
     id: 'pctj',
     number: '40',
     name: '평택제천고속도로',
@@ -37,6 +55,25 @@ export const HIGHWAYS = [
       { name: '충주JC', coord: [36.9914, 127.9258], km: 108 },
     ],
     description: '평택~제천 137km, 서해안~중부내륙 연결'
+  },
+  {
+    id: 'metropolitan2',
+    number: '400',
+    name: '수도권제2순환고속도로',
+    shortName: '수도권제2',
+    color: '#0A84FF',
+    totalKm: 263,
+    startName: '화성 봉담IC',
+    endName: '양평 양평IC',
+    startCoord: [37.2206, 126.9489],
+    endCoord: [37.4911, 127.4938],
+    majorJunctions: [
+      { name: '안산JC', coord: [37.3219, 126.8209], km: 27 },
+      { name: '시흥하중JC', coord: [37.4168, 126.8090], km: 48 },
+      { name: '김포JC', coord: [37.6209, 126.6918], km: 116 },
+      { name: '양평JC', coord: [37.5075, 127.4788], km: 259 },
+    ],
+    description: '수도권 외곽 순환 흐름을 분산하는 광역 순환 노선'
   },
   {
     id: 'yeongdong',
@@ -110,6 +147,25 @@ export const HIGHWAYS = [
       { name: '북대구JC', coord: [35.9274, 128.6061], km: 284 },
     ],
     description: '춘천~부산 374km, 한반도 종단 내륙 노선'
+  },
+  {
+    id: 'jungbuNaeryuk',
+    number: '45',
+    name: '중부내륙고속도로',
+    shortName: '중부내륙',
+    color: '#009688',
+    totalKm: 302,
+    startName: '양평 양평JC',
+    endName: '창원 내서JC',
+    startCoord: [37.5075, 127.4788],
+    endCoord: [35.2538, 128.5062],
+    majorJunctions: [
+      { name: '여주JC', coord: [37.2965, 127.6376], km: 25 },
+      { name: '충주JC', coord: [36.9914, 127.9258], km: 83 },
+      { name: '상주JC', coord: [36.4096, 128.1592], km: 180 },
+      { name: '현풍JC', coord: [35.6944, 128.4276], km: 255 },
+    ],
+    description: '양평~창원 302km, 내륙 화물과 장거리 주행 비중이 큰 종단 노선'
   },
   {
     id: 'seohaean',

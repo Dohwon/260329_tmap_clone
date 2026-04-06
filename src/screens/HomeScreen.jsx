@@ -8,36 +8,41 @@ import useAppStore from '../store/appStore'
 import SearchSheet from '../components/Search/SearchSheet'
 
 export default function HomeScreen() {
-  const { isNavigating, showRoutePanel, toggleLayer, visibleLayers } = useAppStore()
+  const { isNavigating, showRoutePanel, toggleLayer, visibleLayers, userLocation, selectedRoadId } = useAppStore()
   const [showSearch, setShowSearch] = useState(false)
   const [showLayerMenu, setShowLayerMenu] = useState(false)
   const [showHighwayExplorer, setShowHighwayExplorer] = useState(false)
+  const hour = new Date().getHours()
+  const isNight = hour >= 19 || hour < 6
+  const looksLikeTunnel = (userLocation?.speedKmh ?? 0) > 35 && (userLocation?.accuracy ?? 0) > 60
+  const darkMode = isNight || looksLikeTunnel
 
   return (
     <div className="relative w-full h-full overflow-hidden">
-      <MapView />
+      <MapView darkMode={darkMode} />
 
       {/* 상단 검색바 */}
       {!isNavigating && !showRoutePanel && (
         <div className="absolute top-0 left-0 right-0 z-10 px-4 pt-14 pb-2">
           <button
             onClick={() => setShowSearch(true)}
-            className="w-full flex items-center bg-white/95 backdrop-blur-sm rounded-2xl px-4 py-3 shadow-lg active:scale-[0.98] transition-all"
+            className="w-full bg-white/96 backdrop-blur-md rounded-[24px] px-4 py-3 shadow-lg active:scale-[0.98] transition-all text-left"
           >
-            <div className="w-7 h-7 bg-tmap-blue rounded-lg flex items-center justify-center mr-3 flex-shrink-0">
-              <span className="text-white font-black text-sm leading-none">T</span>
+            <div className="text-lg font-black text-gray-900">어디로 갈까요?</div>
+            <div className="text-xs text-gray-500 mt-1">
+              {darkMode
+                ? '야간 또는 터널 환경이라 지도를 어둡게 표시하고 있어요'
+                : selectedRoadId
+                  ? '선택한 도로 전체 흐름과 단속 구간을 보고 있어요'
+                  : '현재 도로 상황이 원활합니다'}
             </div>
-            <span className="text-gray-400 text-sm flex-1 text-left">어디로 갈까요?</span>
-            <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-            </svg>
           </button>
         </div>
       )}
 
       {/* 우측 플로팅 버튼 */}
       {!isNavigating && !showRoutePanel && (
-        <div className="absolute right-4 bottom-52 z-10 flex flex-col gap-3">
+        <div className="absolute right-4 bottom-56 z-10 flex flex-col gap-3">
           {/* 내 위치 */}
           <FloatButton onClick={() => {
             const { userLocation, setMapCenter } = useAppStore.getState()
@@ -74,6 +79,8 @@ export default function HomeScreen() {
               { key: 'sectionEnforcement', label: '🚧 구간단속' },
               { key: 'speedLimits', label: '🔴 제한속도' },
               { key: 'mergePoints', label: '🔀 합류지점' },
+              { key: 'restStops', label: '🟢 휴게소/졸음쉼터' },
+              { key: 'congestion', label: '🚦 정체 구간' },
             ].map(layer => (
               <button
                 key={layer.key}
@@ -92,7 +99,7 @@ export default function HomeScreen() {
 
       <NavigationOverlay />
       <RoutePreviewPanel />
-      <HomeBottomPanel />
+      {!showSearch && !showRoutePanel && !isNavigating && <HomeBottomPanel />}
 
       {showSearch && <SearchSheet onClose={() => setShowSearch(false)} />}
       {showHighwayExplorer && <HighwayExplorer onClose={() => setShowHighwayExplorer(false)} />}

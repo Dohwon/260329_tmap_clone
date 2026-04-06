@@ -43,19 +43,19 @@ const TABS = [
 ]
 
 export default function BottomTabBar() {
-  const { activeTab, setActiveTab, isNavigating } = useAppStore()
+  const { activeTab, setActiveTab, openSearchHome, isNavigating } = useAppStore()
 
   if (isNavigating) return null
 
   return (
-    <div className="absolute bottom-0 left-0 right-0 z-10 bg-white border-t border-gray-100 safe-bottom">
+    <div className="absolute bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-100 safe-bottom shadow-[0_-6px_18px_rgba(15,23,42,0.06)]">
       <div className="flex">
         {TABS.map(tab => {
           const active = activeTab === tab.key
           return (
             <button
               key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => (tab.key === 'search' ? openSearchHome() : setActiveTab(tab.key))}
               className="flex-1 flex flex-col items-center justify-center py-2.5 gap-1 active:bg-gray-50 transition-all"
             >
               {tab.icon(active)}

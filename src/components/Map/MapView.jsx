@@ -1,10 +1,8 @@
-import React, { useEffect } from 'react'
-import { MapContainer, TileLayer, Polyline, Marker, Popup, Circle, useMap } from 'react-leaflet'
+import React, { useEffect, useMemo } from 'react'
+import { CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import useAppStore from '../../store/appStore'
-import { MOCK_SPEED_CAMERAS } from '../../data/mockData'
 
-// Leaflet 기본 아이콘 fix
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
@@ -12,127 +10,283 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
 })
 
-const cameraIcon = (type) => L.divIcon({
-  className: '',
-  html: `<div style="
-    width:32px;height:32px;border-radius:50%;
-    background:${type === 'section_start' || type === 'section_end' ? '#FF6B00' : '#FF3B30'};
-    display:flex;align-items:center;justify-content:center;
-    color:white;font-size:13px;font-weight:800;
-    box-shadow:0 2px 6px rgba(0,0,0,0.25);
-    border:2px solid white;
-  ">📷</div>`,
-  iconSize: [32, 32],
-  iconAnchor: [16, 16],
-})
+const COLORS = {
+  selectedRoute: '#0064FF',
+  secondaryRoute: '#AEB7C6',
+  fixedCamera: '#FF3B30',
+  sectionCamera: '#FF3B30',
+  restStop: '#008800',
+  congestion1: '#00A84F',
+  congestion2: '#FF9500',
+  congestion3: '#FF3B30',
+  speedLimit: '#1C1C1E',
+}
 
 const destIcon = L.divIcon({
   className: '',
   html: `<div style="
-    width:36px;height:36px;border-radius:50% 50% 50% 0;
-    background:#0064FF;
-    transform:rotate(-45deg);
-    border:3px solid white;
-    box-shadow:0 3px 10px rgba(0,100,255,0.4);
+    width:34px;height:34px;border-radius:50% 50% 50% 0;
+    background:#0064FF;transform:rotate(-45deg);
+    border:3px solid white;box-shadow:0 6px 14px rgba(0,100,255,0.35);
   "></div>`,
-  iconSize: [36, 36],
-  iconAnchor: [18, 36],
+  iconSize: [34, 34],
+  iconAnchor: [17, 34],
 })
 
-// 지도 중심 이동 컴포넌트
-function MapController() {
+function makeBadgeIcon({ text, background, size = 28, color = '#fff', border = '#fff' }) {
+  return L.divIcon({
+    className: '',
+    html: `<div style="
+      width:${size}px;height:${size}px;border-radius:999px;background:${background};
+      color:${color};display:flex;align-items:center;justify-content:center;
+      font-size:${Math.max(10, size / 2.4)}px;font-weight:800;border:2px solid ${border};
+      box-shadow:0 2px 8px rgba(0,0,0,0.22);
+    ">${text}</div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  })
+}
+
+const currentLocationIcon = makeBadgeIcon({ text: '●', background: '#0064FF', size: 22 })
+const fixedCameraIcon = makeBadgeIcon({ text: '단', background: COLORS.fixedCamera })
+const sectionStartIcon = makeBadgeIcon({ text: '구', background: COLORS.sectionCamera })
+const sectionEndIcon = makeBadgeIcon({ text: '끝', background: COLORS.sectionCamera, size: 30 })
+const restStopIcon = makeBadgeIcon({ text: '휴', background: COLORS.restStop })
+const drowsyIcon = makeBadgeIcon({ text: '쉼', background: COLORS.restStop, size: 30 })
+
+function MapController({ center, zoom }) {
   const map = useMap()
-  const mapCenter = useAppStore(s => s.mapCenter)
-  const mapZoom = useAppStore(s => s.mapZoom)
+
   useEffect(() => {
-    if (mapCenter && mapCenter[0] && mapCenter[1]) {
-      map.setView(mapCenter, mapZoom, { animate: true, duration: 0.8 })
+    if (Array.isArray(center) && Number.isFinite(center[0]) && Number.isFinite(center[1])) {
+      map.setView(center, zoom, { animate: true, duration: 0.8 })
     }
-  }, [mapCenter[0], mapCenter[1], mapZoom])
+  }, [map, center, zoom])
+
   return null
 }
 
-export default function MapView() {
-  const { routes, selectedRouteId, destination, visibleLayers, userLocation } = useAppStore()
+function smoothPath(positions, curvature = 0.18) {
+  if (!Array.isArray(positions) || positions.length < 2) return positions ?? []
 
-  const selectedRoute = routes.find(r => r.id === selectedRouteId)
-  const otherRoutes = routes.filter(r => r.id !== selectedRouteId)
+  const next = [positions[0]]
+  for (let index = 0; index < positions.length - 1; index += 1) {
+    const [lat1, lng1] = positions[index]
+    const [lat2, lng2] = positions[index + 1]
+    const dx = lng2 - lng1
+    const dy = lat2 - lat1
+    const bend = ((index % 2 === 0 ? 1 : -1) * curvature) / Math.max(1, positions.length - 1)
+
+    next.push(
+      [lat1 + dy * 0.25 - dx * bend, lng1 + dx * 0.25 + dy * bend],
+      [lat1 + dy * 0.5, lng1 + dx * 0.5],
+      [lat1 + dy * 0.75 + dx * bend, lng1 + dx * 0.75 - dy * bend],
+      [lat2, lng2]
+    )
+  }
+  return next
+}
+
+function buildSpeedMarkers(segments) {
+  return segments.map((segment) => ({
+    id: `${segment.id}-speed`,
+    center: segment.center,
+    label: `${segment.speedLimit}/${segment.averageSpeed}`,
+  }))
+}
+
+function getCongestionColor(score) {
+  if (score === 3) return COLORS.congestion3
+  if (score === 2) return COLORS.congestion2
+  return COLORS.congestion1
+}
+
+export default function MapView({ darkMode = false }) {
+  const {
+    mapCenter,
+    mapZoom,
+    routes,
+    selectedRouteId,
+    destination,
+    visibleLayers,
+    userLocation,
+    locationHistory,
+    selectedRoadId,
+    getSelectedRoadDetail,
+  } = useAppStore()
+
+  const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
+  const otherRoutes = routes.filter((route) => route.id !== selectedRouteId)
+  const selectedRoad = selectedRoadId ? getSelectedRoadDetail() : null
+
+  const routeSpeedMarkers = useMemo(
+    () => (selectedRoute ? buildSpeedMarkers(selectedRoute.segmentStats ?? []) : []),
+    [selectedRoute]
+  )
+  const roadSpeedMarkers = useMemo(
+    () => (selectedRoad ? buildSpeedMarkers(selectedRoad.congestionSegments ?? []) : []),
+    [selectedRoad]
+  )
+
+  const tileUrl = darkMode
+    ? 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png'
+    : 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png'
 
   return (
     <MapContainer
-      center={[37.5665, 126.9780]}
-      zoom={13}
+      center={mapCenter}
+      zoom={mapZoom}
       zoomControl={false}
-      attributionControl={true}
+      attributionControl
       style={{ height: '100%', width: '100%' }}
     >
       <TileLayer
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        url={tileUrl}
+        attribution='&copy; OpenStreetMap contributors &copy; CARTO'
       />
-      <MapController />
+      <MapController center={mapCenter} zoom={mapZoom} />
 
-      {/* 대안 경로 (회색) */}
-      {otherRoutes.map(route => (
+      {locationHistory.length > 1 && (
+        <Polyline
+          positions={locationHistory}
+          pathOptions={{ color: '#5AC8FA', weight: 4, opacity: 0.35, dashArray: '10 8' }}
+        />
+      )}
+
+      {selectedRoad && (
+        <>
+          <Polyline
+            positions={smoothPath(selectedRoad.path, 0.22)}
+            pathOptions={{ color: selectedRoad.color, weight: 7, opacity: 0.92 }}
+          />
+
+          {visibleLayers.congestion && selectedRoad.congestionSegments.map((segment) => (
+            <Polyline
+              key={segment.id}
+              positions={smoothPath(segment.positions, 0.08)}
+              pathOptions={{ color: getCongestionColor(segment.congestionScore), weight: 9, opacity: 0.5 }}
+            />
+          ))}
+
+          {visibleLayers.mergePoints && selectedRoad.majorJunctions.map((junction) => (
+            <CircleMarker
+              key={`${selectedRoad.id}-${junction.name}`}
+              center={junction.coord}
+              radius={8}
+              pathOptions={{ color: '#ffffff', fillColor: '#1C1C1E', fillOpacity: 0.95, weight: 2 }}
+            >
+              <Popup>
+                <div className="text-sm font-bold">{junction.name}</div>
+                <div className="text-xs text-gray-500">{selectedRoad.name} {junction.km}km 지점</div>
+              </Popup>
+            </CircleMarker>
+          ))}
+
+          {visibleLayers.speedCameras && selectedRoad.cameras.map((camera) => (
+            <Marker
+              key={camera.id}
+              position={camera.coord}
+              icon={camera.type === 'fixed'
+                ? fixedCameraIcon
+                : camera.type === 'section_end'
+                  ? sectionEndIcon
+                  : sectionStartIcon}
+            >
+              <Popup>
+                <div className="text-sm font-bold">{camera.label}</div>
+                <div className="text-xs text-gray-500">제한 {camera.speedLimit}km/h</div>
+                {camera.sectionLength && <div className="text-xs text-gray-500">구간 {camera.sectionLength}km</div>}
+              </Popup>
+            </Marker>
+          ))}
+
+          {visibleLayers.sectionEnforcement && selectedRoad.cameras
+            .filter((camera) => camera.type === 'section_start')
+            .map((camera) => {
+              const endCamera = selectedRoad.cameras.find((item) => item.id === camera.id.replace('section-start', 'section-end'))
+              if (!endCamera) return null
+              return (
+                <Polyline
+                  key={`${camera.id}-section`}
+                  positions={smoothPath([camera.coord, endCamera.coord], 0.03)}
+                  pathOptions={{ color: COLORS.sectionCamera, weight: 6, opacity: 0.55, dashArray: '10 8' }}
+                />
+              )
+            })}
+
+          {visibleLayers.restStops && selectedRoad.restStops.map((stop) => (
+            <Marker
+              key={stop.id}
+              position={stop.coord}
+              icon={stop.type === 'service' ? restStopIcon : drowsyIcon}
+            >
+              <Popup>
+                <div className="text-sm font-bold">{stop.name}</div>
+                <div className="text-xs text-gray-500">{selectedRoad.name} {stop.km}km 지점</div>
+              </Popup>
+            </Marker>
+          ))}
+
+          {visibleLayers.speedLimits && roadSpeedMarkers.map((marker) => (
+            <Marker
+              key={marker.id}
+              position={marker.center}
+              icon={makeBadgeIcon({ text: marker.label, background: COLORS.speedLimit, size: 42 })}
+            />
+          ))}
+        </>
+      )}
+
+      {otherRoutes.map((route) => (
         <Polyline
           key={route.id}
-          positions={route.polyline}
-          pathOptions={{ color: '#C7C7CC', weight: 5, opacity: 0.6 }}
+          positions={smoothPath(route.polyline, 0.1)}
+          pathOptions={{ color: COLORS.secondaryRoute, weight: 5, opacity: 0.68 }}
         />
       ))}
 
-      {/* 선택 경로 (파란색) */}
       {selectedRoute && (
-        <Polyline
-          positions={selectedRoute.polyline}
-          pathOptions={{ color: '#0064FF', weight: 7, opacity: 1 }}
-        />
+        <>
+          <Polyline
+            positions={smoothPath(selectedRoute.polyline, 0.1)}
+            pathOptions={{ color: COLORS.selectedRoute, weight: 7, opacity: 0.94 }}
+          />
+
+          {visibleLayers.congestion && (selectedRoute.segmentStats ?? []).map((segment) => (
+            <Polyline
+              key={segment.id}
+              positions={smoothPath(segment.positions, 0.03)}
+              pathOptions={{ color: getCongestionColor(segment.congestionScore), weight: 8, opacity: 0.55 }}
+            />
+          ))}
+
+          {visibleLayers.speedLimits && routeSpeedMarkers.map((marker) => (
+            <Marker
+              key={marker.id}
+              position={marker.center}
+              icon={makeBadgeIcon({ text: marker.label, background: '#1C1C1E', size: 42 })}
+            />
+          ))}
+        </>
       )}
 
-      {/* 과속 카메라 */}
-      {visibleLayers.speedCameras && MOCK_SPEED_CAMERAS.map(cam => (
-        <Marker key={cam.id} position={[cam.lat, cam.lng]} icon={cameraIcon(cam.type)}>
+      {userLocation && (
+        <Marker position={[userLocation.lat, userLocation.lng]} icon={currentLocationIcon}>
           <Popup>
-            <div className="text-sm font-bold">{cam.label} {cam.speedLimit}km/h</div>
-            {cam.sectionLength && <div className="text-xs text-gray-500">구간 {cam.sectionLength}km</div>}
+            <div className="text-sm font-bold">내 위치</div>
+            <div className="text-xs text-gray-500">
+              {Math.round(userLocation.speedKmh ?? 0)}km/h · 정확도 {Math.round(userLocation.accuracy ?? 0)}m
+            </div>
           </Popup>
         </Marker>
-      ))}
-
-      {/* 구간단속 오버레이 */}
-      {visibleLayers.sectionEnforcement && MOCK_SPEED_CAMERAS
-        .filter(c => c.type === 'section_start')
-        .map(cam => (
-          <Circle
-            key={`zone-${cam.id}`}
-            center={[cam.lat, cam.lng]}
-            radius={cam.sectionLength * 500}
-            pathOptions={{ color: '#FF6B00', fillColor: '#FF6B00', fillOpacity: 0.06, weight: 2, dashArray: '6 4' }}
-          />
-        ))
-      }
-
-      {/* 내 위치 마커 */}
-      {userLocation && (
-        <Marker
-          position={[userLocation.lat, userLocation.lng]}
-          icon={L.divIcon({
-            className: '',
-            html: `<div style="
-              width:20px;height:20px;border-radius:50%;
-              background:#0064FF;border:3px solid white;
-              box-shadow:0 0 0 4px rgba(0,100,255,0.25);
-            "/>`,
-            iconSize: [20, 20],
-            iconAnchor: [10, 10],
-          })}
-        />
       )}
 
-      {/* 목적지 마커 */}
       {destination && (
         <Marker position={[destination.lat, destination.lng]} icon={destIcon}>
-          <Popup>{destination.name}</Popup>
+          <Popup>
+            <div className="text-sm font-bold">{destination.name}</div>
+            <div className="text-xs text-gray-500">{destination.address}</div>
+          </Popup>
         </Marker>
       )}
     </MapContainer>

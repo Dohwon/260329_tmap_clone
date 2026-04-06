@@ -1,226 +1,604 @@
 import { create } from 'zustand'
-import { MOCK_ROUTES, MOCK_MERGE_OPTIONS } from '../data/mockData'
-import { fetchRoutes, searchPOI } from '../services/tmapService'
+import { HIGHWAYS } from '../data/highwayData'
+import { PRESET_INFO, MOCK_RECENT_SEARCHES } from '../data/mockData'
+import { fetchRoutes, fetchTmapStatus, searchNearbyPOIs } from '../services/tmapService'
 
-// 프록시 서버를 통해 항상 시도, 실패 시 시뮬레이션으로 fallback
-const HAS_API_KEY = true
+const DEFAULT_CENTER = [37.5665, 126.978]
+const DEFAULT_ORIGIN = { lat: 37.5665, lng: 126.978, speedKmh: 0, heading: 0, accuracy: null }
+const STORAGE_KEYS = {
+  favorites: 'tmap_favorites_v3',
+  recents: 'tmap_recent_searches_v3',
+}
+
+const DEFAULT_FAVORITES = [
+  { id: 'home', name: '집', icon: '🏠', address: '', lat: null, lng: null },
+  { id: 'work', name: '회사', icon: '🏢', address: '', lat: null, lng: null },
+]
+
+const LEGACY_FAVORITE_ADDRESSES = new Set(['서울시 강남구 테헤란로', '서울시 중구 을지로'])
+
+function readStorage(key, fallback) {
+  try {
+    const value = localStorage.getItem(key)
+    return value ? JSON.parse(value) : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function writeStorage(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // noop
+  }
+}
+
+function sanitizeFavorites(favorites) {
+  return (favorites ?? DEFAULT_FAVORITES).map((favorite) => (
+    LEGACY_FAVORITE_ADDRESSES.has(favorite.address)
+      ? { ...favorite, address: '', lat: null, lng: null }
+      : favorite
+  ))
+}
+
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371
+  const dLat = ((lat2 - lat1) * Math.PI) / 180
+  const dLng = ((lng2 - lng1) * Math.PI) / 180
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(a))
+}
+
+function getRoadPath(road) {
+  return [road.startCoord, ...road.majorJunctions.map((junction) => junction.coord), road.endCoord]
+}
+
+function getRoadById(roadId) {
+  return HIGHWAYS.find((road) => road.id === roadId) ?? null
+}
+
+function buildRoadSegments(road) {
+  const path = getRoadPath(road)
+  return path.slice(1).map((coord, index) => {
+    const previous = path[index]
+    const speedLimit = road.id === 'sejongPocheon'
+      ? (index === 0 ? 120 : 110)
+      : road.number === '1' || road.number === '50'
+        ? (index % 2 === 0 ? 110 : 100)
+        : 100
+    const averageSpeed = Math.max(55, speedLimit - (index % 3 === 1 ? 18 : 8))
+    const congestionScore = averageSpeed < speedLimit * 0.6 ? 3 : averageSpeed < speedLimit * 0.8 ? 2 : 1
+    return {
+      id: `${road.id}-segment-${index}`,
+      positions: [previous, coord],
+      speedLimit,
+      averageSpeed,
+      congestionScore,
+      center: [(previous[0] + coord[0]) / 2, (previous[1] + coord[1]) / 2],
+    }
+  })
+}
+
+function buildRoadCameras(road) {
+  const path = getRoadPath(road)
+  return path.slice(1).flatMap((coord, index) => {
+    const previous = path[index]
+    const mid = [(previous[0] + coord[0]) / 2, (previous[1] + coord[1]) / 2]
+    const speedLimit = road.number === '1' || road.number === '50' ? (index % 2 === 0 ? 110 : 100) : 100
+    const cameras = [
+      {
+        id: `${road.id}-fixed-${index}`,
+        coord: mid,
+        type: 'fixed',
+        speedLimit,
+        label: '지점 단속',
+      },
+    ]
+
+    if (index % 2 === 1) {
+      cameras.push(
+        {
+          id: `${road.id}-section-start-${index}`,
+          coord: previous,
+          type: 'section_start',
+          speedLimit,
+          label: '구간단속 시작',
+          sectionLength: Number(haversineKm(previous[0], previous[1], coord[0], coord[1]).toFixed(1)),
+        },
+        {
+          id: `${road.id}-section-end-${index}`,
+          coord,
+          type: 'section_end',
+          speedLimit,
+          label: '구간단속 종료',
+        }
+      )
+    }
+    return cameras
+  })
+}
+
+function buildRoadRestStops(road) {
+  const path = getRoadPath(road)
+  return path.slice(1, -1).map((coord, index) => ({
+    id: `${road.id}-rest-${index}`,
+    name: index % 2 === 0 ? `${road.shortName} 휴게소` : `${road.shortName} 졸음쉼터`,
+    coord,
+    type: index % 2 === 0 ? 'service' : 'drowsy',
+    km: road.majorJunctions[index]?.km ?? Math.round((road.totalKm / Math.max(1, path.length - 1)) * (index + 1)),
+  }))
+}
+
+function buildRoadSummary(road) {
+  const segments = buildRoadSegments(road)
+  return {
+    maxSpeedLimit: Math.max(...segments.map((segment) => segment.speedLimit)),
+    averageSpeed: Math.round(segments.reduce((sum, segment) => sum + segment.averageSpeed, 0) / segments.length),
+    congestionLabel: segments.some((segment) => segment.congestionScore === 3)
+      ? '정체'
+      : segments.some((segment) => segment.congestionScore === 2)
+        ? '서행'
+        : '원활',
+  }
+}
+
+function buildMergeOptions(route, selectedId) {
+  const options = [
+    {
+      id: 'merge-current',
+      name: '현재 도로 유지',
+      distanceFromCurrent: 8.4,
+      addedTime: 0,
+      fixedCameraCount: route.fixedCameraCount,
+      sectionCameraCount: route.sectionCameraCount,
+      dominantSpeedLimit: route.dominantSpeedLimit,
+      isCurrent: true,
+      afterRoadType: route.highwayRatio >= 50 ? 'highway' : 'national',
+      afterRoadName: route.highwayRatio >= 50 ? '고속도로 본선 유지' : '국도 본선 유지',
+      afterDescription: '현재 흐름을 유지하면서 가장 단순한 경로를 탑니다.',
+      afterNextJunction: '다음 분기까지 직진 흐름이 이어집니다.',
+      congestionPreview: route.congestionLabel,
+    },
+    {
+      id: 'merge-highway',
+      name: '다음 10km 고속 재합류',
+      distanceFromCurrent: 12.8,
+      addedTime: 2,
+      fixedCameraCount: route.fixedCameraCount + 1,
+      sectionCameraCount: Math.max(1, route.sectionCameraCount),
+      dominantSpeedLimit: Math.max(100, route.dominantSpeedLimit),
+      isCurrent: false,
+      afterRoadType: 'highway',
+      afterRoadName: '고속 본선 재합류',
+      afterDescription: '조금 더 빠르지만 카메라와 통행료가 늘어날 수 있습니다.',
+      afterNextJunction: '고속 직진 구간으로 다시 연결됩니다.',
+      congestionPreview: route.congestionScore >= 2 ? '원활' : route.congestionLabel,
+    },
+    {
+      id: 'merge-national',
+      name: '다음 10km 국도 전환',
+      distanceFromCurrent: 14.6,
+      addedTime: 5,
+      fixedCameraCount: Math.max(0, route.fixedCameraCount - 1),
+      sectionCameraCount: Math.max(0, route.sectionCameraCount - 1),
+      dominantSpeedLimit: Math.min(80, route.dominantSpeedLimit),
+      isCurrent: false,
+      afterRoadType: 'national',
+      afterRoadName: '국도 본선 전환',
+      afterDescription: '정체를 피할 수 있지만 신호와 합류는 늘어납니다.',
+      afterNextJunction: '국도 본선과 연결됩니다.',
+      congestionPreview: route.congestionScore === 3 ? '서행' : '원활',
+    },
+  ]
+
+  return options.map((option) => ({
+    ...option,
+    isSelected: option.id === (selectedId ?? 'merge-current'),
+  }))
+}
+
+function buildPolyline(origin, destination, offsetLng = 0) {
+  return Array.from({ length: 9 }, (_, index) => {
+    const t = index / 8
+    return [
+      origin.lat + (destination.lat - origin.lat) * t,
+      origin.lng + offsetLng * Math.sin(Math.PI * t) + (destination.lng - origin.lng) * t,
+    ]
+  })
+}
+
+function buildSegmentStats(route) {
+  return [
+    {
+      id: `${route.id}-segment-0`,
+      name: route.highwayRatio >= 50 ? '고속 본선' : '국도 본선',
+      positions: route.polyline.slice(0, 3),
+      roadType: route.highwayRatio >= 50 ? 'highway' : 'national',
+      speedLimit: route.dominantSpeedLimit,
+      averageSpeed: Math.max(35, route.dominantSpeedLimit - (route.congestionScore === 3 ? 28 : route.congestionScore === 2 ? 16 : 8)),
+      congestionScore: route.congestionScore,
+      center: route.polyline[1],
+    },
+    {
+      id: `${route.id}-segment-1`,
+      name: '합류/연결 구간',
+      positions: route.polyline.slice(2, 6),
+      roadType: route.highwayRatio >= 50 ? 'junction' : 'national',
+      speedLimit: Math.max(70, route.dominantSpeedLimit - 10),
+      averageSpeed: Math.max(30, route.dominantSpeedLimit - 24),
+      congestionScore: Math.min(3, route.congestionScore + 1),
+      center: route.polyline[4],
+    },
+    {
+      id: `${route.id}-segment-2`,
+      name: '도착 진입',
+      positions: route.polyline.slice(5),
+      roadType: 'local',
+      speedLimit: Math.max(50, route.dominantSpeedLimit - 30),
+      averageSpeed: Math.max(25, route.dominantSpeedLimit - 36),
+      congestionScore: Math.min(3, route.congestionScore + 1),
+      center: route.polyline[7],
+    },
+  ]
+}
+
+function buildNextSegments(route) {
+  return route.segmentStats.map((segment, index) => ({
+    km: Number((index * Math.max(4.5, route.distance / 3)).toFixed(1)),
+    roadName: segment.name,
+    type: index === 1 ? 'junction' : index === 2 ? 'section' : 'highway',
+    speedLimit: segment.speedLimit,
+    congestion: segment.congestionScore,
+  }))
+}
+
+function decorateRoute(route, index, context) {
+  const { driverPreset, routePreferences } = context
+  let eta = route.eta
+  let mergeCount = route.mergeCount
+  let highwayRatio = route.highwayRatio
+  let nationalRoadRatio = route.nationalRoadRatio
+  let dominantSpeedLimit = route.dominantSpeedLimit
+
+  if (driverPreset === 'beginner') {
+    eta += 3
+    mergeCount = Math.max(2, mergeCount - 1)
+  } else if (driverPreset === 'expert') {
+    eta = Math.max(eta - 2, 1)
+    mergeCount += 1
+  }
+
+  if (routePreferences.roadType === 'highway_only') {
+    highwayRatio = Math.max(82, highwayRatio)
+    nationalRoadRatio = 100 - highwayRatio
+    dominantSpeedLimit = Math.max(100, dominantSpeedLimit)
+  } else if (routePreferences.roadType === 'national_road') {
+    nationalRoadRatio = Math.max(58, nationalRoadRatio)
+    highwayRatio = 100 - nationalRoadRatio
+    dominantSpeedLimit = Math.min(80, dominantSpeedLimit)
+    eta += 5
+  }
+
+  if (routePreferences.includeScenic && index === 2) eta += 6
+  if (routePreferences.includeMountain && index === 1) eta += 4
+
+  const nextRoute = {
+    ...route,
+    eta,
+    mergeCount,
+    highwayRatio,
+    nationalRoadRatio,
+    dominantSpeedLimit,
+  }
+
+  const difficultyScore = mergeCount + (nextRoute.congestionScore * 2)
+  nextRoute.difficultyLabel = difficultyScore >= 12 ? '난이도 상' : difficultyScore >= 8 ? '난이도 중' : '난이도 하'
+  nextRoute.difficultyColor = difficultyScore >= 12 ? 'red' : difficultyScore >= 8 ? 'orange' : 'green'
+  nextRoute.segmentStats = buildSegmentStats(nextRoute)
+  nextRoute.averageSpeed = Math.round(nextRoute.segmentStats.reduce((sum, segment) => sum + segment.averageSpeed, 0) / nextRoute.segmentStats.length)
+  nextRoute.maxSpeedLimit = Math.max(...nextRoute.segmentStats.map((segment) => segment.speedLimit))
+  nextRoute.nextSegments = buildNextSegments(nextRoute)
+  nextRoute.explanation = [
+    driverPreset === 'beginner' ? '초보 기준' : driverPreset === 'expert' ? '고수 기준' : '중수 기준',
+    routePreferences.roadType === 'highway_only' ? '고속 위주' : routePreferences.roadType === 'national_road' ? '국도 선호' : '고속+국도',
+    `합류 ${mergeCount}회`,
+    `최고 ${nextRoute.maxSpeedLimit} / 평균 ${nextRoute.averageSpeed}km/h`,
+  ].join(' · ')
+  return nextRoute
+}
+
+function buildFallbackRoutes(origin, destination, routePreferences, driverPreset) {
+  const distanceKm = haversineKm(origin.lat, origin.lng, destination.lat, destination.lng)
+  const baseEta = Math.max(20, Math.round((distanceKm / 82) * 60))
+  const configs = [
+    {
+      id: 'route-fast',
+      title: '빠른 도로',
+      eta: baseEta,
+      distance: Number((distanceKm * 1.03).toFixed(1)),
+      highwayRatio: 72,
+      nationalRoadRatio: 28,
+      mergeCount: 6,
+      congestionScore: 2,
+      congestionLabel: '서행',
+      fixedCameraCount: 3,
+      sectionCameraCount: 1,
+      sectionEnforcementDistance: 6,
+      dominantSpeedLimit: 100,
+      tollFee: Math.round(distanceKm * 85),
+      tag: '추천',
+      tagColor: 'blue',
+      routeColor: '#0064FF',
+      polyline: buildPolyline(origin, destination, 0.03),
+    },
+    {
+      id: 'route-highway',
+      title: '고속도로 중심',
+      eta: baseEta + 3,
+      distance: Number((distanceKm * 1.05).toFixed(1)),
+      highwayRatio: 88,
+      nationalRoadRatio: 12,
+      mergeCount: 4,
+      congestionScore: 1,
+      congestionLabel: '원활',
+      fixedCameraCount: 4,
+      sectionCameraCount: 2,
+      sectionEnforcementDistance: 10,
+      dominantSpeedLimit: 110,
+      tollFee: Math.round(distanceKm * 110),
+      tag: '고속우선',
+      tagColor: 'blue',
+      routeColor: '#8E8E93',
+      polyline: buildPolyline(origin, destination, -0.04),
+    },
+    {
+      id: 'route-national',
+      title: '국도 포함',
+      eta: baseEta + 8,
+      distance: Number((distanceKm * 1.1).toFixed(1)),
+      highwayRatio: 42,
+      nationalRoadRatio: 58,
+      mergeCount: 9,
+      congestionScore: 1,
+      congestionLabel: '원활',
+      fixedCameraCount: 2,
+      sectionCameraCount: 0,
+      sectionEnforcementDistance: 0,
+      dominantSpeedLimit: 80,
+      tollFee: Math.round(distanceKm * 45),
+      tag: '국도선호',
+      tagColor: 'green',
+      routeColor: '#8E8E93',
+      polyline: buildPolyline(origin, destination, 0.08),
+    },
+  ]
+
+  return configs.map((route, index) => decorateRoute(route, index, { origin, destination, routePreferences, driverPreset }))
+}
 
 const useAppStore = create((set, get) => ({
-  // 탭
   activeTab: 'home',
   setActiveTab: (tab) => set({ activeTab: tab }),
+  openSearchHome: () => set({ activeTab: 'search', searchMode: 'default', selectedNearbyCategory: null, nearbyPlaces: [] }),
 
-  // 지도 중심
-  mapCenter: [37.5665, 126.9780],
-  mapZoom: 11,
+  mapCenter: DEFAULT_CENTER,
+  mapZoom: 13,
   setMapCenter: (center, zoom) => set({ mapCenter: center, mapZoom: zoom ?? get().mapZoom }),
 
-  // 현재 위치 (Geolocation API)
   userLocation: null,
-  setUserLocation: (loc) => set({ userLocation: loc }),
+  locationHistory: [],
+  setUserLocation: (location) =>
+    set((state) => ({
+      userLocation: location,
+      locationHistory: [...state.locationHistory.slice(-19), [location.lat, location.lng]],
+    })),
 
-  // 검색/목적지
   destination: null,
-  setDestination: (dest) => set({ destination: dest }),
+  setDestination: (destination) => set({ destination }),
 
-  // 경로 패널
   showRoutePanel: false,
-  setShowRoutePanel: (v) => set({ showRoutePanel: v }),
-
+  setShowRoutePanel: (showRoutePanel) => set({ showRoutePanel }),
   routes: [],
-  setRoutes: (r) => set({ routes: r }),
-
+  setRoutes: (routes) => set({ routes }),
   selectedRouteId: null,
-  setSelectedRouteId: (id) => set({ selectedRouteId: id }),
-
-  // 로딩 상태
+  setSelectedRouteId: (selectedRouteId) => {
+    const route = get().routes.find((item) => item.id === selectedRouteId)
+    set({
+      selectedRouteId,
+      mergeOptions: route ? buildMergeOptions(route, get().selectedMergeOptionId) : [],
+      mapCenter: route?.polyline?.[Math.floor(route.polyline.length / 2)] ?? get().mapCenter,
+      mapZoom: route ? 9 : get().mapZoom,
+    })
+  },
   isLoadingRoutes: false,
-
-  // 내비게이션 모드
   isNavigating: false,
   startNavigation: () => set({ isNavigating: true, showRoutePanel: false }),
   stopNavigation: () => set({ isNavigating: false, destination: null, routes: [], selectedRouteId: null }),
 
-  // 드라이버 프리셋
-  driverPreset: 'intermediate',
-  setDriverPreset: (p) => set({ driverPreset: p }),
+  tmapStatus: { hasApiKey: false, mode: 'simulation', lastError: null },
+  setTmapStatus: (patch) => set((state) => ({ tmapStatus: { ...state.tmapStatus, ...patch } })),
 
-  // 경로 조건 필터
+  driverPreset: 'intermediate',
+  setDriverPreset: (driverPreset) => {
+    set({ driverPreset })
+    const { destination } = get()
+    if (destination) get().searchRoute(destination)
+  },
+
   routePreferences: {
     roadType: 'mixed',
     includeScenic: false,
     includeMountain: false,
+    allowNarrowRoads: false,
   },
-  setRoutePreference: (key, value) =>
-    set((s) => ({ routePreferences: { ...s.routePreferences, [key]: value } })),
+  setRoutePreference: (key, value) => {
+    set((state) => ({
+      routePreferences: { ...state.routePreferences, [key]: value },
+    }))
+    const { destination } = get()
+    if (destination) get().searchRoute(destination)
+  },
 
-  // 지도 레이어 토글
   visibleLayers: {
     speedCameras: true,
     sectionEnforcement: true,
-    speedLimits: false,
+    speedLimits: true,
     mergePoints: true,
+    restStops: true,
+    congestion: true,
   },
-  toggleLayer: (key) =>
-    set((s) => ({ visibleLayers: { ...s.visibleLayers, [key]: !s.visibleLayers[key] } })),
+  toggleLayer: (key) => set((state) => ({ visibleLayers: { ...state.visibleLayers, [key]: !state.visibleLayers[key] } })),
 
-  // 합류 옵션 (다음 10km)
-  mergeOptions: [],
-  setMergeOptions: (opts) => set({ mergeOptions: opts }),
+  favorites: sanitizeFavorites(readStorage(STORAGE_KEYS.favorites, DEFAULT_FAVORITES)),
+  saveFavorites: (favorites) => {
+    const next = sanitizeFavorites(favorites)
+    writeStorage(STORAGE_KEYS.favorites, next)
+    set({ favorites: next })
+  },
+  updateFavorite: (favorite) => {
+    const next = sanitizeFavorites(get().favorites.map((item) => (item.id === favorite.id ? favorite : item)))
+    writeStorage(STORAGE_KEYS.favorites, next)
+    set({ favorites: next })
+  },
+  addFavorite: (favorite) => {
+    const next = sanitizeFavorites([...get().favorites, favorite])
+    writeStorage(STORAGE_KEYS.favorites, next)
+    set({ favorites: next })
+  },
+  deleteFavorite: (favoriteId) => {
+    const next = get().favorites.filter((item) => item.id !== favoriteId)
+    writeStorage(STORAGE_KEYS.favorites, next)
+    set({ favorites: next })
+  },
 
-  // ─── 경로 탐색 ───────────────────────────────────────────────────────────
-  searchRoute: async (destination) => {
-    const { userLocation } = get()
+  recentSearches: readStorage(STORAGE_KEYS.recents, MOCK_RECENT_SEARCHES),
+  addRecentSearch: (place) => {
+    const next = [place, ...get().recentSearches.filter((item) => item.id !== place.id)].slice(0, 12)
+    writeStorage(STORAGE_KEYS.recents, next)
+    set({ recentSearches: next })
+  },
+  removeRecentSearch: (id) => {
+    const next = get().recentSearches.filter((item) => item.id !== id)
+    writeStorage(STORAGE_KEYS.recents, next)
+    set({ recentSearches: next })
+  },
+  clearRecentSearches: () => {
+    writeStorage(STORAGE_KEYS.recents, [])
+    set({ recentSearches: [] })
+  },
 
-    // 지도 뷰 즉시 이동
+  searchMode: 'default',
+  selectedNearbyCategory: null,
+  nearbyPlaces: [],
+  isLoadingNearby: false,
+  showRecentSearches: () => set({ activeTab: 'search', searchMode: 'recent' }),
+  openNearbyCategory: async (category) => {
+    const origin = get().userLocation ?? DEFAULT_ORIGIN
     set({
+      activeTab: 'search',
+      searchMode: 'nearby',
+      selectedNearbyCategory: category,
+      nearbyPlaces: [],
+      isLoadingNearby: true,
+    })
+    try {
+      const nearbyPlaces = await searchNearbyPOIs(category, origin.lat, origin.lng)
+      set({ nearbyPlaces, isLoadingNearby: false })
+    } catch {
+      set({ nearbyPlaces: [], isLoadingNearby: false })
+    }
+  },
+
+  selectedRoadId: null,
+  selectRoad: (roadId) => {
+    const road = getRoadById(roadId)
+    if (!road) return
+    const midLat = (road.startCoord[0] + road.endCoord[0]) / 2
+    const midLng = (road.startCoord[1] + road.endCoord[1]) / 2
+    set({
+      activeTab: 'home',
+      selectedRoadId: roadId,
+      mapCenter: [midLat, midLng],
+      mapZoom: 7,
+      showRoutePanel: false,
+    })
+  },
+  clearSelectedRoad: () => set({ selectedRoadId: null }),
+
+  mergeOptions: [],
+  selectedMergeOptionId: 'merge-current',
+  setMergeOptions: (mergeOptions) => set({ mergeOptions }),
+  selectMergeOption: (selectedMergeOptionId) => {
+    set({ selectedMergeOptionId })
+    const route = get().routes.find((item) => item.id === get().selectedRouteId)
+    if (route) {
+      set({ mergeOptions: buildMergeOptions(route, selectedMergeOptionId) })
+    }
+  },
+
+  getSelectedRoadDetail: () => {
+    const selectedRoad = getRoadById(get().selectedRoadId)
+    if (!selectedRoad) return null
+    return {
+      ...selectedRoad,
+      startAddress: selectedRoad.startName,
+      endAddress: selectedRoad.endName,
+      path: getRoadPath(selectedRoad),
+      cameras: buildRoadCameras(selectedRoad),
+      congestionSegments: buildRoadSegments(selectedRoad),
+      restStops: buildRoadRestStops(selectedRoad),
+      summary: buildRoadSummary(selectedRoad),
+    }
+  },
+
+  searchRoute: async (destination) => {
+    const origin = get().userLocation ?? DEFAULT_ORIGIN
+    const { routePreferences, driverPreset } = get()
+    set({
+      activeTab: 'home',
       destination,
       showRoutePanel: true,
       isLoadingRoutes: true,
       routes: [],
       selectedRouteId: null,
-      mergeOptions: MOCK_MERGE_OPTIONS,
-      mapCenter: [
-        (37.5665 + destination.lat) / 2,
-        (126.9780 + destination.lng) / 2,
-      ],
-      mapZoom: 8,
+      selectedRoadId: null,
     })
+    get().addRecentSearch(destination)
 
-    if (HAS_API_KEY && userLocation) {
-      // ── 실제 T-map API ──
-      try {
-        const routes = await fetchRoutes(
-          userLocation.lat, userLocation.lng,
-          destination.lat, destination.lng
-        )
-        if (routes.length > 0) {
-          set({
-            routes,
-            selectedRouteId: routes[0].id,
-            isLoadingRoutes: false,
-          })
-          return
-        }
-      } catch (e) {
-        console.warn('T-map API 실패, 시뮬레이션으로 대체:', e)
+    const tmapStatus = await fetchTmapStatus()
+    get().setTmapStatus({ ...tmapStatus, lastError: null })
+
+    let liveRoutes = []
+    try {
+      if (tmapStatus.hasApiKey) {
+        liveRoutes = await fetchRoutes(origin.lat, origin.lng, destination.lat, destination.lng, {
+          allowNarrowRoads: routePreferences.allowNarrowRoads,
+        })
       }
+    } catch (error) {
+      get().setTmapStatus({
+        mode: 'simulation',
+        lastError: error?.message ?? 'TMAP 경로 응답 실패',
+      })
     }
 
-    // ── 가상 시뮬레이션 (API 키 없거나 실패 시) ──
-    const distKm = haversineKm(37.5665, 126.9780, destination.lat, destination.lng)
-    const { routePreferences, driverPreset } = get()
-    const simRoutes = buildSimulatedRoutes(destination, distKm, routePreferences, driverPreset)
+    const routes = (liveRoutes.length > 0 ? liveRoutes : buildFallbackRoutes(origin, destination, routePreferences, driverPreset))
+      .map((route, index) => decorateRoute(route, index, { origin, destination, routePreferences, driverPreset }))
+
+    const selectedRouteId = routes[0]?.id ?? null
+    const selectedRoute = routes[0] ?? null
     set({
-      routes: simRoutes,
-      selectedRouteId: simRoutes[0].id,
+      routes,
+      selectedRouteId,
       isLoadingRoutes: false,
+      mergeOptions: selectedRoute ? buildMergeOptions(selectedRoute, get().selectedMergeOptionId) : [],
+      mapCenter: selectedRoute?.polyline?.[Math.floor(selectedRoute.polyline.length / 2)] ?? [destination.lat, destination.lng],
+      mapZoom: selectedRoute ? 8 : 14,
     })
   },
 }))
-
-// ─── 거리 계산 (Haversine) ────────────────────────────────────────────────────
-function haversineKm(lat1, lon1, lat2, lon2) {
-  const R = 6371
-  const dLat = (lat2 - lat1) * Math.PI / 180
-  const dLon = (lon2 - lon1) * Math.PI / 180
-  const a = Math.sin(dLat/2)**2 +
-    Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) * Math.sin(dLon/2)**2
-  return R * 2 * Math.asin(Math.sqrt(a))
-}
-
-// ─── 목적지 기반 가상 경로 생성 ───────────────────────────────────────────────
-function buildSimulatedRoutes(destination, distKm, prefs = {}, preset = 'intermediate') {
-  const hour = new Date().getHours()
-  const isRushHour = (hour >= 7 && hour <= 9) || (hour >= 17 && hour <= 20)
-  const isWeekend = [0, 6].includes(new Date().getDay())
-  const trafficMult = isRushHour && !isWeekend ? 1.35 : isWeekend ? 1.1 : 1.0
-  const roadType = prefs.roadType ?? 'mixed'
-
-  const startLat = 37.5665, startLng = 126.9780
-  const endLat = destination.lat, endLng = destination.lng
-
-  const makePolyline = (offsetLng) => Array.from({ length: 9 }, (_, i) => {
-    const t = i / 8
-    return [
-      startLat + (endLat - startLat) * t,
-      startLng + offsetLng * Math.sin(Math.PI * t) + (endLng - startLng) * t,
-    ]
-  })
-
-  // 도로 타입 필터에 따라 경로 특성이 달라짐
-  const ROAD_CONFIGS = {
-    highway_only: {
-      routes: [
-        { hwRatio: 95, natRatio: 5,  merges: 3,  etaMult: 1.0,  distMult: 1.02, toll: 52, cam: 5, sec: 3, secKm: 18, spd: 110,
-          title: '고속도로 전용', tag: '추천', tagColor: 'blue',
-          expl: '고속도로만 이용 · 합류 최소 · 최고속도 110km/h' },
-        { hwRatio: 92, natRatio: 8,  merges: 4,  etaMult: 1.05, distMult: 1.05, toll: 48, cam: 4, sec: 2, secKm: 12, spd: 110,
-          title: '고속도로 우선', tag: '고속위주', tagColor: 'blue',
-          expl: '고속도로 92% · 단순 구조' },
-        { hwRatio: 88, natRatio: 12, merges: 5,  etaMult: 1.08, distMult: 1.06, toll: 44, cam: 3, sec: 2, secKm: 10, spd: 110,
-          title: '고속+일부 연결로', tag: '대안', tagColor: 'blue',
-          expl: '고속도로 중심 · 일부 연결로 포함' },
-      ]
-    },
-    mixed: {
-      routes: [
-        { hwRatio: 70, natRatio: 30, merges: 7,  etaMult: 1.0,  distMult: 1.05, toll: 32, cam: 3, sec: 1, secKm: 6,  spd: 100,
-          title: '고속+국도 최적', tag: '추천', tagColor: 'blue',
-          expl: '고속도로+국도 균형 · 정체 회피 · 통행료 절감' },
-        { hwRatio: 55, natRatio: 45, merges: 11, etaMult: 1.1,  distMult: 1.12, toll: 18, cam: 2, sec: 1, secKm: 6,  spd: 80,
-          title: '국도 포함', tag: isRushHour ? '정체 회피' : '정체 적음', tagColor: 'green',
-          expl: `국도 45% · 카메라 적음 · 통행료 절감${isRushHour ? ' · 출퇴근 정체 우회' : ''}` },
-        { hwRatio: 30, natRatio: 70, merges: 14, etaMult: 1.2,  distMult: 1.2,  toll: 8,  cam: 3, sec: 0, secKm: 0,  spd: 70,
-          title: isWeekend ? '주말 풍경 경로' : '국도 위주',
-          tag: isWeekend ? '주말 추천' : '구간단속 없음', tagColor: 'orange',
-          expl: '구간단속 없음 · 국도 중심 · 여유 있을 때 추천' },
-      ]
-    },
-    national_road: {
-      routes: [
-        { hwRatio: 20, natRatio: 80, merges: 16, etaMult: 1.25, distMult: 1.25, toll: 0,  cam: 2, sec: 0, secKm: 0,  spd: 70,
-          title: '국도 전용', tag: '무료', tagColor: 'green',
-          expl: '통행료 없음 · 국도 80% · 신호 있음' },
-        { hwRatio: 35, natRatio: 65, merges: 13, etaMult: 1.18, distMult: 1.2,  toll: 6,  cam: 2, sec: 0, secKm: 0,  spd: 70,
-          title: '국도 중심', tag: '국도선호', tagColor: 'green',
-          expl: '국도 65% · 구간단속 없음 · 저렴한 통행료' },
-        { hwRatio: 45, natRatio: 55, merges: 10, etaMult: 1.12, distMult: 1.15, toll: 14, cam: 2, sec: 1, secKm: 5,  spd: 80,
-          title: '국도+일부 고속', tag: '절충', tagColor: 'green',
-          expl: '국도 위주 · 일부 고속 구간 포함' },
-      ]
-    },
-  }
-
-  const config = ROAD_CONFIGS[roadType] ?? ROAD_CONFIGS.mixed
-  const baseEta = Math.round((distKm / 90) * 60 * trafficMult)
-  const offsets = [-0.08, 0, 0.1]
-
-  return config.routes.map((r, i) => {
-    const congestionScore = isRushHour && !isWeekend && r.hwRatio > 70 ? 2 : 1
-    return {
-      id: `sim-${roadType}-${i}`,
-      title: r.title,
-      explanation: r.expl + (isRushHour && !isWeekend && r.hwRatio > 70 ? ' · ⚠️ 출퇴근 서행' : ''),
-      eta: Math.round(baseEta * r.etaMult),
-      distance: Math.round(distKm * r.distMult),
-      highwayRatio: r.hwRatio,
-      nationalRoadRatio: r.natRatio,
-      mergeCount: r.merges,
-      congestionScore,
-      congestionLabel: congestionScore === 2 ? '서행' : '원활',
-      fixedCameraCount: r.cam,
-      sectionCameraCount: r.sec,
-      sectionEnforcementDistance: r.secKm,
-      dominantSpeedLimit: r.spd,
-      tollFee: Math.round(distKm * r.toll),
-      recommended: i === 0,
-      tag: r.tag,
-      tagColor: r.tagColor,
-      routeColor: i === 0 ? '#0064FF' : '#8E8E93',
-      polyline: makePolyline(offsets[i] ?? 0),
-    }
-  })
-}
 
 export default useAppStore

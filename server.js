@@ -1,35 +1,58 @@
 import express from 'express'
 import { createProxyMiddleware } from 'http-proxy-middleware'
+import fs from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const app = express()
 const PORT = process.env.PORT || 3000
-const TMAP_KEY = process.env.VITE_TMAP_API_KEY || ''
 
-// T-map API 프록시 — 브라우저 CORS 우회, API 키 서버에서 주입
+function readEnvFile(filename) {
+  const filepath = join(__dirname, filename)
+  if (!fs.existsSync(filepath)) return {}
+
+  return fs.readFileSync(filepath, 'utf8')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#') && line.includes('='))
+    .reduce((acc, line) => {
+      const [key, ...rest] = line.split('=')
+      acc[key.trim()] = rest.join('=').trim().replace(/^['"]|['"]$/g, '')
+      return acc
+    }, {})
+}
+
+const localEnv = {
+  ...readEnvFile('.env'),
+  ...readEnvFile('.env.local'),
+}
+
+const TMAP_KEY = process.env.TMAP_API_KEY || process.env.VITE_TMAP_API_KEY || localEnv.TMAP_API_KEY || localEnv.VITE_TMAP_API_KEY || ''
+
+app.get('/api/meta/tmap-status', (_, res) => {
+  res.json({
+    hasApiKey: Boolean(TMAP_KEY),
+    mode: TMAP_KEY ? 'live' : 'simulation',
+  })
+})
+
 app.use('/api/tmap', createProxyMiddleware({
   target: 'https://apis.openapi.sk.com',
   changeOrigin: true,
   pathRewrite: { '^/api/tmap': '/tmap' },
   on: {
     proxyReq: (proxyReq, req) => {
-      // API 키를 서버에서 주입 (클라이언트에 노출 안 됨)
       proxyReq.setHeader('appKey', TMAP_KEY)
-      // 쿼리에 appKey가 있으면 제거 (중복 방지)
       const url = new URL('https://dummy' + req.url)
       url.searchParams.delete('appKey')
-      proxyReq.path = proxyReq.path.replace(/([?&])appKey=[^&]*/g, '')
-        .replace(/[?&]$/, '')
+      proxyReq.path = proxyReq.path.replace(/([?&])appKey=[^&]*/g, '').replace(/[?&]$/, '')
     },
   },
 }))
 
-// 빌드된 정적 파일 서빙
 app.use(express.static(join(__dirname, 'dist')))
 
-// SPA 라우팅 — 모든 경로를 index.html로
 app.use((_, res) => {
   res.sendFile(join(__dirname, 'dist', 'index.html'))
 })

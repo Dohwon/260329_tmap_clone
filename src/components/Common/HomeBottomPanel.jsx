@@ -1,97 +1,105 @@
-import React, { useState } from 'react'
+import React, { useRef } from 'react'
 import useAppStore from '../../store/appStore'
-import SearchSheet from '../Search/SearchSheet'
-import { MOCK_FAVORITES } from '../../data/mockData'
+import { HIGHWAYS } from '../../data/highwayData'
 
 export default function HomeBottomPanel() {
-  const [showSearch, setShowSearch] = useState(false)
-  const { isNavigating, showRoutePanel } = useAppStore()
+  const {
+    isNavigating,
+    showRoutePanel,
+    favorites,
+    userLocation,
+    searchRoute,
+    showRecentSearches,
+    openNearbyCategory,
+    selectRoad,
+    setActiveTab,
+  } = useAppStore()
+  const quickChipRef = useRef(null)
+  const roadRef = useRef(null)
+
+  const handleWheelScroll = (ref) => (event) => {
+    if (!ref.current) return
+    ref.current.scrollLeft += event.deltaY
+  }
 
   if (isNavigating || showRoutePanel) return null
 
   return (
-    <>
-      <div className="absolute bottom-16 left-0 right-0 z-10">
-        <div className="bg-white bottom-sheet mx-0 pt-3 pb-2 safe-bottom">
-          {/* 드래그 핸들 */}
-          <div className="flex justify-center mb-2">
-            <div className="w-10 h-1 bg-gray-300 rounded-full"/>
-          </div>
+    <div className="absolute bottom-16 left-0 right-0 z-20">
+      <div className="bg-white bottom-sheet mx-0 pt-3 pb-2 safe-bottom">
+        <div className="flex justify-center mb-2">
+          <div className="w-10 h-1 bg-gray-300 rounded-full" />
+        </div>
 
-          {/* 즐겨찾기 바로가기 */}
-          <div className="flex gap-2 px-4 mb-3">
-            {MOCK_FAVORITES.map(fav => (
-              <QuickChip key={fav.id} icon={fav.icon} label={fav.name} />
+        <div className="mx-4 rounded-2xl bg-gray-50 px-4 py-3">
+          <div className="text-[11px] font-semibold text-gray-400">내 위치</div>
+          <div className="text-sm font-bold text-gray-900 mt-0.5">
+            {userLocation ? `${userLocation.lat.toFixed(5)}, ${userLocation.lng.toFixed(5)}` : 'GPS 위치 확인 중'}
+          </div>
+          <div className="text-xs text-gray-400 mt-1">
+            {userLocation?.speedKmh != null ? `현재 속도 ${userLocation.speedKmh}km/h` : '위치 권한이 필요할 수 있어요'}
+          </div>
+        </div>
+
+        <div className="px-4 mt-3">
+          <div ref={quickChipRef} onWheel={handleWheelScroll(quickChipRef)} className="flex gap-2 overflow-x-auto no-scrollbar">
+            {favorites.slice(0, 2).map((favorite) => (
+              <QuickChip
+                key={favorite.id}
+                icon={favorite.icon}
+                label={favorite.name}
+                sublabel={favorite.address ? '' : '설정'}
+                onClick={() => {
+                  if (favorite.lat && favorite.lng) {
+                    searchRoute(favorite)
+                    return
+                  }
+                  setActiveTab('favorites')
+                }}
+              />
             ))}
-            <QuickChip icon="⭐" label="최근" />
-            <QuickChip icon="⛽" label="주유소" />
-            <QuickChip icon="🅿️" label="주차장" />
+            <QuickChip icon="⭐" label="최근" onClick={showRecentSearches} />
+            <QuickChip icon="⛽" label="주유소" onClick={() => openNearbyCategory('주유소')} />
+            <QuickChip icon="🅿️" label="주차장" onClick={() => openNearbyCategory('주차장')} />
           </div>
+        </div>
 
-          {/* 검색 버튼 */}
-          <button
-            onClick={() => setShowSearch(true)}
-            className="mx-4 w-[calc(100%-2rem)] flex items-center bg-gray-100 rounded-2xl px-4 py-3.5 active:bg-gray-200 transition-all"
-          >
-            <div className="w-8 h-8 bg-tmap-blue rounded-lg flex items-center justify-center mr-3 flex-shrink-0">
-              <span className="text-white font-black text-base leading-none">T</span>
-            </div>
-            <span className="text-gray-400 text-sm flex-1 text-left">어디로 갈까요?</span>
-            <svg className="w-5 h-5 text-tmap-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
-            </svg>
-          </button>
-
-          {/* 교통 상황 - 시간대 기반 */}
-          <TrafficBanner />
+        <div className="px-4 mt-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs font-bold text-gray-500 tracking-wide">고속도로 / 국도 탐색</div>
+            <div className="text-[11px] text-gray-400">스크롤해서 선택</div>
+          </div>
+          <div ref={roadRef} onWheel={handleWheelScroll(roadRef)} className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+            {HIGHWAYS.map((road) => (
+              <button
+                key={road.id}
+                onClick={() => selectRoad(road.id)}
+                className="flex-shrink-0 rounded-2xl px-3 py-2.5 border bg-gray-50 border-gray-100 min-w-[138px] text-left"
+              >
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg text-white text-xs font-black flex items-center justify-center" style={{ backgroundColor: road.color }}>
+                    {road.number}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-gray-900 truncate">{road.name}</div>
+                    <div className="text-[11px] text-gray-400 truncate">{road.startName} → {road.endName}</div>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
-
-      {showSearch && <SearchSheet onClose={() => setShowSearch(false)} />}
-    </>
+    </div>
   )
 }
 
-function QuickChip({ icon, label }) {
+function QuickChip({ icon, label, sublabel, onClick }) {
   return (
-    <button className="flex items-center gap-1.5 bg-gray-100 rounded-full px-3 py-1.5 active:bg-gray-200 flex-shrink-0">
+    <button onClick={onClick} className="flex items-center gap-1.5 bg-gray-100 rounded-full px-3 py-1.5 active:bg-gray-200 flex-shrink-0">
       <span className="text-sm">{icon}</span>
       <span className="text-xs font-medium text-gray-700">{label}</span>
+      {sublabel ? <span className="text-[10px] text-tmap-blue font-semibold">{sublabel}</span> : null}
     </button>
-  )
-}
-
-function TrafficBanner() {
-  const hour = new Date().getHours()
-  const day = new Date().getDay()
-  const isWeekend = day === 0 || day === 6
-  const isMorningRush = !isWeekend && hour >= 7 && hour <= 9
-  const isEveningRush = !isWeekend && hour >= 17 && hour <= 20
-  const isLateNight = hour >= 23 || hour <= 5
-  const isWeekendAft = isWeekend && hour >= 13 && hour <= 18
-
-  let color, bg, dot, text
-  if (isMorningRush) {
-    color = 'text-orange-700'; bg = 'bg-orange-50'; dot = 'bg-orange-400'
-    text = `출근 시간대 (${hour}시) · 수도권 도심 서행 예상`
-  } else if (isEveningRush) {
-    color = 'text-red-700'; bg = 'bg-red-50'; dot = 'bg-red-400'
-    text = `퇴근 시간대 (${hour}시) · 주요 간선도로 정체 예상`
-  } else if (isWeekendAft) {
-    color = 'text-orange-700'; bg = 'bg-orange-50'; dot = 'bg-orange-400'
-    text = `주말 오후 (${hour}시) · 귀경 차량 증가 예상`
-  } else if (isLateNight) {
-    color = 'text-blue-700'; bg = 'bg-blue-50'; dot = 'bg-blue-400'
-    text = `심야 시간대 (${hour}시) · 전국 도로 원활`
-  } else {
-    color = 'text-green-700'; bg = 'bg-green-50'; dot = 'bg-tmap-green'
-    text = `현재 (${hour}시) · 전반적으로 원활한 편`
-  }
-
-  return (
-    <div className={`mx-4 mt-2 flex items-center gap-2 ${bg} rounded-xl px-3 py-2`}>
-      <div className={`w-2 h-2 ${dot} rounded-full animate-pulse flex-shrink-0`}/>
-      <span className={`text-xs ${color} font-medium flex-1`}>{text}</span>
-    </div>
   )
 }

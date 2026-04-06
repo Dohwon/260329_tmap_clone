@@ -21,8 +21,13 @@ export default function RouteCard({ route, isSelected, onClick }) {
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <span className="text-base font-bold text-gray-900">{route.title}</span>
-          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${tagColors[route.tagColor]}`}>
-            {route.tag}
+          {isSelected && route.tag && (
+            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${tagColors[route.tagColor]}`}>
+              {route.tag}
+            </span>
+          )}
+          <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+            {route.source === 'live' ? 'TMAP 실시간' : '시뮬레이션'}
           </span>
         </div>
         {isSelected && (
@@ -51,6 +56,15 @@ export default function RouteCard({ route, isSelected, onClick }) {
           style={{ color: congestion.color, background: congestion.bg }}
         >
           {congestion.label}
+        </span>
+        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+          route.difficultyColor === 'red'
+            ? 'bg-red-50 text-red-500'
+            : route.difficultyColor === 'orange'
+              ? 'bg-orange-50 text-orange-500'
+              : 'bg-green-50 text-green-600'
+        }`}>
+          {route.difficultyLabel}
         </span>
       </div>
 
@@ -83,7 +97,7 @@ export default function RouteCard({ route, isSelected, onClick }) {
         <MetricBadge icon="🔀" value={route.mergeCount} label="합류" />
         <MetricBadge icon="📷" value={route.fixedCameraCount} label="고정" color={route.fixedCameraCount > 3 ? 'red' : 'gray'} />
         <MetricBadge icon="🚧" value={route.sectionCameraCount} label="구간" color={route.sectionCameraCount > 0 ? 'orange' : 'gray'} />
-        <MetricBadge icon="💰" value={`${(route.tollFee / 1000).toFixed(0)}천`} label="통행료" />
+        <MetricBadge icon="⚡" value={`${route.maxSpeedLimit}/${route.averageSpeed}`} label="최고/평균" />
       </div>
 
       {/* 구간단속 있을 때 */}

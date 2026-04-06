@@ -8,7 +8,7 @@ const ROAD_TYPE_STYLE = {
 }
 
 export default function MergeOptionsSheet({ onClose }) {
-  const { mergeOptions } = useAppStore()
+  const { mergeOptions, selectMergeOption } = useAppStore()
 
   return (
     <>
@@ -32,21 +32,23 @@ export default function MergeOptionsSheet({ onClose }) {
               <div
                 key={opt.id}
                 className={`rounded-2xl overflow-hidden border-2 transition-all ${
-                  opt.isCurrent ? 'border-tmap-blue' : 'border-gray-100'
+                  opt.isSelected ? 'border-tmap-blue shadow-lg shadow-blue-100' : 'border-gray-100'
                 }`}
               >
                 {/* 상단: IC 이름 + 거리 */}
-                <div className={`flex items-center justify-between px-4 py-3 ${opt.isCurrent ? 'bg-tmap-blue' : 'bg-gray-50'}`}>
+                <div className={`flex items-center justify-between px-4 py-3 ${opt.isSelected ? 'bg-tmap-blue' : 'bg-gray-50'}`}>
                   <div className="flex items-center gap-2">
                     <span className="text-base">🔀</span>
-                    <span className={`text-sm font-bold ${opt.isCurrent ? 'text-white' : 'text-gray-900'}`}>
+                    <span className={`text-sm font-bold ${opt.isSelected ? 'text-white' : 'text-gray-900'}`}>
                       {opt.name}
                     </span>
-                    {opt.isCurrent && (
-                      <span className="text-xs bg-white/20 text-white px-2 py-0.5 rounded-full">현재 경로</span>
+                    {opt.isSelected && (
+                      <span className="text-xs bg-white/20 text-white px-2 py-0.5 rounded-full">
+                        {opt.isCurrent ? '현재 경로' : '선택됨'}
+                      </span>
                     )}
                   </div>
-                  <span className={`text-xs font-medium ${opt.isCurrent ? 'text-white/80' : 'text-gray-400'}`}>
+                  <span className={`text-xs font-medium ${opt.isSelected ? 'text-white/80' : 'text-gray-400'}`}>
                     {opt.distanceFromCurrent}km 앞
                   </span>
                 </div>
@@ -94,6 +96,17 @@ export default function MergeOptionsSheet({ onClose }) {
                       color="#3A3A3C"
                     />
                   </div>
+
+                  <button
+                    onClick={() => selectMergeOption(opt.id)}
+                    className={`w-full rounded-xl py-2.5 text-sm font-bold transition-all ${
+                      opt.isSelected
+                        ? 'bg-tmap-blue text-white'
+                        : 'bg-gray-100 text-gray-700'
+                    }`}
+                  >
+                    {opt.isSelected ? '선택 중' : '이 경로로 보기'}
+                  </button>
                 </div>
               </div>
             )

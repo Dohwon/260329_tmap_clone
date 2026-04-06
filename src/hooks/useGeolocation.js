@@ -12,18 +12,24 @@ export default function useGeolocation() {
     }
 
     const success = (pos) => {
-      const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude }
+      const loc = {
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        speedKmh: Math.max(0, Math.round((pos.coords.speed ?? 0) * 3.6)),
+        heading: pos.coords.heading ?? 0,
+        accuracy: pos.coords.accuracy ?? null,
+      }
       setUserLocation(loc)
       // 첫 위치 확정 시에만 지도 중심 이동
       if (!firstFix.current) {
         firstFix.current = true
-        setMapCenter([loc.lat, loc.lng], 15)
+        setMapCenter([loc.lat, loc.lng], 13)
       }
     }
     const error = () => {
       if (!firstFix.current) {
         firstFix.current = true
-        setUserLocation({ lat: 37.5665, lng: 126.9780 })
+        setUserLocation({ lat: 37.5665, lng: 126.9780, speedKmh: 0, heading: 0, accuracy: null })
       }
     }
 

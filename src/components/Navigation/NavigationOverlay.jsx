@@ -1,15 +1,21 @@
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import useAppStore from '../../store/appStore'
-import { MOCK_NEXT_SEGMENTS } from '../../data/mockData'
 import MergeOptionsSheet from './MergeOptionsSheet'
 
 export default function NavigationOverlay() {
-  const { isNavigating, stopNavigation, destination, routes, selectedRouteId } = useAppStore()
+  const { isNavigating, stopNavigation, destination, routes, selectedRouteId, mergeOptions } = useAppStore()
   const [showMerge, setShowMerge] = useState(false)
+  const segmentRef = useRef(null)
 
   if (!isNavigating) return null
 
   const route = routes.find(r => r.id === selectedRouteId)
+  const primaryMerge = mergeOptions.find((item) => item.isSelected) ?? mergeOptions[0]
+  const nextSegments = route?.nextSegments ?? []
+  const handleWheelScroll = (event) => {
+    if (!segmentRef.current) return
+    segmentRef.current.scrollLeft += event.deltaY
+  }
 
   return (
     <>
@@ -26,8 +32,12 @@ export default function NavigationOverlay() {
             {/* 안내 문구 */}
             <div className="flex-1">
               <div className="text-white/70 text-sm mb-0.5">직진</div>
-              <div className="text-white text-xl font-black">8.4km 후 신갈 JC</div>
-              <div className="text-white/70 text-sm mt-0.5">경부고속도로 방향</div>
+              <div className="text-white text-xl font-black">
+                {primaryMerge ? `${primaryMerge.distanceFromCurrent}km 후 ${primaryMerge.name}` : '주행 경로 유지'}
+              </div>
+              <div className="text-white/70 text-sm mt-0.5">
+                {primaryMerge?.afterRoadName ?? destination?.name}
+              </div>
             </div>
             {/* 종료 버튼 */}
             <button
@@ -59,7 +69,7 @@ export default function NavigationOverlay() {
           </div>
           {/* 제한속도 배지 */}
           <div className="ml-3 flex flex-col items-center justify-center w-12 h-12 rounded-full border-3 border-red-500 speed-badge">
-            <span className="text-xs font-black text-red-600 leading-tight">110</span>
+            <span className="text-xs font-black text-red-600 leading-tight">{route?.maxSpeedLimit ?? 110}</span>
             <span className="text-[9px] text-red-400">km/h</span>
           </div>
         </div>
@@ -83,9 +93,9 @@ export default function NavigationOverlay() {
           </button>
 
           {/* 세그먼트 타임라인 */}
-          <div className="flex overflow-x-auto no-scrollbar px-4 py-3 gap-3">
-            {MOCK_NEXT_SEGMENTS.map((seg, i) => (
-              <SegmentChip key={i} seg={seg} />
+          <div ref={segmentRef} onWheel={handleWheelScroll} className="flex overflow-x-auto no-scrollbar px-4 py-3 gap-3 snap-x snap-mandatory">
+            {nextSegments.map((seg) => (
+              <SegmentChip key={`${seg.km}-${seg.roadName}`} seg={seg} />
             ))}
           </div>
 
@@ -93,11 +103,11 @@ export default function NavigationOverlay() {
           <div className="flex items-center gap-4 px-4 pb-3">
             <div className="flex items-center gap-1.5">
               <span className="text-sm">📷</span>
-              <span className="text-xs text-gray-500">다음 카메라 <strong className="text-red-500">22km</strong> 앞</span>
+              <span className="text-xs text-gray-500">다음 카메라 <strong className="text-red-500">{Math.max(4, Math.round((route?.distance ?? 0) / 6))}km</strong> 앞</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="text-sm">🚧</span>
-              <span className="text-xs text-gray-500">구간단속 <strong className="text-orange-500">44km</strong> 앞</span>
+              <span className="text-xs text-gray-500">구간단속 <strong className="text-orange-500">{Math.max(8, Math.round((route?.distance ?? 0) / 4))}km</strong> 앞</span>
             </div>
           </div>
         </div>

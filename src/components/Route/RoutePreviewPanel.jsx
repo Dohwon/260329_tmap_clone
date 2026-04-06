@@ -6,12 +6,35 @@ import RouteCard from './RouteCard'
 import MergeOptionsSheet from '../Navigation/MergeOptionsSheet'
 
 export default function RoutePreviewPanel() {
-  const { routes, selectedRouteId, setSelectedRouteId, destination, showRoutePanel, setShowRoutePanel, startNavigation, isLoadingRoutes } = useAppStore()
+  const {
+    routes,
+    selectedRouteId,
+    setSelectedRouteId,
+    destination,
+    showRoutePanel,
+    setShowRoutePanel,
+    startNavigation,
+    isLoadingRoutes,
+    tmapStatus,
+    mergeOptions,
+  } = useAppStore()
   const [showMergeSheet, setShowMergeSheet] = useState(false)
 
   if (!showRoutePanel) return null
 
   const selectedRoute = routes.find(r => r.id === selectedRouteId)
+  const baselineRoute = routes.find((route) => route.isBaseline) ?? routes[0]
+  const mergePreview = mergeOptions[0]
+
+  let compareLabel = null
+  if (selectedRoute && baselineRoute) {
+    const delta = selectedRoute.eta - baselineRoute.eta
+    compareLabel = delta === 0
+      ? 'TMAP 기준 경로'
+      : delta < 0
+        ? `TMAP 대비 ${Math.abs(delta)}분 빠름`
+        : `TMAP 대비 ${Math.abs(delta)}분 느림`
+  }
 
   return (
     <>
@@ -44,6 +67,22 @@ export default function RoutePreviewPanel() {
 
         {/* 스크롤 영역 */}
         <div className="flex-1 overflow-y-auto no-scrollbar px-5 py-4 space-y-4">
+          <div className={`rounded-2xl px-4 py-3 border ${
+            tmapStatus.mode === 'live'
+              ? 'bg-blue-50 border-blue-100'
+              : 'bg-amber-50 border-amber-100'
+          }`}>
+            <div className="text-sm font-bold text-gray-900">
+              {tmapStatus.mode === 'live' ? 'TMAP 실시간 경로 적용 중' : 'TMAP 실시간 경로 미적용'}
+            </div>
+            <div className="text-xs text-gray-500 mt-1">
+              {tmapStatus.mode === 'live'
+                ? '실시간 교통 흐름과 경로 응답을 기준으로 비교 중입니다.'
+                : (tmapStatus.lastError || 'API 키, 권한, 허용 도메인 확인이 필요합니다.')}
+            </div>
+            {compareLabel && <div className="text-xs text-tmap-blue font-semibold mt-2">{compareLabel}</div>}
+          </div>
+
           {/* 프리셋 */}
           <PresetSelector />
 
@@ -59,7 +98,9 @@ export default function RoutePreviewPanel() {
               <span className="text-lg">🔀</span>
               <div className="text-left">
                 <div className="text-sm font-semibold text-tmap-blue">다음 10km 합류 옵션 보기</div>
-                <div className="text-xs text-blue-400">신갈 JC까지 8.4km</div>
+                <div className="text-xs text-blue-400">
+                  {mergePreview ? `${mergePreview.name}까지 ${mergePreview.distanceFromCurrent}km` : '합류 옵션 계산 중'}
+                </div>
               </div>
             </div>
             <svg className="w-4 h-4 text-tmap-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
