@@ -9,6 +9,8 @@ const DEFAULT_ORIGIN = { lat: 37.5665, lng: 126.978, speedKmh: 0, heading: 0, ac
 const STORAGE_KEYS = {
   favorites: 'tmap_favorites_v3',
   recents: 'tmap_recent_searches_v3',
+  savedRoutes: 'tmap_saved_routes_v1',
+  cameraReports: 'tmap_camera_reports_v1',
 }
 
 const DEFAULT_FAVORITES = [
@@ -516,6 +518,41 @@ const useAppStore = create((set, get) => ({
     set({ isNavigating: true, showRoutePanel: false, routePanelMode: 'full', mapCenter: center, mapZoom: 15 })
   },
   stopNavigation: () => set({ isNavigating: false, destination: null, routes: [], selectedRouteId: null, routePanelMode: 'full' }),
+
+  // ── 경로 저장 ──────────────────────────────────────
+  savedRoutes: readStorage(STORAGE_KEYS.savedRoutes, []),
+  saveRoute: ({ route, destination, name }) => {
+    const entry = {
+      id: `saved-${Date.now()}`,
+      name: name || (destination?.name ? `→ ${destination.name}` : '저장된 경로'),
+      savedAt: new Date().toISOString(),
+      distance: route?.distance,
+      eta: route?.eta,
+      tollFee: route?.tollFee,
+      highwayRatio: route?.highwayRatio,
+      destination,
+      polyline: route?.polyline?.slice(0, 50) ?? [], // 용량 절약을 위해 50점만
+    }
+    const next = [entry, ...get().savedRoutes].slice(0, 20)
+    writeStorage(STORAGE_KEYS.savedRoutes, next)
+    set({ savedRoutes: next })
+  },
+  deleteSavedRoute: (id) => {
+    const next = get().savedRoutes.filter((r) => r.id !== id)
+    writeStorage(STORAGE_KEYS.savedRoutes, next)
+    set({ savedRoutes: next })
+  },
+
+  // ── 카메라 신고 ────────────────────────────────────
+  cameraReports: readStorage(STORAGE_KEYS.cameraReports, []),
+  reportCamera: ({ id, coord, type }) => {
+    const existing = get().cameraReports.find((r) => r.id === id)
+    const next = existing
+      ? get().cameraReports.map((r) => r.id === id ? { ...r, type, reportedAt: new Date().toISOString() } : r)
+      : [{ id, coord, type, reportedAt: new Date().toISOString() }, ...get().cameraReports].slice(0, 200)
+    writeStorage(STORAGE_KEYS.cameraReports, next)
+    set({ cameraReports: next })
+  },
 
   // 해안/산악도로 우회 제안
   scenicRoadSuggestions: [],   // DetectedScenicRoad[]

@@ -59,12 +59,25 @@ const junctionIcon = makeBadgeIcon({ text: '분', background: '#FF6B00', size: 2
 
 function MapController({ center, zoom }) {
   const map = useMap()
+  const isNavigating = useAppStore((s) => s.isNavigating)
+  const userLocation = useAppStore((s) => s.userLocation)
 
+  // 안내 시작 시 내 위치로 강제 포커스 (mapCenter 값과 무관하게 즉시 이동)
   useEffect(() => {
+    if (!isNavigating) return
+    const target = userLocation
+      ? [userLocation.lat, userLocation.lng]
+      : (Array.isArray(center) ? center : null)
+    if (target) map.setView(target, 15, { animate: true, duration: 0.5 })
+  }, [isNavigating]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 일반 지도 이동 (안내 중에는 무시)
+  useEffect(() => {
+    if (isNavigating) return
     if (Array.isArray(center) && Number.isFinite(center[0]) && Number.isFinite(center[1])) {
       map.setView(center, zoom, { animate: true, duration: 0.8 })
     }
-  }, [map, center, zoom])
+  }, [center, zoom]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return null
 }
@@ -113,6 +126,9 @@ function getCongestionColor(score) {
   return COLORS.congestion1
 }
 
+const reportedOffIcon = makeBadgeIcon({ text: '끔', background: '#F59E0B', size: 28 })
+const reportedFakeIcon = makeBadgeIcon({ text: '없음', background: '#EF4444', size: 32 })
+
 export default function MapView({ darkMode = false }) {
   const {
     mapCenter,
@@ -126,6 +142,7 @@ export default function MapView({ darkMode = false }) {
     locationHistory,
     selectedRoadId,
     getSelectedRoadDetail,
+    cameraReports,
   } = useAppStore()
 
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
@@ -215,23 +232,24 @@ export default function MapView({ darkMode = false }) {
             </CircleMarker>
           ))}
 
-          {visibleLayers.speedCameras && selectedRoad.cameras.map((camera) => (
-            <Marker
-              key={camera.id}
-              position={camera.coord}
-              icon={camera.type === 'fixed'
-                ? fixedCameraIcon
-                : camera.type === 'section_end'
-                  ? sectionEndIcon
-                  : sectionStartIcon}
-            >
-              <Popup>
-                <div className="text-sm font-bold">{camera.label}</div>
-                <div className="text-xs text-gray-500">제한 {camera.speedLimit}km/h</div>
-                {camera.sectionLength && <div className="text-xs text-gray-500">구간 {camera.sectionLength}km</div>}
-              </Popup>
-            </Marker>
-          ))}
+          {visibleLayers.speedCameras && selectedRoad.cameras.map((camera) => {
+            const report = cameraReports.find(r => r.id === camera.id)
+            const icon = report?.type === 'off' ? reportedOffIcon
+              : report?.type === 'fake' ? reportedFakeIcon
+              : camera.type === 'fixed' ? fixedCameraIcon
+              : camera.type === 'section_end' ? sectionEndIcon
+              : sectionStartIcon
+            return (
+              <Marker key={camera.id} position={camera.coord} icon={icon}>
+                <Popup>
+                  <div className="text-sm font-bold">{camera.label}</div>
+                  <div className="text-xs text-gray-500">제한 {camera.speedLimit}km/h</div>
+                  {camera.sectionLength && <div className="text-xs text-gray-500">구간 {camera.sectionLength}km</div>}
+                  {report && <div className="text-xs text-amber-600 mt-1">신고: {report.type === 'off' ? '꺼진 카메라' : '없는 카메라'}</div>}
+                </Popup>
+              </Marker>
+            )
+          })}
 
           {visibleLayers.sectionEnforcement && selectedRoad.cameras
             .filter((camera) => camera.type === 'section_start')
@@ -314,6 +332,20 @@ export default function MapView({ darkMode = false }) {
           ))}
         </>
       )}
+
+      {/* 신고된 카메라 (전체 지도에 표시) */}
+      {cameraReports.map((report) => (
+        <Marker
+          key={`report-${report.id}`}
+          position={report.coord}
+          icon={report.type === 'off' ? reportedOffIcon : reportedFakeIcon}
+        >
+          <Popup>
+            <div className="text-sm font-bold">{report.type === 'off' ? '🟡 꺼진 카메라 신고' : '❌ 없는 카메라 신고'}</div>
+            <div className="text-xs text-gray-400">{new Date(report.reportedAt).toLocaleDateString('ko-KR')}</div>
+          </Popup>
+        </Marker>
+      ))}
 
       {userLocation && (
         <Marker position={[userLocation.lat, userLocation.lng]} icon={currentLocationIcon}>
