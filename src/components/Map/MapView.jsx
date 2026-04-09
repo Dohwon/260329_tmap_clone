@@ -68,13 +68,16 @@ function MapController({ center, zoom }) {
     dragstart: () => { if (isNavigating) setNavAutoFollow(false) },
   })
 
-  // 안내 시작 시 내 위치로 강제 포커스
+  // 안내 시작 시 내 위치로 강제 포커스 (스토어에서 직접 읽어 stale closure 방지)
   useEffect(() => {
     if (!isNavigating) return
-    const target = userLocation
-      ? [userLocation.lat, userLocation.lng]
+    const freshLoc = useAppStore.getState().userLocation
+    const target = freshLoc
+      ? [freshLoc.lat, freshLoc.lng]
       : (Array.isArray(center) ? center : null)
     if (target) map.setView(target, 15, { animate: true, duration: 0.5 })
+    // 시작 시 자동추적 활성화
+    useAppStore.getState().setNavAutoFollow(true)
   }, [isNavigating]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 연속 auto-follow: GPS 위치가 바뀔 때마다 지도 중심을 내 위치로 고정 (panTo는 zoom 변경 없음)
@@ -171,7 +174,7 @@ export default function MapView({ darkMode = false }) {
   )
 
   const tileUrl = darkMode
-    ? 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png'
+    ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
     : 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png'
 
   return (
@@ -304,7 +307,7 @@ export default function MapView({ darkMode = false }) {
         <Polyline
           key={route.id}
           positions={smoothPath(route.polyline, 0.1)}
-          pathOptions={{ color: COLORS.secondaryRoute, weight: 5, opacity: 0.68 }}
+          pathOptions={{ color: route.routeColor ?? COLORS.secondaryRoute, weight: 5, opacity: 0.6 }}
         />
       ))}
 
@@ -342,6 +345,25 @@ export default function MapView({ darkMode = false }) {
               </Popup>
             </Marker>
           ))}
+
+          {/* 경로 과속카메라 (TMAP safetyFacilityList 기반) */}
+          {visibleLayers.speedCameras && (selectedRoute.cameras ?? []).map((camera) => {
+            const report = cameraReports.find(r => r.id === camera.id)
+            const icon = report?.type === 'off' ? reportedOffIcon
+              : report?.type === 'fake' ? reportedFakeIcon
+              : camera.type === 'fixed' ? fixedCameraIcon
+              : camera.type === 'section_end' ? sectionEndIcon
+              : sectionStartIcon
+            return (
+              <Marker key={`route-cam-${camera.id}`} position={camera.coord} icon={icon}>
+                <Popup>
+                  <div className="text-sm font-bold">{camera.label}</div>
+                  <div className="text-xs text-gray-500">제한 {camera.speedLimit}km/h</div>
+                  {camera.sectionLength && <div className="text-xs text-gray-500">구간 {camera.sectionLength}km</div>}
+                </Popup>
+              </Marker>
+            )
+          })}
         </>
       )}
 

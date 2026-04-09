@@ -8,7 +8,12 @@ const ROAD_TYPE_STYLE = {
 }
 
 export default function MergeOptionsSheet({ onClose }) {
-  const { mergeOptions, applyMergeOption } = useAppStore()
+  const { mergeOptions, applyMergeOption, routes, selectedRouteId } = useAppStore()
+  const currentRoute = routes.find(r => r.id === selectedRouteId)
+  // 현재 탑승 중인 도로 레이블
+  const currentRoadLabel = currentRoute
+    ? (currentRoute.highwayRatio >= 60 ? '고속도로' : currentRoute.highwayRatio >= 30 ? '고속+국도' : '국도')
+    : '현재 경로'
 
   return (
     <>
@@ -20,8 +25,12 @@ export default function MergeOptionsSheet({ onClose }) {
 
         <div className="px-5 pb-3 border-b border-gray-100">
           <div className="text-base font-bold text-gray-900">🔀 분기점별 합류 옵션</div>
-          <div className="text-xs text-gray-400 mt-0.5">
-            경로의 IC·JC 분기점에서 어느 방향으로 갈지 선택하세요
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-xs text-gray-400">현재 경로:</span>
+            <span className="text-xs font-bold text-tmap-blue bg-blue-50 px-2 py-0.5 rounded-full">
+              {currentRoute?.title ?? currentRoadLabel}
+            </span>
+            <span className="text-xs text-gray-400">({currentRoadLabel})</span>
           </div>
         </div>
 
@@ -37,19 +46,26 @@ export default function MergeOptionsSheet({ onClose }) {
               >
                 {/* 상단: IC 이름 + 거리 */}
                 <div className={`flex items-center justify-between px-4 py-3 ${opt.isSelected ? 'bg-tmap-blue' : 'bg-gray-50'}`}>
-                  <div className="flex items-center gap-2">
-                    <span className="text-base">🔀</span>
-                    <span className={`text-sm font-bold ${opt.isSelected ? 'text-white' : 'text-gray-900'}`}>
-                      {opt.name}
-                    </span>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-base flex-shrink-0">🔀</span>
+                    <div className="min-w-0">
+                      <div className={`text-sm font-bold ${opt.isSelected ? 'text-white' : 'text-gray-900'}`}>
+                        {opt.name}
+                      </div>
+                      {!opt.isCurrent && (
+                        <div className={`text-xs mt-0.5 ${opt.isSelected ? 'text-white/70' : 'text-gray-400'}`}>
+                          현재 {currentRoadLabel} → {opt.afterRoadType === 'highway' ? '고속도로' : '국도'}로 전환
+                        </div>
+                      )}
+                    </div>
                     {opt.isSelected && (
-                      <span className="text-xs bg-white/20 text-white px-2 py-0.5 rounded-full">
+                      <span className="text-xs bg-white/20 text-white px-2 py-0.5 rounded-full flex-shrink-0">
                         {opt.isCurrent ? '현재 경로' : '선택됨'}
                       </span>
                     )}
                   </div>
-                  <span className={`text-xs font-medium ${opt.isSelected ? 'text-white/80' : 'text-gray-400'}`}>
-                    {opt.distanceFromCurrent}km 앞
+                  <span className={`text-xs font-medium flex-shrink-0 ml-2 ${opt.isSelected ? 'text-white/80' : 'text-gray-400'}`}>
+                    {Number(opt.distanceFromCurrent).toFixed(1)}km 앞
                   </span>
                 </div>
 
@@ -87,7 +103,7 @@ export default function MergeOptionsSheet({ onClose }) {
                     )}
                     {opt.maintainKm != null && (
                       <span className="text-xs text-gray-500 bg-gray-50 px-2 py-0.5 rounded-full">
-                        {opt.maintainKm}km 유지
+                        {Number(opt.maintainKm).toFixed(1)}km 유지
                       </span>
                     )}
                     <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${

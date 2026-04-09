@@ -225,7 +225,7 @@ export const SCENIC_SEGMENTS = [
     description: '설악산 서쪽을 넘는 고갯길. 꼬불꼬불한 구간에서 울산바위·대청봉·동해가 한눈에 펼쳐진다.',
     segmentStart: [38.07, 128.46], segmentEnd: [38.14, 128.47], segmentMid: [38.09, 128.42],
     nearKm: 35, detourKm: 15, detourMinutes: 20,
-    viaPoints: [{ lat: 38.09, lng: 128.38, name: '미시령 정상' }],
+    viaPoints: [{ lat: 38.085, lng: 128.464, name: '미시령 고갯길' }],
   },
   {
     id: 'r44-hangyeryeong',

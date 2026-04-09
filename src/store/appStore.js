@@ -407,36 +407,42 @@ function buildPolyline(origin, destination, offsetLng = 0) {
 }
 
 function buildSegmentStats(route) {
+  const pl = route.polyline ?? []
+  const n = pl.length
+  // 폴리라인 길이에 무관하게 균등 분포 (긴 TMAP 경로에서도 올바른 위치)
+  const c0 = pl[Math.max(0, Math.floor(n * 0.15))]
+  const c1 = pl[Math.max(0, Math.floor(n * 0.5))]
+  const c2 = pl[Math.max(0, Math.floor(n * 0.85))]
   return [
     {
       id: `${route.id}-segment-0`,
       name: route.highwayRatio >= 50 ? '고속 본선' : '국도 본선',
-      positions: route.polyline.slice(0, 3),
+      positions: pl.slice(0, Math.ceil(n / 3)),
       roadType: route.highwayRatio >= 50 ? 'highway' : 'national',
       speedLimit: route.dominantSpeedLimit,
       averageSpeed: Math.max(35, route.dominantSpeedLimit - (route.congestionScore === 3 ? 28 : route.congestionScore === 2 ? 16 : 8)),
       congestionScore: route.congestionScore,
-      center: route.polyline[1],
+      center: c0,
     },
     {
       id: `${route.id}-segment-1`,
       name: '합류/연결 구간',
-      positions: route.polyline.slice(2, 6),
+      positions: pl.slice(Math.ceil(n / 3), Math.ceil(n * 2 / 3)),
       roadType: route.highwayRatio >= 50 ? 'junction' : 'national',
       speedLimit: Math.max(70, route.dominantSpeedLimit - 10),
       averageSpeed: Math.max(30, route.dominantSpeedLimit - 24),
       congestionScore: Math.min(3, route.congestionScore + 1),
-      center: route.polyline[4],
+      center: c1,
     },
     {
       id: `${route.id}-segment-2`,
       name: '도착 진입',
-      positions: route.polyline.slice(5),
+      positions: pl.slice(Math.ceil(n * 2 / 3)),
       roadType: 'local',
       speedLimit: Math.max(50, route.dominantSpeedLimit - 30),
       averageSpeed: Math.max(25, route.dominantSpeedLimit - 36),
       congestionScore: Math.min(3, route.congestionScore + 1),
-      center: route.polyline[7],
+      center: c2,
     },
   ]
 }
@@ -555,8 +561,8 @@ function buildFallbackRoutes(origin, destination, routePreferences, driverPreset
       tollFee: Math.round(distanceKm * 75),
       tag: '고속+국도',
       tagColor: 'blue',
-      routeColor: '#8E8E93',
-      polyline: buildPolyline(origin, destination, -0.04),
+      routeColor: '#FF9500',
+      polyline: buildPolyline(origin, destination, -0.07),
     },
     {
       id: 'route-national',
@@ -575,8 +581,8 @@ function buildFallbackRoutes(origin, destination, routePreferences, driverPreset
       tollFee: Math.round(distanceKm * 35),
       tag: '국도선호',
       tagColor: 'green',
-      routeColor: '#8E8E93',
-      polyline: buildPolyline(origin, destination, 0.08),
+      routeColor: '#00A84F',
+      polyline: buildPolyline(origin, destination, 0.12),
     },
   ]
 
@@ -681,24 +687,41 @@ const useAppStore = create((set, get) => ({
     if (!destination) return
     set({ isLoadingRoutes: true, scenicRouteError: null })
 
-    // viaPoints 없으면 segmentMid로 대체
-    const rawVia = suggestion.viaPoints?.length > 0
-      ? suggestion.viaPoints
-      : [{ name: suggestion.name, lat: suggestion.segmentMid[0], lng: suggestion.segmentMid[1] }]
-    const wayPoints = rawVia.map((pt, i) => ({
-      id: `scenic-via-${i}`,
-      name: pt.name,
-      lat: pt.lat,
-      lng: pt.lng,
-    }))
+    // 경유지 후보 목록: viaPoints → segmentMid → segmentStart/End 중간점 순으로 시도
+    const viaCandidates = []
+    if (suggestion.viaPoints?.length > 0) {
+      viaCandidates.push(suggestion.viaPoints.map((pt, i) => ({
+        id: `scenic-via-${i}`, name: pt.name, lat: pt.lat, lng: pt.lng,
+      })))
+    }
+    if (suggestion.segmentMid) {
+      viaCandidates.push([{ id: 'scenic-mid', name: suggestion.name, lat: suggestion.segmentMid[0], lng: suggestion.segmentMid[1] }])
+    }
+    if (suggestion.segmentStart && suggestion.segmentEnd) {
+      const midLat = (suggestion.segmentStart[0] + suggestion.segmentEnd[0]) / 2
+      const midLng = (suggestion.segmentStart[1] + suggestion.segmentEnd[1]) / 2
+      viaCandidates.push([{ id: 'scenic-se-mid', name: suggestion.name, lat: midLat, lng: midLng }])
+    }
+
+    let viaRoute = null
+    let lastErr = null
+    for (const wayPoints of viaCandidates) {
+      try {
+        viaRoute = await fetchRouteByWaypoints(
+          { ...origin, name: '현재 위치' },
+          destination,
+          wayPoints,
+          { searchOption: '00', title: `${suggestion.name} 경유`, tag: '경관경로', tagColor: 'green' }
+        )
+        if (viaRoute) break
+      } catch (err) {
+        lastErr = err
+        // 1100(NOT_FOUND) 이면 다음 좌표 후보로 재시도
+        if (!String(err?.message ?? '').includes('1100')) break
+      }
+    }
 
     try {
-      const viaRoute = await fetchRouteByWaypoints(
-        { ...origin, name: '현재 위치' },
-        destination,
-        wayPoints,
-        { searchOption: '00', title: `${suggestion.name} 경유`, tag: '경관경로', tagColor: 'green' }
-      )
       if (viaRoute) {
         const scenicId = `route-scenic-${suggestion.id}`
         const decorated = decorateRoute(
@@ -717,7 +740,7 @@ const useAppStore = create((set, get) => ({
           scenicRoadSuggestions: get().scenicRoadSuggestions.filter((s) => s.id !== suggestion.id),
         })
       } else {
-        set({ isLoadingRoutes: false, scenicRouteError: '경로를 찾을 수 없습니다.' })
+        set({ isLoadingRoutes: false, scenicRouteError: lastErr?.message ?? '경유 경로를 찾을 수 없습니다. (도로에서 멀거나 통행 불가 구간)' })
       }
     } catch (err) {
       set({ isLoadingRoutes: false, scenicRouteError: err?.message ?? '경로 탐색 실패' })
@@ -901,10 +924,12 @@ const useAppStore = create((set, get) => ({
     const selectedRouteId = routes[0]?.id ?? null
     const selectedRoute = routes[0] ?? null
 
-    // 해안/산악도로 감지 — 해안/산길 선호 설정 또는 고수 프리셋일 때만
-    const wantsScenic = routePreferences.includeScenic || routePreferences.includeMountain || driverPreset === 'expert'
-    const scenicRoadSuggestions = wantsScenic
+    // 해안/산악도로 감지 — 타입별 독립 필터 (해안선호≠산악선호)
+    const wantsCoastal = routePreferences.includeScenic || driverPreset === 'expert'
+    const wantsMountain = routePreferences.includeMountain || driverPreset === 'expert'
+    const scenicRoadSuggestions = (wantsCoastal || wantsMountain)
       ? detectScenicRoads(origin, destination, selectedRoute?.polyline ?? [])
+          .filter(s => s.scenicType === 'coastal' ? wantsCoastal : wantsMountain)
       : []
 
     set({
