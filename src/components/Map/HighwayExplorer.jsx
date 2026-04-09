@@ -41,7 +41,7 @@ export default function HighwayExplorer({ onClose }) {
           <div className="flex items-center justify-between">
             <div>
               <div className="text-base font-bold text-gray-900">🛣️ 고속도로 탐색</div>
-              <div className="text-xs text-gray-400 mt-0.5">고속도로를 선택하면 시작~끝을 지도에서 확인해요</div>
+              <div className="text-xs text-gray-400 mt-0.5">고속도로와 국도를 선택하면 시작~끝, 단속, 속도 흐름을 지도에서 확인해요</div>
             </div>
             <button onClick={onClose} className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center">
               <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -77,6 +77,13 @@ export default function HighwayExplorer({ onClose }) {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-bold text-gray-900">{hw.name}</span>
+                      <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-semibold ${
+                        hw.roadClass === 'national'
+                          ? 'bg-green-50 text-green-700'
+                          : 'bg-blue-50 text-blue-600'
+                      }`}>
+                        {hw.roadClass === 'national' ? '국도' : '고속'}
+                      </span>
                       <span className="text-xs text-gray-400">{hw.totalKm}km</span>
                     </div>
                     <div className="text-xs text-gray-500 mt-0.5 truncate">
@@ -115,11 +122,11 @@ export default function HighwayExplorer({ onClose }) {
                     <div className="grid grid-cols-2 gap-2">
                       <div className="bg-white rounded-xl px-3 py-2">
                         <div className="text-[11px] font-semibold text-gray-400">시점 주소</div>
-                        <div className="text-xs text-gray-700 mt-1">{hw.startName}</div>
+                        <div className="text-xs text-gray-700 mt-1">{hw.startAddress ?? hw.startName}</div>
                       </div>
                       <div className="bg-white rounded-xl px-3 py-2">
                         <div className="text-[11px] font-semibold text-gray-400">종점 주소</div>
-                        <div className="text-xs text-gray-700 mt-1">{hw.endName}</div>
+                        <div className="text-xs text-gray-700 mt-1">{hw.endAddress ?? hw.endName}</div>
                       </div>
                     </div>
 

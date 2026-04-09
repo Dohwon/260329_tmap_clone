@@ -8,6 +8,7 @@ export default function HomeBottomPanel() {
     showRoutePanel,
     favorites,
     userLocation,
+    userAddress,
     searchRoute,
     showRecentSearches,
     openNearbyCategory,
@@ -34,7 +35,7 @@ export default function HomeBottomPanel() {
         <div className="mx-4 rounded-2xl bg-gray-50 px-4 py-3">
           <div className="text-[11px] font-semibold text-gray-400">내 위치</div>
           <div className="text-sm font-bold text-gray-900 mt-0.5">
-            {userLocation ? `${userLocation.lat.toFixed(5)}, ${userLocation.lng.toFixed(5)}` : 'GPS 위치 확인 중'}
+            {userAddress || 'GPS 위치 확인 중'}
           </div>
           <div className="text-xs text-gray-400 mt-1">
             {userLocation?.speedKmh != null ? `현재 속도 ${userLocation.speedKmh}km/h` : '위치 권한이 필요할 수 있어요'}

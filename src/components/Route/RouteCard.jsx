@@ -1,8 +1,16 @@
 import React from 'react'
 import { CONGESTION_INFO } from '../../data/mockData'
+import useAppStore from '../../store/appStore'
 
 export default function RouteCard({ route, isSelected, onClick }) {
   const congestion = CONGESTION_INFO[route.congestionScore]
+  const { setRoutePanelMode, setSelectedRouteId } = useAppStore()
+
+  const handleViewOnMap = (e) => {
+    e.stopPropagation()
+    setSelectedRouteId(route.id)
+    setRoutePanelMode('peek')
+  }
 
   const tagColors = {
     blue:   'bg-tmap-blue text-white',
@@ -107,6 +115,21 @@ export default function RouteCard({ route, isSelected, onClick }) {
           <span className="text-xs text-orange-600 font-medium">
             구간단속 {route.sectionEnforcementDistance}km 포함
           </span>
+        </div>
+      )}
+
+      {/* 지도에서 보기 버튼 */}
+      {isSelected && (
+        <div className="mt-3 pt-3 border-t border-gray-100">
+          <button
+            onClick={handleViewOnMap}
+            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-blue-50 border border-tmap-blue/20 active:bg-blue-100 transition-all"
+          >
+            <svg className="w-4 h-4 text-tmap-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+            </svg>
+            <span className="text-sm font-semibold text-tmap-blue">이 경로로 보기</span>
+          </button>
         </div>
       )}
     </button>

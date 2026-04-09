@@ -2,6 +2,7 @@
 export const HIGHWAYS = [
   {
     id: 'gyeongbu',
+    roadClass: 'expressway',
     number: '1',
     name: '경부고속도로',
     shortName: '경부',
@@ -9,6 +10,8 @@ export const HIGHWAYS = [
     totalKm: 416,
     startName: '서울 한남IC',
     endName: '부산 구서IC',
+    startAddress: '서울특별시 용산구 한남동',
+    endAddress: '부산광역시 금정구 구서동',
     startCoord: [37.5265, 127.0023],
     endCoord: [35.2002, 129.0561],
     majorJunctions: [
@@ -22,6 +25,7 @@ export const HIGHWAYS = [
   },
   {
     id: 'sejongPocheon',
+    roadClass: 'expressway',
     number: '29',
     name: '세종포천고속도로',
     shortName: '세종포천',
@@ -29,6 +33,8 @@ export const HIGHWAYS = [
     totalKm: 128,
     startName: '세종 연서JC',
     endName: '포천 신북IC',
+    startAddress: '세종특별자치시 연서면',
+    endAddress: '경기도 포천시 신북면',
     startCoord: [36.6205, 127.2548],
     endCoord: [37.9443, 127.1974],
     majorJunctions: [
@@ -40,6 +46,7 @@ export const HIGHWAYS = [
   },
   {
     id: 'pctj',
+    roadClass: 'expressway',
     number: '40',
     name: '평택제천고속도로',
     shortName: '평택제천',
@@ -47,6 +54,8 @@ export const HIGHWAYS = [
     totalKm: 137,
     startName: '평택 서평택IC',
     endName: '제천 남제천IC',
+    startAddress: '경기도 평택시 진위면',
+    endAddress: '충청북도 제천시 봉양읍',
     startCoord: [36.9972, 127.0347],
     endCoord: [37.0956, 128.1644],
     majorJunctions: [
@@ -58,6 +67,7 @@ export const HIGHWAYS = [
   },
   {
     id: 'metropolitan2',
+    roadClass: 'expressway',
     number: '400',
     name: '수도권제2순환고속도로',
     shortName: '수도권제2',
@@ -65,6 +75,8 @@ export const HIGHWAYS = [
     totalKm: 263,
     startName: '화성 봉담IC',
     endName: '양평 양평IC',
+    startAddress: '경기도 화성시 봉담읍',
+    endAddress: '경기도 양평군 양평읍',
     startCoord: [37.2206, 126.9489],
     endCoord: [37.4911, 127.4938],
     majorJunctions: [
@@ -77,6 +89,7 @@ export const HIGHWAYS = [
   },
   {
     id: 'yeongdong',
+    roadClass: 'expressway',
     number: '50',
     name: '영동고속도로',
     shortName: '영동',
@@ -84,6 +97,8 @@ export const HIGHWAYS = [
     totalKm: 234,
     startName: '인천 신공항IC',
     endName: '강릉 강릉IC',
+    startAddress: '인천광역시 중구 운서동',
+    endAddress: '강원특별자치도 강릉시 강변로',
     startCoord: [37.4602, 126.4407],
     endCoord: [37.7519, 128.8763],
     majorJunctions: [
@@ -96,6 +111,7 @@ export const HIGHWAYS = [
   },
   {
     id: 'namhae',
+    roadClass: 'expressway',
     number: '10',
     name: '남해고속도로',
     shortName: '남해',
@@ -103,6 +119,8 @@ export const HIGHWAYS = [
     totalKm: 179,
     startName: '순천 순천IC',
     endName: '부산 신항IC',
+    startAddress: '전라남도 순천시 서면',
+    endAddress: '경상남도 창원시 진해구',
     startCoord: [34.9506, 127.4875],
     endCoord: [35.0938, 128.8015],
     majorJunctions: [
@@ -114,6 +132,7 @@ export const HIGHWAYS = [
   },
   {
     id: 'honam',
+    roadClass: 'expressway',
     number: '25',
     name: '호남고속도로',
     shortName: '호남',
@@ -121,6 +140,8 @@ export const HIGHWAYS = [
     totalKm: 247,
     startName: '회덕JC',
     endName: '광산IC',
+    startAddress: '대전광역시 대덕구 신탄진동',
+    endAddress: '광주광역시 광산구 도산동',
     startCoord: [36.3978, 127.3946],
     endCoord: [35.1389, 126.7931],
     majorJunctions: [
@@ -132,6 +153,7 @@ export const HIGHWAYS = [
   },
   {
     id: 'jungang',
+    roadClass: 'expressway',
     number: '55',
     name: '중앙고속도로',
     shortName: '중앙',
@@ -139,6 +161,8 @@ export const HIGHWAYS = [
     totalKm: 374,
     startName: '춘천 춘천IC',
     endName: '부산 금정IC',
+    startAddress: '강원특별자치도 춘천시 동산면',
+    endAddress: '부산광역시 금정구 남산동',
     startCoord: [37.8813, 127.7300],
     endCoord: [35.2485, 129.0846],
     majorJunctions: [
@@ -150,6 +174,7 @@ export const HIGHWAYS = [
   },
   {
     id: 'jungbuNaeryuk',
+    roadClass: 'expressway',
     number: '45',
     name: '중부내륙고속도로',
     shortName: '중부내륙',
@@ -157,6 +182,8 @@ export const HIGHWAYS = [
     totalKm: 302,
     startName: '양평 양평JC',
     endName: '창원 내서JC',
+    startAddress: '경기도 양평군 양평읍',
+    endAddress: '경상남도 창원시 마산회원구 내서읍',
     startCoord: [37.5075, 127.4788],
     endCoord: [35.2538, 128.5062],
     majorJunctions: [
@@ -169,6 +196,7 @@ export const HIGHWAYS = [
   },
   {
     id: 'seohaean',
+    roadClass: 'expressway',
     number: '15',
     name: '서해안고속도로',
     shortName: '서해안',
@@ -176,6 +204,8 @@ export const HIGHWAYS = [
     totalKm: 340,
     startName: '서울 금천IC',
     endName: '목포 목포IC',
+    startAddress: '서울특별시 금천구 독산동',
+    endAddress: '전라남도 목포시 옥암동',
     startCoord: [37.4567, 126.8957],
     endCoord: [34.8118, 126.4221],
     majorJunctions: [
@@ -185,5 +215,89 @@ export const HIGHWAYS = [
       { name: '동군산JC', coord: [35.9000, 126.7500], km: 212 },
     ],
     description: '서울~목포 340km, 서해안 종단 노선'
+  },
+  {
+    id: 'national1',
+    roadClass: 'national',
+    number: '1',
+    name: '국도 1호선',
+    shortName: '1번국도',
+    color: '#00A84F',
+    totalKm: 497,
+    startName: '전남 목포시 대양동',
+    endName: '경기 파주시 문산읍',
+    startAddress: '전라남도 목포시 대양동',
+    endAddress: '경기도 파주시 문산읍',
+    startCoord: [34.8091, 126.3926],
+    endCoord: [37.8599, 126.7881],
+    majorJunctions: [
+      { name: '광주 북부', coord: [35.1953, 126.8783], km: 75 },
+      { name: '논산', coord: [36.2032, 127.0846], km: 189 },
+      { name: '수원', coord: [37.2636, 127.0286], km: 383 },
+    ],
+    description: '목포에서 파주까지 이어지는 대표 남북 국도'
+  },
+  {
+    id: 'national3',
+    roadClass: 'national',
+    number: '3',
+    name: '국도 3호선',
+    shortName: '3번국도',
+    color: '#22C55E',
+    totalKm: 533,
+    startName: '경기 남양주시 퇴계원읍',
+    endName: '경남 통영시 도남동',
+    startAddress: '경기도 남양주시 퇴계원읍',
+    endAddress: '경상남도 통영시 도남동',
+    startCoord: [37.6515, 127.1412],
+    endCoord: [34.8273, 128.4297],
+    majorJunctions: [
+      { name: '이천', coord: [37.2721, 127.4350], km: 82 },
+      { name: '충주', coord: [36.9910, 127.9259], km: 156 },
+      { name: '상주', coord: [36.4105, 128.1599], km: 288 },
+    ],
+    description: '수도권과 중부내륙, 영남 남해안을 잇는 종단 국도'
+  },
+  {
+    id: 'national6',
+    roadClass: 'national',
+    number: '6',
+    name: '국도 6호선',
+    shortName: '6번국도',
+    color: '#16A34A',
+    totalKm: 268,
+    startName: '인천 중구 항동',
+    endName: '강원 강릉시 주문진읍',
+    startAddress: '인천광역시 중구 항동',
+    endAddress: '강원특별자치도 강릉시 주문진읍',
+    startCoord: [37.4735, 126.6209],
+    endCoord: [37.8941, 128.8236],
+    majorJunctions: [
+      { name: '구리', coord: [37.5943, 127.1296], km: 54 },
+      { name: '양평', coord: [37.4911, 127.4877], km: 87 },
+      { name: '횡성', coord: [37.4917, 127.9850], km: 156 },
+    ],
+    description: '수도권에서 동해안으로 이어지는 대표 동서 국도'
+  },
+  {
+    id: 'national7',
+    roadClass: 'national',
+    number: '7',
+    name: '국도 7호선',
+    shortName: '7번국도',
+    color: '#15803D',
+    totalKm: 513,
+    startName: '부산 동구 초량동',
+    endName: '강원 고성군 현내면',
+    startAddress: '부산광역시 동구 초량동',
+    endAddress: '강원특별자치도 고성군 현내면',
+    startCoord: [35.1151, 129.0413],
+    endCoord: [38.5854, 128.3979],
+    majorJunctions: [
+      { name: '포항', coord: [36.0190, 129.3435], km: 109 },
+      { name: '삼척', coord: [37.4499, 129.1657], km: 330 },
+      { name: '속초', coord: [38.2070, 128.5918], km: 463 },
+    ],
+    description: '동해안을 따라 이어지는 대표 해안 국도'
   },
 ]

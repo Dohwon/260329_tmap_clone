@@ -10,7 +10,7 @@ const FALLBACK_SEARCH_PLACES = [
   { id: 'place-haeundae', name: '부산 해운대', address: '부산광역시 해운대구 우동', lat: 35.1631, lng: 129.1635, category: '관광' },
   {
     id: 'place-hogye',
-    name: '호계동 959-10',
+    name: '호계동 959-18',
     address: '경기도 안양시 동안구 흥안대로 109번길 26',
     lat: 37.371313340579,
     lng: 126.95700840682,
@@ -47,18 +47,18 @@ function buildRoadSearchPlaces() {
     {
       id: `${road.id}-start`,
       name: `${road.name} 시점`,
-      address: road.startName,
+      address: road.startAddress ?? road.startName,
       lat: road.startCoord[0],
       lng: road.startCoord[1],
-      category: '고속도로',
+      category: road.roadClass === 'national' ? '국도' : '고속도로',
     },
     {
       id: `${road.id}-end`,
       name: `${road.name} 종점`,
-      address: road.endName,
+      address: road.endAddress ?? road.endName,
       lat: road.endCoord[0],
       lng: road.endCoord[1],
-      category: '고속도로',
+      category: road.roadClass === 'national' ? '국도' : '고속도로',
     },
     ...road.majorJunctions.map((junction) => ({
       id: `${road.id}-${junction.name}`,
@@ -72,12 +72,14 @@ function buildRoadSearchPlaces() {
 }
 
 function normalizePoi(poi) {
+  const roadAddress = [poi.roadName, poi.firstBuildNo, poi.secondBuildNo].filter(Boolean).join(' ')
+  const jibunAddress = [poi.upperAddrName, poi.middleAddrName, poi.lowerAddrName, poi.legalDong, poi.ri, poi.firstNo, poi.secondNo].filter(Boolean).join(' ')
   return {
     id: poi.id ?? poi.poiid ?? `${poi.name}-${poi.frontLat}-${poi.frontLon}`,
     name: poi.name,
-    address: [poi.upperAddrName, poi.middleAddrName, poi.lowerAddrName, poi.detailAddrName]
+    address: [roadAddress, jibunAddress, poi.detailAddrName, poi.address]
       .filter(Boolean)
-      .join(' ') || poi.address || '',
+      .join(' ') || '',
     lat: parseFloat(poi.frontLat ?? poi.noorLat ?? poi.lat),
     lng: parseFloat(poi.frontLon ?? poi.noorLon ?? poi.lng),
     category: poi.bizCatName ?? poi.upperBizName ?? poi.category ?? '',
@@ -139,19 +141,60 @@ export async function searchPOI(keyword, nearLat, nearLng) {
   const params = new URLSearchParams({
     version: '1',
     searchKeyword: keyword,
+    searchType: 'all',
+    searchtypCd: 'A',
+    page: '1',
     resCoordType: 'WGS84GEO',
     reqCoordType: 'WGS84GEO',
-    count: '15',
+    multiPoint: 'N',
+    poiGroupYn: 'N',
+    count: '20',
     ...(nearLat != null && nearLng != null ? { centerLat: String(nearLat), centerLon: String(nearLng) } : {}),
   })
 
   try {
-    const res = await fetch(`${BASE}/pois?${params}`)
-    if (!res.ok) throw new Error('POI 검색 실패')
+    const res = await fetch(`${BASE}/pois?${params}`, {
+      headers: { Accept: 'application/json' },
+    })
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}))
+      throw new Error(errJson?.error?.errorMessage ?? errJson?.error?.code ?? `HTTP ${res.status}`)
+    }
     const json = await res.json()
     const pois = json?.searchPoiInfo?.pois?.poi ?? []
     const normalized = pois.map(normalizePoi).filter((poi) => Number.isFinite(poi.lat) && Number.isFinite(poi.lng))
     if (normalized.length > 0) return normalized
+  } catch {
+    // fallback below
+  }
+
+  try {
+    const fullAddrParams = new URLSearchParams({
+      version: '1',
+      fullAddr: keyword,
+      coordType: 'WGS84GEO',
+      addressFlag: 'F00',
+      page: '1',
+      count: '15',
+    })
+    const res = await fetch(`${BASE}/geo/fullAddrGeo?${fullAddrParams}`, {
+      headers: { Accept: 'application/json' },
+    })
+    if (res.ok) {
+      const json = await res.json()
+      const coordinates = json?.coordinateInfo?.coordinate ?? []
+      const normalized = coordinates
+        .map((item, index) => ({
+          id: `fulladdr-${index}-${item.newLat ?? item.lat}`,
+          name: item.fullAddress ?? item.roadName ?? keyword,
+          address: item.fullAddress ?? keyword,
+          lat: parseFloat(item.newLat ?? item.lat),
+          lng: parseFloat(item.newLon ?? item.lon),
+          category: '주소',
+        }))
+        .filter((poi) => Number.isFinite(poi.lat) && Number.isFinite(poi.lng))
+      if (normalized.length > 0) return normalized
+    }
   } catch {
     // fallback below
   }
@@ -175,14 +218,14 @@ export async function searchNearbyPOIs(category, lat, lng) {
 function getRouteOptions({ allowNarrowRoads = false } = {}) {
   return [
     {
-      searchOption: allowNarrowRoads ? '0' : '3',
+      searchOption: allowNarrowRoads ? '00' : '03',
       title: allowNarrowRoads ? '추천경로' : '쉬운길',
       tag: allowNarrowRoads ? '추천' : '쉬운길',
       tagColor: 'green',
       isBaseline: true,
     },
-    { searchOption: '2', title: '빠른 도로', tag: '빠른', tagColor: 'blue' },
-    { searchOption: '4', title: '고속도로 중심', tag: '고속우선', tagColor: 'blue' },
+    { searchOption: '02', title: '빠른 도로', tag: '빠른', tagColor: 'blue' },
+    { searchOption: '04', title: '고속도로 중심', tag: '고속우선', tagColor: 'blue' },
     { searchOption: '10', title: '최단거리', tag: '최단', tagColor: 'orange' },
   ]
 }
@@ -205,21 +248,34 @@ export async function fetchRoutes(startLat, startLng, endLat, endLng, preference
   return routes.filter((route, index, all) => all.findIndex((item) => Math.abs(item.eta - route.eta) < 5) === index)
 }
 
-async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
+export async function fetchRouteByWaypoints(start, destination, wayPoints = [], option = {}) {
   const body = {
-    startX: String(startLng),
-    startY: String(startLat),
-    endX: String(endLng),
-    endY: String(endLat),
     reqCoordType: 'WGS84GEO',
     resCoordType: 'WGS84GEO',
-    searchOption: option.searchOption,
-    trafficInfo: 'Y',
+    startName: start.name ?? '출발',
+    startX: String(start.lng),
+    startY: String(start.lat),
+    startTime: new Date().toISOString().slice(0, 16).replace(/[-:T]/g, ''),
+    endName: destination.name ?? '도착',
+    endX: String(destination.lng),
+    endY: String(destination.lat),
+    searchOption: option.searchOption ?? '00',
+    carType: '0',
+    viaPoints: wayPoints.map((point, index) => ({
+      viaPointId: point.id ?? `via-${index}`,
+      viaPointName: point.name ?? `경유지 ${index + 1}`,
+      viaX: String(point.lng),
+      viaY: String(point.lat),
+      viaTime: String(point.viaTime ?? 0),
+    })),
   }
 
-  const res = await fetch(`${BASE}/routes?version=1`, {
+  const res = await fetch(`${BASE}/routes/routeSequential30?version=1`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
     body: JSON.stringify(body),
   })
 
@@ -238,11 +294,51 @@ async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
   return parseRouteResponse(json, option)
 }
 
+async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
+  const body = {
+    startX: String(startLng),
+    startY: String(startLat),
+    endX: String(endLng),
+    endY: String(endLat),
+    endRpFlag: 'G',
+    carType: 0,
+    detailPosFlag: '2',
+    reqCoordType: 'WGS84GEO',
+    resCoordType: 'WGS84GEO',
+    searchOption: option.searchOption,
+    sort: 'index',
+    trafficInfo: 'Y',
+  }
+
+  const res = await fetch(`${BASE}/routes?version=1`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!res.ok) {
+    let message = `TMAP HTTP ${res.status}`
+    try {
+      const json = await res.json()
+      message = json?.error?.errorMessage ?? json?.error?.code ?? json?.error?.message ?? message
+    } catch {
+      // noop
+    }
+    throw new Error(message)
+  }
+
+  const json = await res.json()
+  return parseRouteResponse(json, option)
+}
+
 function parseRouteResponse(json, option) {
   const features = json?.features ?? []
   if (!features.length) return null
 
-  const summary = features[0]?.properties ?? {}
+  const summary = json?.properties ?? features[0]?.properties ?? {}
   const polyline = []
   let highwayDist = 0
   let nationalDist = 0
@@ -302,6 +398,10 @@ function buildExplanation(highwayRatio, mergeCount, congestionScore, isBaseline)
   return parts.join(' · ')
 }
 
+function isCoordString(str) {
+  return /^-?\d{1,3}\.\d+[,\s]+-?\d{1,3}\.\d+$/.test((str ?? '').trim())
+}
+
 export async function reverseGeocode(lat, lng) {
   const params = new URLSearchParams({
     version: '1',
@@ -309,16 +409,30 @@ export async function reverseGeocode(lat, lng) {
     lon: String(lng),
     coordType: 'WGS84GEO',
     addressType: 'A04',
+    newAddressExtend: 'Y',
   })
   try {
-    const res = await fetch(`${BASE}/reversegeocoding?${params}`)
+    const res = await fetch(`${BASE}/geo/reversegeocoding?${params}`, {
+      headers: { Accept: 'application/json' },
+    })
     if (!res.ok) throw new Error('역지오코딩 실패')
     const json = await res.json()
-    return json?.addressInfo?.fullAddress ?? null
+    const addressInfo = json?.addressInfo ?? {}
+    // 법정동+지번 우선 (예: 호계동 959-18)
+    const legalDong = addressInfo.legalDong || addressInfo.lowerAddrName || ''
+    const bunji = addressInfo.bunji || addressInfo.firstNo
+      ? [addressInfo.firstNo, addressInfo.secondNo].filter(Boolean).join('-')
+      : ''
+    const jibunAddr = [legalDong, bunji].filter(Boolean).join(' ')
+    // 좌표 문자열처럼 보이면 무시
+    const candidates = [addressInfo.bunjiAddress, jibunAddr, addressInfo.fullAddress, addressInfo.roadAddress]
+    const addr = candidates.find((c) => c && !isCoordString(c))
+    return addr || null
   } catch {
-    const nearest = FALLBACK_SEARCH_PLACES.sort(
+    // fallback: 가장 가까운 알려진 장소
+    const nearest = [...FALLBACK_SEARCH_PLACES].sort(
       (a, b) => haversineKm(lat, lng, a.lat, a.lng) - haversineKm(lat, lng, b.lat, b.lng)
     )[0]
-    return nearest?.address ?? null
+    return nearest?.name ?? nearest?.address ?? null
   }
 }

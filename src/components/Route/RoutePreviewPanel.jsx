@@ -13,6 +13,8 @@ export default function RoutePreviewPanel() {
     destination,
     showRoutePanel,
     setShowRoutePanel,
+    routePanelMode,
+    setRoutePanelMode,
     startNavigation,
     isLoadingRoutes,
     tmapStatus,
@@ -36,6 +38,70 @@ export default function RoutePreviewPanel() {
         : `TMAP 대비 ${Math.abs(delta)}분 느림`
   }
 
+  if (routePanelMode === 'peek' && selectedRoute) {
+    return (
+      <div className="absolute bottom-20 left-4 right-4 z-30">
+        <div className="bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden">
+          {/* 드래그 핸들 */}
+          <div className="flex justify-center pt-2">
+            <div className="w-8 h-1 bg-gray-200 rounded-full"/>
+          </div>
+          <div className="px-4 pb-4 pt-2">
+            {/* 경로 정보 */}
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className="text-sm font-bold text-gray-900">{selectedRoute.title}</span>
+                  {selectedRoute.tag && (
+                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                      selectedRoute.source === 'live' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                    }`}>
+                      {selectedRoute.source === 'live' ? 'TMAP 실시간' : '시뮬레이션'}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <span className="font-bold text-gray-900 text-base">{selectedRoute.eta}분</span>
+                  <span>·</span>
+                  <span>{selectedRoute.distance}km</span>
+                  <span>·</span>
+                  <span>{selectedRoute.congestionLabel}</span>
+                  {selectedRoute.tollFee > 0 && (
+                    <>
+                      <span>·</span>
+                      <span>{selectedRoute.tollFee.toLocaleString()}원</span>
+                    </>
+                  )}
+                </div>
+                <div className="text-xs text-gray-400 mt-0.5">{selectedRoute.explanation}</div>
+              </div>
+            </div>
+            {/* 버튼 영역 */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => setRoutePanelMode('full')}
+                className="flex-1 py-3 rounded-2xl bg-gray-100 text-sm font-semibold text-gray-700 active:scale-95 transition-all"
+              >
+                경로 목록
+              </button>
+              <button
+                onClick={startNavigation}
+                className="flex-[2] py-3 rounded-2xl bg-tmap-blue text-white text-sm font-bold shadow-lg shadow-blue-200 active:scale-95 transition-all"
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 1.414L10.586 9H7a1 1 0 100 2h3.586l-1.293 1.293a1 1 0 101.414 1.414l3-3a1 1 0 000-1.414z" clipRule="evenodd"/>
+                  </svg>
+                  안내 시작
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <>
       <div className="absolute inset-0 bg-black/20 z-20" onClick={() => setShowRoutePanel(false)} />
@@ -54,14 +120,24 @@ export default function RoutePreviewPanel() {
               <div className="text-lg font-bold text-gray-900">{destination?.name}</div>
               <div className="text-xs text-gray-400">{destination?.address}</div>
             </div>
-            <button
-              onClick={() => setShowRoutePanel(false)}
-              className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center"
-            >
-              <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setRoutePanelMode('peek')}
+                className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center"
+              >
+                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7-7-7 7" />
+                </svg>
+              </button>
+              <button
+                onClick={() => setShowRoutePanel(false)}
+                className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center"
+              >
+                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -73,12 +149,16 @@ export default function RoutePreviewPanel() {
               : 'bg-amber-50 border-amber-100'
           }`}>
             <div className="text-sm font-bold text-gray-900">
-              {tmapStatus.mode === 'live' ? 'TMAP 실시간 경로 적용 중' : 'TMAP 실시간 경로 미적용'}
+              {tmapStatus.mode === 'live' ? '✅ TMAP 실시간 경로 적용 중' : '⚠️ TMAP 실시간 경로 미적용'}
             </div>
             <div className="text-xs text-gray-500 mt-1">
               {tmapStatus.mode === 'live'
                 ? '실시간 교통 흐름과 경로 응답을 기준으로 비교 중입니다.'
-                : (tmapStatus.lastError || 'API 키, 권한, 허용 도메인 확인이 필요합니다.')}
+                : tmapStatus.lastError
+                  ? `오류: ${tmapStatus.lastError}`
+                  : tmapStatus.hasApiKey
+                    ? 'API 키가 있으나 경로 API 권한이 없거나 일일 한도가 초과되었습니다.'
+                    : 'API 키 미설정 — .env.local에 VITE_TMAP_API_KEY를 추가하세요.'}
             </div>
             {compareLabel && <div className="text-xs text-tmap-blue font-semibold mt-2">{compareLabel}</div>}
           </div>

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { HIGHWAYS } from '../data/highwayData'
 import { PRESET_INFO, MOCK_RECENT_SEARCHES } from '../data/mockData'
-import { fetchRoutes, fetchTmapStatus, searchNearbyPOIs } from '../services/tmapService'
+import { fetchRouteByWaypoints, fetchRoutes, fetchTmapStatus, searchNearbyPOIs } from '../services/tmapService'
 
 const DEFAULT_CENTER = [37.5665, 126.978]
 const DEFAULT_ORIGIN = { lat: 37.5665, lng: 126.978, speedKmh: 0, heading: 0, accuracy: null }
@@ -87,7 +87,11 @@ function buildRoadCameras(road) {
   return path.slice(1).flatMap((coord, index) => {
     const previous = path[index]
     const mid = [(previous[0] + coord[0]) / 2, (previous[1] + coord[1]) / 2]
-    const speedLimit = road.number === '1' || road.number === '50' ? (index % 2 === 0 ? 110 : 100) : 100
+    const speedLimit = road.id === 'sejongPocheon'
+      ? (index === 0 ? 120 : 110)
+      : road.number === '1' || road.number === '50'
+        ? (index % 2 === 0 ? 110 : 100)
+        : 100
     const cameras = [
       {
         id: `${road.id}-fixed-${index}`,
@@ -161,6 +165,7 @@ function buildMergeOptions(route, selectedId) {
       afterDescription: '현재 흐름을 유지하면서 가장 단순한 경로를 탑니다.',
       afterNextJunction: '다음 분기까지 직진 흐름이 이어집니다.',
       congestionPreview: route.congestionLabel,
+      wayPoints: [],
     },
     {
       id: 'merge-highway',
@@ -176,6 +181,12 @@ function buildMergeOptions(route, selectedId) {
       afterDescription: '조금 더 빠르지만 카메라와 통행료가 늘어날 수 있습니다.',
       afterNextJunction: '고속 직진 구간으로 다시 연결됩니다.',
       congestionPreview: route.congestionScore >= 2 ? '원활' : route.congestionLabel,
+      // 경로 polyline 중 1/4 지점을 경유지로 (고속 재합류는 실제 polyline 좌표 사용)
+      wayPoints: (() => {
+        const idx = Math.floor((route.polyline?.length ?? 0) / 4)
+        const pt = route.polyline?.[idx]
+        return pt ? [{ id: 'via-highway', name: '고속 재합류 지점', lat: pt[0], lng: pt[1] }] : []
+      })(),
     },
     {
       id: 'merge-national',
@@ -191,6 +202,12 @@ function buildMergeOptions(route, selectedId) {
       afterDescription: '정체를 피할 수 있지만 신호와 합류는 늘어납니다.',
       afterNextJunction: '국도 본선과 연결됩니다.',
       congestionPreview: route.congestionScore === 3 ? '서행' : '원활',
+      // 경로 polyline 중 1/3 지점을 약간 측면으로 이동하여 국도 방향 경유지로 사용
+      wayPoints: (() => {
+        const idx = Math.floor((route.polyline?.length ?? 0) / 3)
+        const pt = route.polyline?.[idx]
+        return pt ? [{ id: 'via-national', name: '국도 전환 지점', lat: pt[0] + 0.008, lng: pt[1] - 0.012 }] : []
+      })(),
     },
   ]
 
@@ -389,18 +406,22 @@ const useAppStore = create((set, get) => ({
   setMapCenter: (center, zoom) => set({ mapCenter: center, mapZoom: zoom ?? get().mapZoom }),
 
   userLocation: null,
+  userAddress: '',
   locationHistory: [],
   setUserLocation: (location) =>
     set((state) => ({
       userLocation: location,
       locationHistory: [...state.locationHistory.slice(-19), [location.lat, location.lng]],
     })),
+  setUserAddress: (userAddress) => set({ userAddress }),
 
   destination: null,
   setDestination: (destination) => set({ destination }),
 
   showRoutePanel: false,
+  routePanelMode: 'full',
   setShowRoutePanel: (showRoutePanel) => set({ showRoutePanel }),
+  setRoutePanelMode: (routePanelMode) => set({ routePanelMode }),
   routes: [],
   setRoutes: (routes) => set({ routes }),
   selectedRouteId: null,
@@ -415,8 +436,8 @@ const useAppStore = create((set, get) => ({
   },
   isLoadingRoutes: false,
   isNavigating: false,
-  startNavigation: () => set({ isNavigating: true, showRoutePanel: false }),
-  stopNavigation: () => set({ isNavigating: false, destination: null, routes: [], selectedRouteId: null }),
+  startNavigation: () => set({ isNavigating: true, showRoutePanel: false, routePanelMode: 'full' }),
+  stopNavigation: () => set({ isNavigating: false, destination: null, routes: [], selectedRouteId: null, routePanelMode: 'full' }),
 
   tmapStatus: { hasApiKey: false, mode: 'simulation', lastError: null },
   setTmapStatus: (patch) => set((state) => ({ tmapStatus: { ...state.tmapStatus, ...patch } })),
@@ -524,6 +545,7 @@ const useAppStore = create((set, get) => ({
       mapCenter: [midLat, midLng],
       mapZoom: 7,
       showRoutePanel: false,
+      routePanelMode: 'full',
     })
   },
   clearSelectedRoad: () => set({ selectedRoadId: null }),
@@ -544,8 +566,8 @@ const useAppStore = create((set, get) => ({
     if (!selectedRoad) return null
     return {
       ...selectedRoad,
-      startAddress: selectedRoad.startName,
-      endAddress: selectedRoad.endName,
+      startAddress: selectedRoad.startAddress ?? selectedRoad.startName,
+      endAddress: selectedRoad.endAddress ?? selectedRoad.endName,
       path: getRoadPath(selectedRoad),
       cameras: buildRoadCameras(selectedRoad),
       congestionSegments: buildRoadSegments(selectedRoad),
@@ -561,6 +583,7 @@ const useAppStore = create((set, get) => ({
       activeTab: 'home',
       destination,
       showRoutePanel: true,
+      routePanelMode: 'full',
       isLoadingRoutes: true,
       routes: [],
       selectedRouteId: null,
@@ -573,10 +596,11 @@ const useAppStore = create((set, get) => ({
 
     let liveRoutes = []
     try {
-      if (tmapStatus.hasApiKey) {
-        liveRoutes = await fetchRoutes(origin.lat, origin.lng, destination.lat, destination.lng, {
-          allowNarrowRoads: routePreferences.allowNarrowRoads,
-        })
+      liveRoutes = await fetchRoutes(origin.lat, origin.lng, destination.lat, destination.lng, {
+        allowNarrowRoads: routePreferences.allowNarrowRoads,
+      })
+      if (liveRoutes.length > 0) {
+        get().setTmapStatus({ hasApiKey: true, mode: 'live', lastError: null })
       }
     } catch (error) {
       get().setTmapStatus({
@@ -594,9 +618,69 @@ const useAppStore = create((set, get) => ({
       routes,
       selectedRouteId,
       isLoadingRoutes: false,
-      mergeOptions: selectedRoute ? buildMergeOptions(selectedRoute, get().selectedMergeOptionId) : [],
+      selectedMergeOptionId: 'merge-current',
+      mergeOptions: selectedRoute ? buildMergeOptions(selectedRoute, 'merge-current') : [],
       mapCenter: selectedRoute?.polyline?.[Math.floor(selectedRoute.polyline.length / 2)] ?? [destination.lat, destination.lng],
       mapZoom: selectedRoute ? 8 : 14,
+    })
+  },
+
+  applyMergeOption: async (mergeOptionId) => {
+    const state = get()
+    const origin = state.userLocation ?? DEFAULT_ORIGIN
+    const destination = state.destination
+    const baseRoute = state.routes.find((route) => route.id === state.selectedRouteId)
+    const option = state.mergeOptions.find((item) => item.id === mergeOptionId)
+
+    if (!destination || !baseRoute || !option) return
+
+    set({
+      isLoadingRoutes: true,
+      selectedMergeOptionId: mergeOptionId,
+      routePanelMode: 'peek',
+    })
+
+    try {
+      const liveRoute = await fetchRouteByWaypoints(
+        { ...origin, name: '현재 위치' },
+        destination,
+        option.wayPoints ?? [],
+        {
+          searchOption: option.afterRoadType === 'national' ? '02' : '04',
+          title: option.afterRoadName,
+          tag: option.isCurrent ? '현재' : '합류',
+          tagColor: option.afterRoadType === 'national' ? 'green' : 'blue',
+          isBaseline: option.isCurrent,
+        }
+      )
+
+      if (liveRoute) {
+        const decorated = decorateRoute(
+          { ...liveRoute, title: option.afterRoadName || liveRoute.title, tag: option.isCurrent ? '현재' : '합류' },
+          0,
+          { origin, destination, routePreferences: state.routePreferences, driverPreset: state.driverPreset }
+        )
+        set({
+          routes: [decorated, ...state.routes.filter((route) => route.id !== decorated.id)],
+          selectedRouteId: decorated.id,
+          mergeOptions: buildMergeOptions(decorated, mergeOptionId),
+          isLoadingRoutes: false,
+          mapCenter: decorated.polyline[Math.floor(decorated.polyline.length / 2)],
+          mapZoom: 9,
+        })
+        get().setTmapStatus({ hasApiKey: true, mode: 'live', lastError: null })
+        return
+      }
+    } catch (error) {
+      get().setTmapStatus({
+        mode: 'simulation',
+        lastError: error?.message ?? '합류 경로 재계산 실패',
+      })
+    }
+
+    set({
+      mergeOptions: buildMergeOptions(baseRoute, mergeOptionId),
+      isLoadingRoutes: false,
     })
   },
 }))

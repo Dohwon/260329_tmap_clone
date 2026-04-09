@@ -53,6 +53,8 @@ const sectionStartIcon = makeBadgeIcon({ text: '구', background: COLORS.section
 const sectionEndIcon = makeBadgeIcon({ text: '끝', background: COLORS.sectionCamera, size: 30 })
 const restStopIcon = makeBadgeIcon({ text: '휴', background: COLORS.restStop })
 const drowsyIcon = makeBadgeIcon({ text: '쉼', background: COLORS.restStop, size: 30 })
+const startIcon = makeBadgeIcon({ text: '시', background: '#111827' })
+const endIcon = makeBadgeIcon({ text: '종', background: '#2563EB' })
 
 function MapController({ center, zoom }) {
   const map = useMap()
@@ -110,6 +112,7 @@ export default function MapView({ darkMode = false }) {
     destination,
     visibleLayers,
     userLocation,
+    userAddress,
     locationHistory,
     selectedRoadId,
     getSelectedRoadDetail,
@@ -168,11 +171,31 @@ export default function MapView({ darkMode = false }) {
             />
           ))}
 
+          <Marker position={selectedRoad.startCoord} icon={startIcon}>
+            <Popup autoClose={false} closeOnClick={false}>
+              <div className="text-sm font-bold">{selectedRoad.name} 시점</div>
+              <div className="text-xs text-gray-700 mt-0.5">{selectedRoad.startName}</div>
+              {selectedRoad.startAddress && (
+                <div className="text-xs text-gray-500 mt-0.5">{selectedRoad.startAddress}</div>
+              )}
+            </Popup>
+          </Marker>
+
+          <Marker position={selectedRoad.endCoord} icon={endIcon}>
+            <Popup autoClose={false} closeOnClick={false}>
+              <div className="text-sm font-bold">{selectedRoad.name} 종점</div>
+              <div className="text-xs text-gray-700 mt-0.5">{selectedRoad.endName}</div>
+              {selectedRoad.endAddress && (
+                <div className="text-xs text-gray-500 mt-0.5">{selectedRoad.endAddress}</div>
+              )}
+            </Popup>
+          </Marker>
+
           {visibleLayers.mergePoints && selectedRoad.majorJunctions.map((junction) => (
             <CircleMarker
               key={`${selectedRoad.id}-${junction.name}`}
               center={junction.coord}
-              radius={8}
+              radius={10}
               pathOptions={{ color: '#ffffff', fillColor: '#1C1C1E', fillOpacity: 0.95, weight: 2 }}
             >
               <Popup>
@@ -274,7 +297,8 @@ export default function MapView({ darkMode = false }) {
         <Marker position={[userLocation.lat, userLocation.lng]} icon={currentLocationIcon}>
           <Popup>
             <div className="text-sm font-bold">내 위치</div>
-            <div className="text-xs text-gray-500">
+            {userAddress && <div className="text-xs text-gray-700 mt-0.5">{userAddress}</div>}
+            <div className="text-xs text-gray-500 mt-0.5">
               {Math.round(userLocation.speedKmh ?? 0)}km/h · 정확도 {Math.round(userLocation.accuracy ?? 0)}m
             </div>
           </Popup>

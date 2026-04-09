@@ -8,7 +8,7 @@ const ROAD_TYPE_STYLE = {
 }
 
 export default function MergeOptionsSheet({ onClose }) {
-  const { mergeOptions, selectMergeOption } = useAppStore()
+  const { mergeOptions, applyMergeOption } = useAppStore()
 
   return (
     <>
@@ -98,7 +98,10 @@ export default function MergeOptionsSheet({ onClose }) {
                   </div>
 
                   <button
-                    onClick={() => selectMergeOption(opt.id)}
+                    onClick={async () => {
+                      await applyMergeOption(opt.id)
+                      onClose()
+                    }}
                     className={`w-full rounded-xl py-2.5 text-sm font-bold transition-all ${
                       opt.isSelected
                         ? 'bg-tmap-blue text-white'
