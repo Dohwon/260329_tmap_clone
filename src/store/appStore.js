@@ -126,6 +126,17 @@ function buildRoadCameras(road) {
 }
 
 function buildRoadRestStops(road) {
+  // 실제 휴게소 데이터가 있으면 그대로 사용
+  if (road.restStops && road.restStops.length > 0) {
+    return road.restStops.map((stop) => ({
+      id: stop.id ?? `${road.id}-rest-${stop.km}`,
+      name: stop.name,
+      coord: stop.coord,
+      type: stop.type,
+      km: stop.km,
+    }))
+  }
+  // 폴백: 분기점 좌표 기반 생성 (국도 등)
   const path = getRoadPath(road)
   return path.slice(1, -1).map((coord, index) => ({
     id: `${road.id}-rest-${index}`,

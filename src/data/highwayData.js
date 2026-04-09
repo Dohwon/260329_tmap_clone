@@ -21,6 +21,20 @@ export const HIGHWAYS = [
       { name: '금호JC', coord: [35.8800, 128.6000], km: 296 },
       { name: '동대구JC', coord: [35.8714, 128.6732], km: 305 },
     ],
+    restStops: [
+      { id: 'gs-osan', name: '오산휴게소', coord: [37.1506, 127.0736], km: 22, type: 'service' },
+      { id: 'gs-giheung', name: '기흥휴게소', coord: [37.2200, 127.0900], km: 34, type: 'service' },
+      { id: 'gs-anseong', name: '안성휴게소', coord: [37.0082, 127.2478], km: 62, type: 'service' },
+      { id: 'gs-cheonan', name: '천안휴게소', coord: [36.8500, 127.1400], km: 88, type: 'drowsy' },
+      { id: 'gs-manghyang', name: '망향휴게소', coord: [36.7200, 127.0800], km: 108, type: 'service' },
+      { id: 'gs-jeongan', name: '정안알밤휴게소', coord: [36.5800, 127.2400], km: 128, type: 'service' },
+      { id: 'gs-geumgang', name: '금강휴게소', coord: [36.3800, 127.4200], km: 149, type: 'service' },
+      { id: 'gs-okcheon', name: '옥천휴게소', coord: [36.2900, 127.6500], km: 176, type: 'drowsy' },
+      { id: 'gs-chupungnyeong', name: '추풍령휴게소', coord: [36.2195, 127.9450], km: 212, type: 'service' },
+      { id: 'gs-gimcheon', name: '김천휴게소', coord: [36.0690, 128.1070], km: 238, type: 'service' },
+      { id: 'gs-chilgok', name: '칠곡휴게소', coord: [35.9950, 128.4300], km: 273, type: 'drowsy' },
+      { id: 'gs-yangsan', name: '양산휴게소', coord: [35.3380, 129.0290], km: 384, type: 'service' },
+    ],
     description: '서울~부산 416km, 한국 고속도로의 중심축'
   },
   {
@@ -42,6 +56,11 @@ export const HIGHWAYS = [
       { name: '구리JC', coord: [37.6038, 127.1438], km: 95 },
       { name: '소흘JC', coord: [37.8147, 127.1345], km: 118 },
     ],
+    restStops: [
+      { id: 'sp-anseong', name: '남안성휴게소', coord: [36.9600, 127.2350], km: 38, type: 'drowsy' },
+      { id: 'sp-guri', name: '구리휴게소', coord: [37.5800, 127.1500], km: 93, type: 'service' },
+      { id: 'sp-sohul', name: '소흘졸음쉼터', coord: [37.8000, 127.1400], km: 116, type: 'drowsy' },
+    ],
     description: '세종~포천 128km, 일부 구간 120km/h가 적용된 남북 축 노선'
   },
   {
@@ -62,6 +81,11 @@ export const HIGHWAYS = [
       { name: '안성JC', coord: [37.0082, 127.2478], km: 25 },
       { name: '음성JC', coord: [36.9346, 127.5951], km: 73 },
       { name: '충주JC', coord: [36.9914, 127.9258], km: 108 },
+    ],
+    restStops: [
+      { id: 'pct-anseong', name: '안성휴게소', coord: [37.0050, 127.2200], km: 28, type: 'service' },
+      { id: 'pct-jincheon', name: '진천졸음쉼터', coord: [36.9200, 127.4800], km: 62, type: 'drowsy' },
+      { id: 'pct-chungju', name: '충주휴게소', coord: [36.9800, 127.8900], km: 104, type: 'service' },
     ],
     description: '평택~제천 137km, 서해안~중부내륙 연결'
   },
@@ -85,6 +109,11 @@ export const HIGHWAYS = [
       { name: '김포JC', coord: [37.6209, 126.6918], km: 116 },
       { name: '양평JC', coord: [37.5075, 127.4788], km: 259 },
     ],
+    restStops: [
+      { id: 'm2-ansan', name: '안산휴게소', coord: [37.3100, 126.8400], km: 30, type: 'service' },
+      { id: 'm2-gimpo', name: '김포휴게소', coord: [37.6000, 126.7000], km: 114, type: 'drowsy' },
+      { id: 'm2-yangpyeong', name: '양평휴게소', coord: [37.5100, 127.4600], km: 255, type: 'service' },
+    ],
     description: '수도권 외곽 순환 흐름을 분산하는 광역 순환 노선'
   },
   {
@@ -107,6 +136,14 @@ export const HIGHWAYS = [
       { name: '여주JC', coord: [37.2965, 127.6376], km: 108 },
       { name: '만종JC', coord: [37.3677, 128.1508], km: 172 },
     ],
+    restStops: [
+      { id: 'yd-deokpyeong', name: '덕평휴게소', coord: [37.3100, 127.3800], km: 67, type: 'service' },
+      { id: 'yd-icheon', name: '이천휴게소', coord: [37.2850, 127.5000], km: 82, type: 'service' },
+      { id: 'yd-yeoju', name: '여주휴게소', coord: [37.3050, 127.6500], km: 96, type: 'drowsy' },
+      { id: 'yd-munmak', name: '문막휴게소', coord: [37.3800, 127.8100], km: 120, type: 'service' },
+      { id: 'yd-hoengseong', name: '횡성휴게소', coord: [37.4900, 127.9700], km: 148, type: 'service' },
+      { id: 'yd-gangneung', name: '강릉휴게소', coord: [37.7200, 128.6500], km: 222, type: 'service' },
+    ],
     description: '인천~강릉 234km, 수도권↔강원 핵심 노선'
   },
   {
@@ -127,6 +164,12 @@ export const HIGHWAYS = [
       { name: '광양JC', coord: [34.9434, 127.6583], km: 18 },
       { name: '진주JC', coord: [35.1800, 128.0800], km: 84 },
       { name: '창원JC', coord: [35.2271, 128.6814], km: 158 },
+    ],
+    restStops: [
+      { id: 'nh-gwangyang', name: '광양휴게소', coord: [34.9500, 127.7200], km: 22, type: 'drowsy' },
+      { id: 'nh-jinju', name: '진주휴게소', coord: [35.1600, 128.0200], km: 85, type: 'service' },
+      { id: 'nh-haman', name: '함안휴게소', coord: [35.2400, 128.3800], km: 116, type: 'service' },
+      { id: 'nh-changwon', name: '창원휴게소', coord: [35.2400, 128.6200], km: 155, type: 'drowsy' },
     ],
     description: '순천~부산 179km, 남해안 동서 연결'
   },
@@ -149,6 +192,12 @@ export const HIGHWAYS = [
       { name: '익산JC', coord: [35.9500, 126.9800], km: 83 },
       { name: '전주JC', coord: [35.7800, 127.0400], km: 110 },
     ],
+    restStops: [
+      { id: 'hn-nonsan', name: '논산휴게소', coord: [36.2000, 127.1100], km: 48, type: 'service' },
+      { id: 'hn-jeonju', name: '전주휴게소', coord: [35.8000, 127.0600], km: 112, type: 'service' },
+      { id: 'hn-jeongeup', name: '정읍휴게소', coord: [35.5200, 126.8500], km: 152, type: 'drowsy' },
+      { id: 'hn-jangseong', name: '장성휴게소', coord: [35.2900, 126.7800], km: 200, type: 'service' },
+    ],
     description: '대전~광주 247km, 충청~호남 연결'
   },
   {
@@ -169,6 +218,12 @@ export const HIGHWAYS = [
       { name: '만종JC', coord: [37.3677, 128.1508], km: 64 },
       { name: '풍기IC', coord: [36.8174, 128.4906], km: 142 },
       { name: '북대구JC', coord: [35.9274, 128.6061], km: 284 },
+    ],
+    restStops: [
+      { id: 'ja-wonju', name: '원주휴게소', coord: [37.3900, 127.9700], km: 58, type: 'service' },
+      { id: 'ja-punggi', name: '풍기휴게소', coord: [36.8400, 128.4700], km: 138, type: 'service' },
+      { id: 'ja-bukdaegu', name: '북대구휴게소', coord: [35.9500, 128.5800], km: 282, type: 'drowsy' },
+      { id: 'ja-miryang', name: '밀양휴게소', coord: [35.5000, 128.7500], km: 338, type: 'service' },
     ],
     description: '춘천~부산 374km, 한반도 종단 내륙 노선'
   },
@@ -192,6 +247,13 @@ export const HIGHWAYS = [
       { name: '상주JC', coord: [36.4096, 128.1592], km: 180 },
       { name: '현풍JC', coord: [35.6944, 128.4276], km: 255 },
     ],
+    restStops: [
+      { id: 'jn-yeoju', name: '여주휴게소', coord: [37.3000, 127.6400], km: 28, type: 'service' },
+      { id: 'jn-chungju', name: '충주휴게소', coord: [37.0000, 127.8800], km: 80, type: 'service' },
+      { id: 'jn-mungyeong', name: '문경휴게소', coord: [36.5800, 128.1900], km: 158, type: 'drowsy' },
+      { id: 'jn-sangju', name: '상주휴게소', coord: [36.4200, 128.1700], km: 183, type: 'service' },
+      { id: 'jn-hyeonpung', name: '현풍휴게소', coord: [35.7000, 128.4200], km: 258, type: 'drowsy' },
+    ],
     description: '양평~창원 302km, 내륙 화물과 장거리 주행 비중이 큰 종단 노선'
   },
   {
@@ -213,6 +275,13 @@ export const HIGHWAYS = [
       { name: '서평택JC', coord: [36.9972, 127.0347], km: 77 },
       { name: '서천JC', coord: [36.0787, 126.6916], km: 189 },
       { name: '동군산JC', coord: [35.9000, 126.7500], km: 212 },
+    ],
+    restStops: [
+      { id: 'sh-hwaseong', name: '화성휴게소', coord: [37.2100, 126.8700], km: 42, type: 'service' },
+      { id: 'sh-seopyeongtaek', name: '서평택휴게소', coord: [36.9500, 126.9200], km: 80, type: 'drowsy' },
+      { id: 'sh-seocheon', name: '서천휴게소', coord: [36.0600, 126.6400], km: 190, type: 'service' },
+      { id: 'sh-hampyeong', name: '함평휴게소', coord: [35.0800, 126.5100], km: 270, type: 'service' },
+      { id: 'sh-yeongam', name: '영암휴게소', coord: [34.9400, 126.4900], km: 312, type: 'drowsy' },
     ],
     description: '서울~목포 340km, 서해안 종단 노선'
   },
