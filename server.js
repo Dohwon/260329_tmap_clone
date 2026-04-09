@@ -41,8 +41,22 @@ app.use('/api/tmap', createProxyMiddleware({
   target: 'https://apis.openapi.sk.com',
   changeOrigin: true,
   pathRewrite: { '^/api/tmap': '/tmap' },
-  // headers 옵션으로 appKey를 직접 주입 (on.proxyReq 대비 Railway에서 더 안정적)
-  headers: TMAP_KEY ? { appKey: TMAP_KEY } : {},
+  on: {
+    proxyReq: (proxyReq, req) => {
+      // Web SDK 키는 브라우저의 Origin 헤더로 도메인 검증 → 브라우저가 보낸 Origin/Referer를 TMAP에 그대로 전달
+      if (TMAP_KEY) proxyReq.setHeader('appKey', TMAP_KEY)
+      const origin = req.headers['origin'] || req.headers['referer']
+      if (origin) {
+        try {
+          const url = new URL(origin)
+          proxyReq.setHeader('origin', url.origin)
+          proxyReq.setHeader('referer', origin)
+        } catch {
+          proxyReq.setHeader('origin', origin)
+        }
+      }
+    },
+  },
 }))
 
 app.use(express.static(join(__dirname, 'dist')))

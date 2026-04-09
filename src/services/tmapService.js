@@ -2,6 +2,8 @@ import { HIGHWAYS } from '../data/highwayData'
 
 const BASE = '/api/tmap'
 const ROAD_KEYWORD_PATTERN = /(고속|국도|jc|ic|분기|인터체인지|나들목|휴게소|톨게이트)/i
+// 도로명 주소 패턴: "효행로 250", "강남대로 123번길 45" 등
+const ROAD_ADDRESS_PATTERN = /[가-힣]+(?:로|길|대로|avenue)\s*\d+/i
 
 const FALLBACK_SEARCH_PLACES = [
   { id: 'place-seoul', name: '서울역', address: '서울특별시 용산구 한강대로 405', lat: 37.5547, lng: 126.9706, category: '교통' },
@@ -137,12 +139,12 @@ export async function fetchTmapStatus() {
   }
 }
 
-export async function searchPOI(keyword, nearLat, nearLng) {
+async function fetchPoiSearch(keyword, nearLat, nearLng, searchtypCd = 'A') {
   const params = new URLSearchParams({
     version: '1',
     searchKeyword: keyword,
     searchType: 'all',
-    searchtypCd: 'A',
+    searchtypCd,
     page: '1',
     resCoordType: 'WGS84GEO',
     reqCoordType: 'WGS84GEO',
@@ -151,52 +153,73 @@ export async function searchPOI(keyword, nearLat, nearLng) {
     count: '20',
     ...(nearLat != null && nearLng != null ? { centerLat: String(nearLat), centerLon: String(nearLng) } : {}),
   })
-
-  try {
-    const res = await fetch(`${BASE}/pois?${params}`, {
-      headers: { Accept: 'application/json' },
-    })
-    if (!res.ok) {
-      const errJson = await res.json().catch(() => ({}))
-      throw new Error(errJson?.error?.errorMessage ?? errJson?.error?.code ?? `HTTP ${res.status}`)
-    }
-    const json = await res.json()
-    const pois = json?.searchPoiInfo?.pois?.poi ?? []
-    const normalized = pois.map(normalizePoi).filter((poi) => Number.isFinite(poi.lat) && Number.isFinite(poi.lng))
-    if (normalized.length > 0) return normalized
-  } catch {
-    // fallback below
+  const res = await fetch(`${BASE}/pois?${params}`, { headers: { Accept: 'application/json' } })
+  if (!res.ok) {
+    const errJson = await res.json().catch(() => ({}))
+    throw new Error(errJson?.error?.errorMessage ?? errJson?.error?.code ?? `HTTP ${res.status}`)
   }
+  const json = await res.json()
+  const pois = json?.searchPoiInfo?.pois?.poi ?? []
+  return pois.map(normalizePoi).filter((poi) => Number.isFinite(poi.lat) && Number.isFinite(poi.lng))
+}
 
-  try {
-    const fullAddrParams = new URLSearchParams({
-      version: '1',
-      fullAddr: keyword,
-      coordType: 'WGS84GEO',
-      addressFlag: 'F00',
-      page: '1',
-      count: '15',
+async function fetchFullAddrGeo(keyword) {
+  const params = new URLSearchParams({
+    version: '1',
+    fullAddr: keyword,
+    coordType: 'WGS84GEO',
+    addressFlag: 'F00',
+    page: '1',
+    count: '15',
+  })
+  const res = await fetch(`${BASE}/geo/fullAddrGeo?${params}`, { headers: { Accept: 'application/json' } })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const json = await res.json()
+  const coordinates = json?.coordinateInfo?.coordinate ?? []
+  return coordinates
+    .map((item, index) => ({
+      id: `fulladdr-${index}-${item.newLat ?? item.lat}`,
+      name: item.fullAddress ?? item.roadName ?? keyword,
+      address: item.fullAddress ?? keyword,
+      lat: parseFloat(item.newLat ?? item.lat),
+      lng: parseFloat(item.newLon ?? item.lon),
+      category: '주소',
+    }))
+    .filter((poi) => Number.isFinite(poi.lat) && Number.isFinite(poi.lng))
+}
+
+export async function searchPOI(keyword, nearLat, nearLng) {
+  const isRoadAddress = ROAD_ADDRESS_PATTERN.test(keyword)
+
+  if (isRoadAddress) {
+    // 도로명/지번 주소: fullAddrGeo 우선, POI 병렬 시도
+    const [addrResults, poiResults] = await Promise.all([
+      fetchFullAddrGeo(keyword).catch(() => []),
+      fetchPoiSearch(keyword, nearLat, nearLng).catch(() => []),
+    ])
+    const combined = [...addrResults, ...poiResults]
+    const unique = combined.filter((item, index, all) =>
+      all.findIndex((other) => Math.abs(other.lat - item.lat) < 0.0001 && Math.abs(other.lng - item.lng) < 0.0001) === index
+    )
+    if (unique.length > 0) return unique
+  } else {
+    // 건물명/업체명: POI 검색 (전체 + 업종 병렬)
+    const [poiAll, poiBiz] = await Promise.all([
+      fetchPoiSearch(keyword, nearLat, nearLng, 'A').catch(() => []),
+      fetchPoiSearch(keyword, nearLat, nearLng, 'B').catch(() => []),
+    ])
+    // 중복 제거 (id 기준)
+    const seen = new Set()
+    const combined = [...poiAll, ...poiBiz].filter((item) => {
+      if (seen.has(item.id)) return false
+      seen.add(item.id)
+      return true
     })
-    const res = await fetch(`${BASE}/geo/fullAddrGeo?${fullAddrParams}`, {
-      headers: { Accept: 'application/json' },
-    })
-    if (res.ok) {
-      const json = await res.json()
-      const coordinates = json?.coordinateInfo?.coordinate ?? []
-      const normalized = coordinates
-        .map((item, index) => ({
-          id: `fulladdr-${index}-${item.newLat ?? item.lat}`,
-          name: item.fullAddress ?? item.roadName ?? keyword,
-          address: item.fullAddress ?? keyword,
-          lat: parseFloat(item.newLat ?? item.lat),
-          lng: parseFloat(item.newLon ?? item.lon),
-          category: '주소',
-        }))
-        .filter((poi) => Number.isFinite(poi.lat) && Number.isFinite(poi.lng))
-      if (normalized.length > 0) return normalized
-    }
-  } catch {
-    // fallback below
+    if (combined.length > 0) return combined
+
+    // POI 결과 없으면 fullAddrGeo도 시도
+    const addrResults = await fetchFullAddrGeo(keyword).catch(() => [])
+    if (addrResults.length > 0) return addrResults
   }
 
   return searchFallbackPlaces(keyword, nearLat, nearLng)
