@@ -12,8 +12,8 @@ export default function ScenicRoadDialog() {
   const baseEta = baseRoute?.eta ?? 0
   const totalEta = baseEta + suggestion.detourMinutes
 
-  const typeLabel = suggestion.type === 'coastal' ? '해안도로' : '산악도로'
-  const bgClass = suggestion.type === 'coastal'
+  const typeLabel = suggestion.scenicType === 'coastal' ? '해안도로' : '산악도로'
+  const bgClass = suggestion.scenicType === 'coastal'
     ? 'from-blue-500 to-cyan-400'
     : 'from-green-600 to-emerald-400'
 
@@ -89,7 +89,7 @@ export default function ScenicRoadDialog() {
               }}
               className={`flex-1 py-3.5 rounded-2xl text-sm font-bold text-white bg-gradient-to-r ${bgClass}`}
             >
-              {typeLabel} 경유하기
+              {typeLabel} 경유
             </button>
           </div>
         </div>

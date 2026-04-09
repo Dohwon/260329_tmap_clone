@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { HIGHWAYS } from '../data/highwayData'
-import { SCENIC_ROADS } from '../data/scenicRoads'
+import { SCENIC_SEGMENTS_SORTED } from '../data/scenicRoads'
 import { PRESET_INFO, MOCK_RECENT_SEARCHES } from '../data/mockData'
 import { fetchRouteByWaypoints, fetchRoutes, fetchTmapStatus, searchNearbyPOIs } from '../services/tmapService'
 
@@ -58,24 +58,33 @@ function getRoadPath(road) {
 }
 
 /**
- * 경로(폴리라인 or 출발/도착 좌표) 근처의 해안/산악도로를 감지하여 반환
- * - detourMinutes >= minDetourMinutes 인 것만 반환 (기본 20분)
+ * 경로 근처의 해안/산악 경관 구간을 감지하여 반환
+ * - 폴리라인의 샘플 포인트 중 하나가 segment.nearKm 이내에 있으면 "근처"
+ * - detourMinutes >= minDetourMinutes 인 것만 반환
+ * - 같은 타입(coastal/mountain) 최대 MAX_PER_TYPE개까지만
  */
 function detectScenicRoads(origin, destination, polyline = [], minDetourMinutes = 20) {
+  // 경로 전체에서 최대 12개 포인트 샘플
+  const step = Math.max(1, Math.floor(polyline.length / 12))
   const checkPoints = [
     [origin.lat, origin.lng],
     [destination.lat, destination.lng],
-    // 폴리라인에서 균등하게 샘플
-    ...polyline.filter((_, i) => i % Math.max(1, Math.floor(polyline.length / 8)) === 0),
+    ...polyline.filter((_, i) => i % step === 0),
   ]
 
-  return SCENIC_ROADS.filter((road) => {
-    const [rLat, rLng] = road.regionCenter
-    // 경로의 어느 지점이든 regionRadiusKm 내에 있으면 "근처"
+  const MAX_PER_TYPE = 2
+  const countByType = { coastal: 0, mountain: 0 }
+
+  return SCENIC_SEGMENTS_SORTED.filter((seg) => {
+    if (seg.detourMinutes < minDetourMinutes) return false
+    if (countByType[seg.scenicType] >= MAX_PER_TYPE) return false
+
+    const [mLat, mLng] = seg.segmentMid
     const isNear = checkPoints.some(([lat, lng]) =>
-      haversineKm(lat, lng, rLat, rLng) <= road.regionRadiusKm
+      haversineKm(lat, lng, mLat, mLng) <= seg.nearKm
     )
-    return isNear && road.detourMinutes >= minDetourMinutes
+    if (isNear) countByType[seg.scenicType]++
+    return isNear
   })
 }
 
