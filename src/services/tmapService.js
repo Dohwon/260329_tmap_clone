@@ -361,6 +361,10 @@ export async function fetchRouteByWaypoints(start, destination, wayPoints = [], 
   return parseRouteResponse(json, option)
 }
 
+export async function fetchDirectRoute(startLat, startLng, endLat, endLng, option = {}) {
+  return fetchSingleRoute(startLat, startLng, endLat, endLng, { searchOption: '00', ...option })
+}
+
 async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
   const body = {
     startX: String(startLng),

@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { HIGHWAYS } from '../data/highwayData'
 import { SCENIC_SEGMENTS_SORTED } from '../data/scenicRoads'
 import { PRESET_INFO, MOCK_RECENT_SEARCHES } from '../data/mockData'
-import { fetchRouteByWaypoints, fetchRoutes, fetchTmapStatus, searchNearbyPOIs } from '../services/tmapService'
+import { fetchDirectRoute, fetchRouteByWaypoints, fetchRoutes, fetchTmapStatus, searchNearbyPOIs, searchPOI } from '../services/tmapService'
 
 const DEFAULT_CENTER = [37.5665, 126.978]
 const DEFAULT_ORIGIN = { lat: 37.5665, lng: 126.978, speedKmh: 0, heading: 0, accuracy: null }
@@ -771,51 +771,65 @@ const useAppStore = create((set, get) => ({
     if (!destination) return
     set({ isLoadingRoutes: true, scenicRouteError: null })
 
-    // 경유지 후보 목록: viaPoints → segmentMid → segmentStart/End 중간점 순으로 시도
-    const viaCandidates = []
+    const scenicRouteOpt = { searchOption: '00', title: `${suggestion.name} 경유`, tag: '경관경로', tagColor: 'green' }
+    const start = { ...origin, name: '현재 위치' }
+
+    // 경유지 좌표 후보: viaPoints → segmentMid → segmentStart/End 중간점 → POI 검색
+    const coordCandidates = []
     if (suggestion.viaPoints?.length > 0) {
-      viaCandidates.push(suggestion.viaPoints.map((pt, i) => ({
-        id: `scenic-via-${i}`, name: pt.name, lat: pt.lat, lng: pt.lng,
-      })))
+      coordCandidates.push(...suggestion.viaPoints.map((pt, i) => ({ id: `via-${i}`, name: pt.name, lat: pt.lat, lng: pt.lng })))
     }
     if (suggestion.segmentMid) {
-      viaCandidates.push([{ id: 'scenic-mid', name: suggestion.name, lat: suggestion.segmentMid[0], lng: suggestion.segmentMid[1] }])
+      coordCandidates.push({ id: 'mid', name: suggestion.name, lat: suggestion.segmentMid[0], lng: suggestion.segmentMid[1] })
     }
     if (suggestion.segmentStart && suggestion.segmentEnd) {
-      const midLat = (suggestion.segmentStart[0] + suggestion.segmentEnd[0]) / 2
-      const midLng = (suggestion.segmentStart[1] + suggestion.segmentEnd[1]) / 2
-      viaCandidates.push([{ id: 'scenic-se-mid', name: suggestion.name, lat: midLat, lng: midLng }])
+      coordCandidates.push({
+        id: 'se-mid', name: suggestion.name,
+        lat: (suggestion.segmentStart[0] + suggestion.segmentEnd[0]) / 2,
+        lng: (suggestion.segmentStart[1] + suggestion.segmentEnd[1]) / 2,
+      })
     }
 
+    // POI 검색으로 도로 위 좌표 추가 (TMAP이 반환하는 POI는 도로 근처)
+    try {
+      const [mLat, mLng] = suggestion.segmentMid ?? [0, 0]
+      const poiResults = await searchPOI(suggestion.name, mLat, mLng)
+      if (poiResults?.length > 0) {
+        coordCandidates.push({ id: 'poi', name: poiResults[0].name, lat: poiResults[0].lat, lng: poiResults[0].lng })
+      }
+      // roadLabel 도로명도 검색 시도 (예: "국도 44호선")
+      if (suggestion.roadLabel && poiResults?.length === 0) {
+        const roadPoi = await searchPOI(suggestion.roadLabel, mLat, mLng)
+        if (roadPoi?.length > 0) {
+          coordCandidates.push({ id: 'road-poi', name: roadPoi[0].name, lat: roadPoi[0].lat, lng: roadPoi[0].lng })
+        }
+      }
+    } catch {
+      // POI 검색 실패는 무시
+    }
+
+    // 모든 좌표 후보로 routeSequential30 순차 시도
     let viaRoute = null
-    let lastErr = null
-    for (const wayPoints of viaCandidates) {
+    for (const pt of coordCandidates) {
       try {
-        viaRoute = await fetchRouteByWaypoints(
-          { ...origin, name: '현재 위치' },
-          destination,
-          wayPoints,
-          { searchOption: '00', title: `${suggestion.name} 경유`, tag: '경관경로', tagColor: 'green' }
-        )
+        viaRoute = await fetchRouteByWaypoints(start, destination, [pt], scenicRouteOpt)
         if (viaRoute) break
       } catch (err) {
-        lastErr = err
-        // 1100(NOT_FOUND) 이면 다음 좌표 후보로 재시도
+        // 1100이 아닌 다른 오류(네트워크 등)면 중단
         if (!String(err?.message ?? '').includes('1100')) break
       }
     }
 
-    try {
-      if (viaRoute) {
+    if (viaRoute) {
+      try {
         const scenicId = `route-scenic-${suggestion.id}`
         const decorated = decorateRoute(
           { ...viaRoute, id: scenicId, tag: '경관경로', tagColor: 'green', routeColor: '#10B981' },
           99,
           { origin, destination, routePreferences, driverPreset }
         )
-        const nextRoutes = [...get().routes.filter(r => r.id !== scenicId), decorated]
         set({
-          routes: nextRoutes,
+          routes: [...get().routes.filter(r => r.id !== scenicId), decorated],
           selectedRouteId: decorated.id,
           isLoadingRoutes: false,
           mergeOptions: buildMergeOptions(decorated, null, driverPreset),
@@ -823,11 +837,14 @@ const useAppStore = create((set, get) => ({
           mapZoom: 9,
           scenicRoadSuggestions: get().scenicRoadSuggestions.filter((s) => s.id !== suggestion.id),
         })
-      } else {
-        set({ isLoadingRoutes: false, scenicRouteError: '경유 경로를 찾을 수 없습니다. 해당 구간이 차량 통행 불가이거나 도로와 거리가 있을 수 있습니다.' })
+      } catch (err) {
+        set({ isLoadingRoutes: false, scenicRouteError: err?.message ?? '경로 처리 실패' })
       }
-    } catch (err) {
-      set({ isLoadingRoutes: false, scenicRouteError: err?.message ?? '경로 탐색 실패' })
+    } else {
+      set({
+        isLoadingRoutes: false,
+        scenicRouteError: `${suggestion.name} 경유 경로를 찾을 수 없습니다. TMAP 다중경유지 API가 지원되지 않거나 해당 구간이 통행 불가입니다.`,
+      })
     }
   },
 
@@ -1052,21 +1069,29 @@ const useAppStore = create((set, get) => ({
       tagColor: option.afterRoadType === 'national' ? 'green' : 'blue',
       isBaseline: option.isCurrent,
     }
-    const start = { ...origin, name: '현재 위치' }
 
     let liveRoute = null
-    try {
-      const wayPoints = option.wayPoints ?? []
-      // 실제 TMAP 분기점 좌표가 있으면 via-waypoint로, 없으면 direct (빈 배열)
-      liveRoute = await fetchRouteByWaypoints(start, destination, wayPoints, routeOpt)
-    } catch (firstErr) {
-      // 1100(경로없음) 등 실패 시 → wayPoints 없이 searchOption만으로 재시도
-      if (String(firstErr?.message ?? '').includes('1100') || !liveRoute) {
-        try {
-          liveRoute = await fetchRouteByWaypoints(start, destination, [], routeOpt)
-        } catch {
-          // 두 번째도 실패하면 liveRoute = null로 폴백
-        }
+    const wayPoints = (option.wayPoints ?? []).filter(p => p.lat && p.lng)
+
+    // 실제 TMAP 분기점 좌표(junction)가 있으면 routeSequential30 시도
+    if (wayPoints.length > 0) {
+      try {
+        liveRoute = await fetchRouteByWaypoints(
+          { ...origin, name: '현재 위치' }, destination, wayPoints, routeOpt
+        )
+      } catch {
+        // routeSequential30 실패 — 아래 fetchDirectRoute로 폴백
+      }
+    }
+
+    // 직접 경로 (/routes API) — via point 없이 searchOption만으로 경로 유형 결정
+    if (!liveRoute) {
+      try {
+        liveRoute = await fetchDirectRoute(
+          origin.lat, origin.lng, destination.lat, destination.lng, routeOpt
+        )
+      } catch {
+        // 두 번째도 실패하면 liveRoute = null
       }
     }
 
@@ -1088,7 +1113,7 @@ const useAppStore = create((set, get) => ({
       return
     }
 
-    // TMAP 실패: UI 점수만 업데이트, 에러 배너 없이 조용히 폴백
+    // TMAP 완전 실패: UI만 업데이트, 에러 배너 없이 조용히 폴백
     set({
       mergeOptions: buildMergeOptions(baseRoute, mergeOptionId, state.driverPreset),
       isLoadingRoutes: false,
