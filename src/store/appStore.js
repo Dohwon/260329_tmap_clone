@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { HIGHWAYS } from '../data/highwayData'
+import { SCENIC_ROADS } from '../data/scenicRoads'
 import { PRESET_INFO, MOCK_RECENT_SEARCHES } from '../data/mockData'
 import { fetchRouteByWaypoints, fetchRoutes, fetchTmapStatus, searchNearbyPOIs } from '../services/tmapService'
 
@@ -54,6 +55,28 @@ function haversineKm(lat1, lng1, lat2, lng2) {
 
 function getRoadPath(road) {
   return [road.startCoord, ...road.majorJunctions.map((junction) => junction.coord), road.endCoord]
+}
+
+/**
+ * 경로(폴리라인 or 출발/도착 좌표) 근처의 해안/산악도로를 감지하여 반환
+ * - detourMinutes >= minDetourMinutes 인 것만 반환 (기본 20분)
+ */
+function detectScenicRoads(origin, destination, polyline = [], minDetourMinutes = 20) {
+  const checkPoints = [
+    [origin.lat, origin.lng],
+    [destination.lat, destination.lng],
+    // 폴리라인에서 균등하게 샘플
+    ...polyline.filter((_, i) => i % Math.max(1, Math.floor(polyline.length / 8)) === 0),
+  ]
+
+  return SCENIC_ROADS.filter((road) => {
+    const [rLat, rLng] = road.regionCenter
+    // 경로의 어느 지점이든 regionRadiusKm 내에 있으면 "근처"
+    const isNear = checkPoints.some(([lat, lng]) =>
+      haversineKm(lat, lng, rLat, rLng) <= road.regionRadiusKm
+    )
+    return isNear && road.detourMinutes >= minDetourMinutes
+  })
 }
 
 function getRoadById(roadId) {
@@ -477,8 +500,19 @@ const useAppStore = create((set, get) => ({
   },
   isLoadingRoutes: false,
   isNavigating: false,
-  startNavigation: () => set({ isNavigating: true, showRoutePanel: false, routePanelMode: 'full' }),
+  startNavigation: () => {
+    const { userLocation } = get()
+    // 내 위치로 지도 포커스
+    const center = userLocation ? [userLocation.lat, userLocation.lng] : get().mapCenter
+    set({ isNavigating: true, showRoutePanel: false, routePanelMode: 'full', mapCenter: center, mapZoom: 15 })
+  },
   stopNavigation: () => set({ isNavigating: false, destination: null, routes: [], selectedRouteId: null, routePanelMode: 'full' }),
+
+  // 해안/산악도로 우회 제안
+  scenicRoadSuggestions: [],   // DetectedScenicRoad[]
+  dismissScenicSuggestion: (id) => set((state) => ({
+    scenicRoadSuggestions: state.scenicRoadSuggestions.filter((item) => item.id !== id),
+  })),
 
   tmapStatus: { hasApiKey: false, mode: 'simulation', lastError: null },
   setTmapStatus: (patch) => set((state) => ({ tmapStatus: { ...state.tmapStatus, ...patch } })),
@@ -655,6 +689,14 @@ const useAppStore = create((set, get) => ({
 
     const selectedRouteId = routes[0]?.id ?? null
     const selectedRoute = routes[0] ?? null
+
+    // 해안/산악도로 감지 (경로 탐색 후 20분 이상 우회 필요한 것만)
+    const scenicRoadSuggestions = detectScenicRoads(
+      origin,
+      destination,
+      selectedRoute?.polyline ?? []
+    )
+
     set({
       routes,
       selectedRouteId,
@@ -663,6 +705,7 @@ const useAppStore = create((set, get) => ({
       mergeOptions: selectedRoute ? buildMergeOptions(selectedRoute, 'merge-current') : [],
       mapCenter: selectedRoute?.polyline?.[Math.floor(selectedRoute.polyline.length / 2)] ?? [destination.lat, destination.lng],
       mapZoom: selectedRoute ? 8 : 14,
+      scenicRoadSuggestions,
     })
   },
 

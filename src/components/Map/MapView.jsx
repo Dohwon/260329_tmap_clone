@@ -90,12 +90,21 @@ function smoothPath(positions, curvature = 0.18) {
   return next
 }
 
+// 제한속도가 바뀌는 첫 지점에서만 마커 표시 (같은 제한속도 연속 구간은 첫 구간만)
 function buildSpeedMarkers(segments) {
-  return segments.map((segment) => ({
-    id: `${segment.id}-speed`,
-    center: segment.center,
-    label: `${segment.speedLimit}/${segment.averageSpeed}`,
-  }))
+  const markers = []
+  let prevLimit = null
+  for (const segment of segments) {
+    if (segment.speedLimit !== prevLimit) {
+      markers.push({
+        id: `${segment.id}-speed`,
+        center: segment.center,
+        label: `${segment.speedLimit}`,
+      })
+      prevLimit = segment.speedLimit
+    }
+  }
+  return markers
 }
 
 function getCongestionColor(score) {
@@ -255,7 +264,7 @@ export default function MapView({ darkMode = false }) {
             <Marker
               key={marker.id}
               position={marker.center}
-              icon={makeBadgeIcon({ text: marker.label, background: COLORS.speedLimit, size: 42 })}
+              icon={makeBadgeIcon({ text: marker.label, background: COLORS.speedLimit, size: 34 })}
             />
           ))}
         </>

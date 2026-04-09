@@ -3,12 +3,13 @@ import MapView from '../components/Map/MapView'
 import HomeBottomPanel from '../components/Common/HomeBottomPanel'
 import RoutePreviewPanel from '../components/Route/RoutePreviewPanel'
 import NavigationOverlay from '../components/Navigation/NavigationOverlay'
+import ScenicRoadDialog from '../components/Navigation/ScenicRoadDialog'
 import HighwayExplorer from '../components/Map/HighwayExplorer'
 import useAppStore from '../store/appStore'
 import SearchSheet from '../components/Search/SearchSheet'
 
 export default function HomeScreen() {
-  const { isNavigating, showRoutePanel, setShowRoutePanel, toggleLayer, visibleLayers, userLocation, selectedRoadId } = useAppStore()
+  const { isNavigating, showRoutePanel, setShowRoutePanel, toggleLayer, visibleLayers, userLocation, selectedRoadId, scenicRoadSuggestions } = useAppStore()
   const [showSearch, setShowSearch] = useState(false)
   const [showLayerMenu, setShowLayerMenu] = useState(false)
   const [showHighwayExplorer, setShowHighwayExplorer] = useState(false)
@@ -107,6 +108,9 @@ export default function HomeScreen() {
       <NavigationOverlay />
       <RoutePreviewPanel />
       {!showSearch && !showRoutePanel && !isNavigating && <HomeBottomPanel />}
+
+      {/* 해안/산악도로 경유 제안 다이얼로그 (경로 패널 위에 표시) */}
+      {scenicRoadSuggestions.length > 0 && showRoutePanel && !isNavigating && <ScenicRoadDialog />}
 
       {showSearch && <SearchSheet onClose={() => setShowSearch(false)} />}
       {showHighwayExplorer && <HighwayExplorer onClose={() => setShowHighwayExplorer(false)} />}
