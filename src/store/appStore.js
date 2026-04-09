@@ -431,10 +431,7 @@ function buildMergeOptions(route, selectedId, driverPreset = 'intermediate') {
         congestionPreview: route.congestionScore >= 2 ? '원활' : route.congestionLabel,
         avgSpeedBefore: route.averageSpeed ?? 80,
         avgSpeedAfter: Math.min(100, (route.averageSpeed ?? 80) + 12),
-        wayPoints: (() => {
-          const pt = route.polyline?.[Math.floor((route.polyline?.length ?? 0) / 4)]
-          return pt ? [{ id: 'via-highway', name: '고속 재합류 지점', lat: pt[0], lng: pt[1] }] : []
-        })(),
+        wayPoints: [],  // 폴백: 직선보간 좌표는 도로 위가 아니라 1100 에러 유발 → 빈 배열로 direct route
       },
     ] : []),
     ...(!isShort && driverPreset !== 'beginner' ? [
@@ -458,10 +455,7 @@ function buildMergeOptions(route, selectedId, driverPreset = 'intermediate') {
         congestionPreview: route.congestionScore === 3 ? '서행' : '원활',
         avgSpeedBefore: route.averageSpeed ?? 80,
         avgSpeedAfter: Math.max(55, (route.averageSpeed ?? 80) - 10),
-        wayPoints: (() => {
-          const pt = route.polyline?.[Math.floor((route.polyline?.length ?? 0) / 3)]
-          return pt ? [{ id: 'via-national', name: '국도 전환 지점', lat: pt[0] + 0.008, lng: pt[1] - 0.012 }] : []
-        })(),
+        wayPoints: [],  // 폴백: offset 좌표는 도로 위가 아님 → 빈 배열로 searchOption으로만 구분
       },
     ] : []),
   ]
@@ -830,7 +824,7 @@ const useAppStore = create((set, get) => ({
           scenicRoadSuggestions: get().scenicRoadSuggestions.filter((s) => s.id !== suggestion.id),
         })
       } else {
-        set({ isLoadingRoutes: false, scenicRouteError: lastErr?.message ?? '경유 경로를 찾을 수 없습니다. (도로에서 멀거나 통행 불가 구간)' })
+        set({ isLoadingRoutes: false, scenicRouteError: '경유 경로를 찾을 수 없습니다. 해당 구간이 차량 통행 불가이거나 도로와 거리가 있을 수 있습니다.' })
       }
     } catch (err) {
       set({ isLoadingRoutes: false, scenicRouteError: err?.message ?? '경로 탐색 실패' })
@@ -1049,44 +1043,52 @@ const useAppStore = create((set, get) => ({
       routePanelMode: 'peek',
     })
 
-    try {
-      const liveRoute = await fetchRouteByWaypoints(
-        { ...origin, name: '현재 위치' },
-        destination,
-        option.wayPoints ?? [],
-        {
-          searchOption: option.afterRoadType === 'national' ? '02' : '04',
-          title: option.afterRoadName,
-          tag: option.isCurrent ? '현재' : '합류',
-          tagColor: option.afterRoadType === 'national' ? 'green' : 'blue',
-          isBaseline: option.isCurrent,
-        }
-      )
+    // searchOption: '04'=유료도로 우선(고속), '00'=추천(국도/혼합)
+    const searchOption = option.afterRoadType === 'highway' ? '04' : '00'
+    const routeOpt = {
+      searchOption,
+      title: option.afterRoadName,
+      tag: option.isCurrent ? '현재' : '합류',
+      tagColor: option.afterRoadType === 'national' ? 'green' : 'blue',
+      isBaseline: option.isCurrent,
+    }
+    const start = { ...origin, name: '현재 위치' }
 
-      if (liveRoute) {
-        const decorated = decorateRoute(
-          { ...liveRoute, title: option.afterRoadName || liveRoute.title, tag: option.isCurrent ? '현재' : '합류' },
-          0,
-          { origin, destination, routePreferences: state.routePreferences, driverPreset: state.driverPreset }
-        )
-        set({
-          routes: [decorated, ...state.routes.filter((route) => route.id !== decorated.id)],
-          selectedRouteId: decorated.id,
-          mergeOptions: buildMergeOptions(decorated, mergeOptionId, state.driverPreset),
-          isLoadingRoutes: false,
-          mapCenter: decorated.polyline[Math.floor(decorated.polyline.length / 2)],
-          mapZoom: 9,
-        })
-        get().setTmapStatus({ hasApiKey: true, mode: 'live', lastError: null })
-        return
+    let liveRoute = null
+    try {
+      const wayPoints = option.wayPoints ?? []
+      // 실제 TMAP 분기점 좌표가 있으면 via-waypoint로, 없으면 direct (빈 배열)
+      liveRoute = await fetchRouteByWaypoints(start, destination, wayPoints, routeOpt)
+    } catch (firstErr) {
+      // 1100(경로없음) 등 실패 시 → wayPoints 없이 searchOption만으로 재시도
+      if (String(firstErr?.message ?? '').includes('1100') || !liveRoute) {
+        try {
+          liveRoute = await fetchRouteByWaypoints(start, destination, [], routeOpt)
+        } catch {
+          // 두 번째도 실패하면 liveRoute = null로 폴백
+        }
       }
-    } catch (error) {
-      get().setTmapStatus({
-        mode: 'simulation',
-        lastError: error?.message ?? '합류 경로 재계산 실패',
-      })
     }
 
+    if (liveRoute) {
+      const decorated = decorateRoute(
+        { ...liveRoute, title: option.afterRoadName || liveRoute.title, tag: option.isCurrent ? '현재' : '합류' },
+        0,
+        { origin, destination, routePreferences: state.routePreferences, driverPreset: state.driverPreset }
+      )
+      set({
+        routes: [decorated, ...state.routes.filter((route) => route.id !== decorated.id)],
+        selectedRouteId: decorated.id,
+        mergeOptions: buildMergeOptions(decorated, mergeOptionId, state.driverPreset),
+        isLoadingRoutes: false,
+        mapCenter: decorated.polyline[Math.floor(decorated.polyline.length / 2)],
+        mapZoom: 9,
+      })
+      get().setTmapStatus({ hasApiKey: true, mode: 'live', lastError: null })
+      return
+    }
+
+    // TMAP 실패: UI 점수만 업데이트, 에러 배너 없이 조용히 폴백
     set({
       mergeOptions: buildMergeOptions(baseRoute, mergeOptionId, state.driverPreset),
       isLoadingRoutes: false,

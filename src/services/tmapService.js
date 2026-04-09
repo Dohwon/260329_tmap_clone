@@ -292,7 +292,7 @@ export async function fetchRoutes(startLat, startLng, endLat, endLng, preference
       junctions.length >= 4
         ? fetchRouteByWaypoints(start, dest, [viaB], {
             id: `route-via-b`,
-            searchOption: '02',
+            searchOption: '00',
             title: `${viaB.name} 경유`,
             tag: `${viaB.name}`,
             tagColor: 'orange',

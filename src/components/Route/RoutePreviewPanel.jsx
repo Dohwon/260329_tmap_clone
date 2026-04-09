@@ -164,7 +164,9 @@ export default function RoutePreviewPanel() {
               {tmapStatus.mode === 'live'
                 ? '실시간 교통 흐름과 경로 응답을 기준으로 비교 중입니다.'
                 : tmapStatus.lastError
-                  ? `오류: ${tmapStatus.lastError}`
+                  ? (tmapStatus.lastError.includes('1100') || tmapStatus.lastError.includes('NOT_FOUND')
+                      ? '해당 경유지로는 경로를 찾을 수 없었습니다. 다른 경로를 선택하세요.'
+                      : `연결 오류: ${tmapStatus.lastError}`)
                   : tmapStatus.hasApiKey
                     ? 'API 키 설정됨. 경로 호출 실패 — 진단: /api/meta/tmap-diag 확인'
                     : 'API 키 미설정 — Railway 환경변수 TMAP_API_KEY를 추가하세요.'}
