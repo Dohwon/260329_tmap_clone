@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import useAppStore from '../../store/appStore'
 import PresetSelector from './PresetSelector'
 import RouteFilterBar from './RouteFilterBar'
-import RouteCard from './RouteCard'
+import RouteCard, { formatEta } from './RouteCard'
 import MergeOptionsSheet from '../Navigation/MergeOptionsSheet'
 
 export default function RoutePreviewPanel() {
@@ -61,7 +61,7 @@ export default function RoutePreviewPanel() {
                   )}
                 </div>
                 <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <span className="font-bold text-gray-900 text-base">{selectedRoute.eta}분</span>
+                  <span className="font-bold text-gray-900 text-base">{formatEta(selectedRoute.eta)}</span>
                   <span>·</span>
                   <span>{selectedRoute.distance}km</span>
                   <span>·</span>

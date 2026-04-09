@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react'
 import useAppStore from '../../store/appStore'
 import MergeOptionsSheet from './MergeOptionsSheet'
+import { formatEta } from '../Route/RouteCard'
 
 export default function NavigationOverlay() {
   const { isNavigating, stopNavigation, destination, routes, selectedRouteId, mergeOptions } = useAppStore()
@@ -55,7 +56,7 @@ export default function NavigationOverlay() {
         <div className="bg-white px-5 py-3 flex items-center shadow-md">
           <div className="flex-1 text-center">
             <div className="text-xs text-gray-400">남은시간</div>
-            <div className="text-lg font-black text-gray-900">{route?.eta ?? '--'}분</div>
+            <div className="text-lg font-black text-gray-900">{route?.eta ? formatEta(route.eta) : '--'}</div>
           </div>
           <div className="w-px h-8 bg-gray-200" />
           <div className="flex-1 text-center">

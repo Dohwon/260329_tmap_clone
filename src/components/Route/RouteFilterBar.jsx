@@ -42,7 +42,7 @@ export default function RouteFilterBar() {
               : 'bg-white border-gray-200 text-gray-400'
           }`}
         >
-          🛣️ 해당도로 선호
+          🌊 해안도로 선호
         </button>
         <button
           onClick={() => setRoutePreference('includeMountain', !routePreferences.includeMountain)}

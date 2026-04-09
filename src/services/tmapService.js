@@ -334,6 +334,9 @@ async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
   return parseRouteResponse(json, option)
 }
 
+// TMAP turnType: 125=분기, 126=합류, 127=진입, 128=진출, 129=IC, 130=JC
+const JUNCTION_TURN_TYPES = new Set([125, 126, 127, 128, 129, 130])
+
 function parseRouteResponse(json, option) {
   const features = json?.features ?? []
   if (!features.length) return null
@@ -343,6 +346,8 @@ function parseRouteResponse(json, option) {
   let highwayDist = 0
   let nationalDist = 0
   let mergeCount = 0
+  const junctions = [] // 실제 IC/JC 분기점
+  let accumulatedDist = 0
 
   for (const feature of features) {
     if (feature.geometry?.type !== 'LineString') continue
@@ -350,9 +355,27 @@ function parseRouteResponse(json, option) {
       polyline.push([coord[1], coord[0]])
     }
     const props = feature.properties ?? {}
-    if ([4, 5, 6].includes(props.roadType)) highwayDist += props.distance ?? 0
-    else nationalDist += props.distance ?? 0
-    if (props.turnType === 14 || props.description?.includes('합류')) mergeCount += 1
+    const dist = props.distance ?? 0
+    if ([4, 5, 6].includes(props.roadType)) highwayDist += dist
+    else nationalDist += dist
+
+    // 분기점/합류/IC/JC 추출
+    if (JUNCTION_TURN_TYPES.has(props.turnType)) {
+      mergeCount += 1
+      const firstCoord = feature.geometry.coordinates[0]
+      if (firstCoord) {
+        junctions.push({
+          id: `jct-${junctions.length}`,
+          name: props.description ?? props.name ?? `분기점 ${junctions.length + 1}`,
+          lat: firstCoord[1],
+          lng: firstCoord[0],
+          turnType: props.turnType,
+          distanceFromStart: Math.round(accumulatedDist / 100) / 10, // km
+          afterRoadType: [4, 5, 6].includes(props.roadType) ? 'highway' : 'national',
+        })
+      }
+    }
+    accumulatedDist += dist
   }
 
   const totalDistance = summary.totalDistance ?? highwayDist + nationalDist
@@ -386,6 +409,7 @@ function parseRouteResponse(json, option) {
     routeColor: option.isBaseline === true ? '#0064FF' : '#8E8E93',
     isBaseline: option.isBaseline === true,
     polyline,
+    junctions, // 실제 IC/JC 분기점 목록
   }
 }
 

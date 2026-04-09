@@ -19,9 +19,9 @@ export default function MergeOptionsSheet({ onClose }) {
         </div>
 
         <div className="px-5 pb-3 border-b border-gray-100">
-          <div className="text-base font-bold text-gray-900">🔀 다음 10km 합류 옵션</div>
+          <div className="text-base font-bold text-gray-900">🔀 분기점별 합류 옵션</div>
           <div className="text-xs text-gray-400 mt-0.5">
-            IC·JC에서 나가면 어떤 길을 만나게 되는지 확인하세요
+            경로의 IC·JC 분기점에서 어느 방향으로 갈지 선택하세요
           </div>
         </div>
 

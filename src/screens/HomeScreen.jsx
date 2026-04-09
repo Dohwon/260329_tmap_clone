@@ -8,10 +8,15 @@ import useAppStore from '../store/appStore'
 import SearchSheet from '../components/Search/SearchSheet'
 
 export default function HomeScreen() {
-  const { isNavigating, showRoutePanel, toggleLayer, visibleLayers, userLocation, selectedRoadId } = useAppStore()
+  const { isNavigating, showRoutePanel, setShowRoutePanel, toggleLayer, visibleLayers, userLocation, selectedRoadId } = useAppStore()
   const [showSearch, setShowSearch] = useState(false)
   const [showLayerMenu, setShowLayerMenu] = useState(false)
   const [showHighwayExplorer, setShowHighwayExplorer] = useState(false)
+
+  // 팝업 상호 배타적 열기
+  const openSearch = () => { setShowSearch(true); setShowLayerMenu(false); setShowHighwayExplorer(false) }
+  const openLayerMenu = () => { setShowLayerMenu((v) => !v); setShowHighwayExplorer(false) }
+  const openHighwayExplorer = () => { setShowHighwayExplorer(true); setShowLayerMenu(false) }
   const hour = new Date().getHours()
   const isNight = hour >= 19 || hour < 6
   const looksLikeTunnel = (userLocation?.speedKmh ?? 0) > 35 && (userLocation?.accuracy ?? 0) > 60
@@ -25,7 +30,7 @@ export default function HomeScreen() {
       {!isNavigating && !showRoutePanel && (
         <div className="absolute top-0 left-0 right-0 z-10 px-4 pt-14 pb-2">
           <button
-            onClick={() => setShowSearch(true)}
+            onClick={openSearch}
             className="w-full bg-white/96 backdrop-blur-md rounded-[24px] px-4 py-3 shadow-lg active:scale-[0.98] transition-all text-left"
           >
             <div className="text-lg font-black text-gray-900">어디로 갈까요?</div>
@@ -56,12 +61,12 @@ export default function HomeScreen() {
             </FloatButton>
 
             {/* 고속도로 탐색 */}
-            <FloatButton onClick={() => setShowHighwayExplorer(true)}>
+            <FloatButton onClick={openHighwayExplorer}>
               <span className="text-lg">🛣️</span>
             </FloatButton>
 
             {/* 레이어 토글 */}
-            <FloatButton onClick={() => setShowLayerMenu(!showLayerMenu)}>
+            <FloatButton onClick={openLayerMenu}>
               <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
               </svg>
@@ -105,6 +110,8 @@ export default function HomeScreen() {
 
       {showSearch && <SearchSheet onClose={() => setShowSearch(false)} />}
       {showHighwayExplorer && <HighwayExplorer onClose={() => setShowHighwayExplorer(false)} />}
+      {/* RoutePanel 열릴 때 레이어메뉴/탐색기 닫기 */}
+      {showRoutePanel && showLayerMenu && setShowLayerMenu(false)}
     </div>
   )
 }

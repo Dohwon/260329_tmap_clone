@@ -150,10 +150,42 @@ function buildRoadSummary(road) {
 }
 
 function buildMergeOptions(route, selectedId) {
+  const junctions = route.junctions ?? []
+
+  // 실제 분기점 있으면 분기점 기반 옵션
+  if (junctions.length > 0) {
+    const options = junctions.slice(0, 5).map((jct, idx) => {
+      const isHighway = jct.afterRoadType === 'highway'
+      return {
+        id: `merge-jct-${idx}`,
+        name: jct.name,
+        distanceFromCurrent: jct.distanceFromStart,
+        addedTime: idx === 0 ? 0 : Math.round((jct.distanceFromStart - junctions[0].distanceFromStart) * 0.8),
+        fixedCameraCount: route.fixedCameraCount,
+        sectionCameraCount: route.sectionCameraCount,
+        dominantSpeedLimit: isHighway ? Math.max(100, route.dominantSpeedLimit) : Math.min(80, route.dominantSpeedLimit),
+        isCurrent: idx === 0,
+        afterRoadType: jct.afterRoadType,
+        afterRoadName: isHighway ? '고속도로 본선' : '국도 진입',
+        afterDescription: isHighway
+          ? `${jct.name}을(를) 통해 고속 본선으로 이어집니다.`
+          : `${jct.name}에서 국도로 전환됩니다.`,
+        afterNextJunction: junctions[idx + 1] ? `다음: ${junctions[idx + 1].name}` : '이후 직진',
+        congestionPreview: route.congestionLabel,
+        wayPoints: [{ id: `via-${jct.id}`, name: jct.name, lat: jct.lat, lng: jct.lng }],
+      }
+    })
+    return options.map((option) => ({
+      ...option,
+      isSelected: option.id === (selectedId ?? options[0]?.id),
+    }))
+  }
+
+  // 폴백: 기존 3-옵션
   const options = [
     {
       id: 'merge-current',
-      name: '현재 도로 유지',
+      name: '현재 경로 유지',
       distanceFromCurrent: 8.4,
       addedTime: 0,
       fixedCameraCount: route.fixedCameraCount,
@@ -169,7 +201,7 @@ function buildMergeOptions(route, selectedId) {
     },
     {
       id: 'merge-highway',
-      name: '다음 10km 고속 재합류',
+      name: '고속 본선 재합류',
       distanceFromCurrent: 12.8,
       addedTime: 2,
       fixedCameraCount: route.fixedCameraCount + 1,
@@ -181,7 +213,6 @@ function buildMergeOptions(route, selectedId) {
       afterDescription: '조금 더 빠르지만 카메라와 통행료가 늘어날 수 있습니다.',
       afterNextJunction: '고속 직진 구간으로 다시 연결됩니다.',
       congestionPreview: route.congestionScore >= 2 ? '원활' : route.congestionLabel,
-      // 경로 polyline 중 1/4 지점을 경유지로 (고속 재합류는 실제 polyline 좌표 사용)
       wayPoints: (() => {
         const idx = Math.floor((route.polyline?.length ?? 0) / 4)
         const pt = route.polyline?.[idx]
@@ -190,7 +221,7 @@ function buildMergeOptions(route, selectedId) {
     },
     {
       id: 'merge-national',
-      name: '다음 10km 국도 전환',
+      name: '국도로 전환',
       distanceFromCurrent: 14.6,
       addedTime: 5,
       fixedCameraCount: Math.max(0, route.fixedCameraCount - 1),
@@ -202,7 +233,6 @@ function buildMergeOptions(route, selectedId) {
       afterDescription: '정체를 피할 수 있지만 신호와 합류는 늘어납니다.',
       afterNextJunction: '국도 본선과 연결됩니다.',
       congestionPreview: route.congestionScore === 3 ? '서행' : '원활',
-      // 경로 polyline 중 1/3 지점을 약간 측면으로 이동하여 국도 방향 경유지로 사용
       wayPoints: (() => {
         const idx = Math.floor((route.polyline?.length ?? 0) / 3)
         const pt = route.polyline?.[idx]

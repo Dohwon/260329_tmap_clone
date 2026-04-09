@@ -55,6 +55,7 @@ const restStopIcon = makeBadgeIcon({ text: '휴', background: COLORS.restStop })
 const drowsyIcon = makeBadgeIcon({ text: '쉼', background: COLORS.restStop, size: 30 })
 const startIcon = makeBadgeIcon({ text: '시', background: '#111827' })
 const endIcon = makeBadgeIcon({ text: '종', background: '#2563EB' })
+const junctionIcon = makeBadgeIcon({ text: '분', background: '#FF6B00', size: 26 })
 
 function MapController({ center, zoom }) {
   const map = useMap()
@@ -289,6 +290,18 @@ export default function MapView({ darkMode = false }) {
               position={marker.center}
               icon={makeBadgeIcon({ text: marker.label, background: '#1C1C1E', size: 42 })}
             />
+          ))}
+
+          {/* 실제 IC/JC 분기점 마커 */}
+          {visibleLayers.mergePoints && (selectedRoute.junctions ?? []).map((jct) => (
+            <Marker key={jct.id} position={[jct.lat, jct.lng]} icon={junctionIcon}>
+              <Popup>
+                <div className="text-sm font-bold">{jct.name}</div>
+                <div className="text-xs text-gray-500 mt-0.5">
+                  {jct.afterRoadType === 'highway' ? '고속도로' : '국도'} · 출발 후 {jct.distanceFromStart}km
+                </div>
+              </Popup>
+            </Marker>
           ))}
         </>
       )}

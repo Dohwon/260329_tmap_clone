@@ -2,6 +2,14 @@ import React from 'react'
 import { CONGESTION_INFO } from '../../data/mockData'
 import useAppStore from '../../store/appStore'
 
+export function formatEta(minutes) {
+  if (!minutes) return '--'
+  if (minutes < 60) return `${minutes}분`
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  return m > 0 ? `${h}시간 ${m}분` : `${h}시간`
+}
+
 export default function RouteCard({ route, isSelected, onClick }) {
   const congestion = CONGESTION_INFO[route.congestionScore]
   const { setRoutePanelMode, setSelectedRouteId } = useAppStore()
@@ -53,8 +61,7 @@ export default function RouteCard({ route, isSelected, onClick }) {
       {/* 주요 지표 행 */}
       <div className="flex items-center gap-3 mb-3">
         <div>
-          <span className="text-2xl font-black text-gray-900">{route.eta}</span>
-          <span className="text-sm text-gray-500 ml-1">분</span>
+          <span className="text-2xl font-black text-gray-900">{formatEta(route.eta)}</span>
         </div>
         <div className="text-sm text-gray-400">·</div>
         <div className="text-sm text-gray-600 font-medium">{route.distance}km</div>
