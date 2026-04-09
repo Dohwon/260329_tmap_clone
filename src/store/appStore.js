@@ -194,11 +194,60 @@ function buildRoadSummary(road) {
   }
 }
 
-// 합류 점수 계산 (merge-strategy-rules.md 기준)
+/**
+ * 도심 판단 밀도 패널티 (merge-strategy-rules.md 6-1항)
+ * 반환값: 패널티 점수 (클수록 초보에게 불리)
+ */
+function calcUrbanDensityPenalty(route) {
+  const junctions = route.junctions ?? []
+  // 출발 후 첫 5km 내 분기점
+  const earlyJcts = junctions.filter(j => (j.distanceFromStart ?? 0) <= 5)
+  let penalty = 0
+
+  // 고속비율 낮을수록 도심 판단 많음
+  if (route.highwayRatio < 30) penalty += 8        // 저속 국도/도심
+  else if (route.highwayRatio < 50) penalty += 4
+
+  // 초반 5km 내 좌/우회전 연속 (turnType 12=좌, 13=우)
+  const earlyLR = earlyJcts.filter(j => j.turnType === 12 || j.turnType === 13).length
+  if (earlyLR >= 2) penalty += 10   // 좌회전 직후 우회전 = -10
+  else if (earlyLR === 1) penalty += 5
+
+  // 초반 분기 3개 이상 = 연속 판단 집중 = -10
+  if (earlyJcts.length >= 3) penalty += 10
+  else if (earlyJcts.length === 2) penalty += 5
+
+  // 전체 합류 많으면 복잡
+  if (route.mergeCount >= 10) penalty += 5
+  else if (route.mergeCount >= 7) penalty += 2
+
+  // 감점: 고속 본선 빠른 진입 후 20km+ 직진 → 초보에게 오히려 쉬움
+  if (route.highwayRatio >= 75 && route.mergeCount <= 4) penalty = Math.max(0, penalty - 8)
+  else if (route.highwayRatio >= 60 && route.mergeCount <= 6) penalty = Math.max(0, penalty - 4)
+
+  return penalty
+}
+
+/**
+ * 도심 밀도 기반 "초반 판단 난이도" 문구 반환
+ * MergeOptionsSheet UI 표기용 (rules.md 9항)
+ */
+function getBeginnerNote(route, urbanPenalty) {
+  if (urbanPenalty <= 0) {
+    if (route.highwayRatio >= 70) return '초반 직진 구간 유지 · 차로변경 여유 충분'
+    return '흐름 단순 · 합류 적음'
+  }
+  if (urbanPenalty >= 15) return '출발 직후 연속 회전 있음 · 초보 주의'
+  if (urbanPenalty >= 8) return '초반 도심 구간 포함 · 판단 다소 필요'
+  return '일부 도심 구간 통과'
+}
+
+// 합류 점수 계산 (merge-strategy-rules.md 5항 — 도심판단밀도패널티 포함)
 function calcMergeScore(jct, idx, junctions, route) {
-  const timeGain = -jct.addedTime // 기준 대비 절약 분 (음수면 늦음)
+  const timeGain = -jct.addedTime
   const timePts = Math.min(20, Math.max(0, timeGain) * 2)
 
+  // 흐름이득: 정체→서행=+6, 정체→원활=+12, 서행→원활=+5
   const congestionMap = { '원활': 0, '서행': 5, '정체': 12 }
   const routeCongestion = congestionMap[route.congestionLabel] ?? 0
   const afterCongestion = jct.afterRoadType === 'highway' ? Math.max(0, routeCongestion - 4) : routeCongestion
@@ -209,25 +258,39 @@ function calcMergeScore(jct, idx, junctions, route) {
     : Math.max(10, route.distance - jct.distanceFromStart)
   const maintPts = mainKm > 40 ? 14 : mainKm > 25 ? 9 : mainKm > 15 ? 5 : mainKm > 10 ? 2 : 0
 
-  // 복잡도 패널티: JC는 더 복잡
+  // 복잡도 패널티 (IC=-2, JC=-5, 합류 직후 차로변경=-6, 15km 내 재분기=-7)
   const isJC = /JC|분기/i.test(jct.name)
   const complexPenalty = isJC ? 5 : 2
+  // 15km 내 재분기: 다음 분기가 15km 이내면 -7
+  const nextJctKm = junctions[idx + 1] ? mainKm : Infinity
+  const rebranchPenalty = nextJctKm < 15 ? 7 : 0
 
-  // 원복 패널티: 유지거리 짧으면 패널티
+  // 원복 패널티
   const returnPenalty = mainKm < 10 ? 20 : mainKm < 15 ? 12 : 0
 
-  return timePts + flowPts + maintPts - complexPenalty - returnPenalty
+  // 도심 판단 밀도 패널티 (출발 5km 내 복잡도)
+  const urbanPenalty = calcUrbanDensityPenalty(route)
+
+  return timePts + flowPts + maintPts - complexPenalty - rebranchPenalty - returnPenalty - urbanPenalty
 }
 
-// 난이도 라벨
-function getMergeDifficulty(jct, idx, junctions) {
+// 난이도 라벨 (도심 판단 밀도 반영 — rules.md 6, 6-1항)
+function getMergeDifficulty(jct, idx, junctions, route) {
   const isJC = /JC|분기/i.test(jct.name)
   const mainKm = junctions[idx + 1]
     ? (junctions[idx + 1].distanceFromStart - jct.distanceFromStart)
     : 30
-  if (isJC || mainKm < 10) return '상'
-  if (mainKm < 20) return '중'
-  return '하'
+
+  // 도심 복잡도
+  const earlyJcts = (route?.junctions ?? []).filter(j => (j.distanceFromStart ?? 0) <= 5)
+  const earlyLR = earlyJcts.filter(j => j.turnType === 12 || j.turnType === 13).length
+  const isUrbanComplex = (route?.highwayRatio ?? 50) < 40 && (earlyLR >= 1 || earlyJcts.length >= 2)
+
+  if (isJC || mainKm < 10 || isUrbanComplex) return '상'
+  if (mainKm < 20 || (route?.mergeCount ?? 5) >= 8) return '중'
+  // 고속 20km+ 직진: 초보에게 쉬움
+  if (mainKm >= 20 && (route?.highwayRatio ?? 50) >= 70) return '하'
+  return '중'
 }
 
 function buildMergeOptions(route, selectedId, driverPreset = 'intermediate') {
@@ -247,6 +310,9 @@ function buildMergeOptions(route, selectedId, driverPreset = 'intermediate') {
   const maxOptions = driverPreset === 'expert' ? 4 : driverPreset === 'intermediate' ? 3 : 2
 
   // 실제 분기점 있으면 분기점 기반 옵션 (merge-strategy-rules 적용)
+  // 경로 전체 도심 밀도 (필터·표기에 공유)
+  const routeUrbanPenalty = calcUrbanDensityPenalty(route)
+
   if (junctions.length > 0) {
     const allOptions = junctions.map((jct, idx) => {
       const isHighway = jct.afterRoadType === 'highway'
@@ -254,7 +320,7 @@ function buildMergeOptions(route, selectedId, driverPreset = 'intermediate') {
       const mainKm = junctions[idx + 1]
         ? Math.round((junctions[idx + 1].distanceFromStart - jct.distanceFromStart) * 10) / 10
         : Math.max(10, Math.round((routeDistance - jct.distanceFromStart) * 10) / 10)
-      const difficulty = getMergeDifficulty(jct, idx, junctions)
+      const difficulty = getMergeDifficulty(jct, idx, junctions, route)
       const score = calcMergeScore({ ...jct, addedTime }, idx, junctions, route)
 
       // 도로명: TMAP 데이터 우선, 없으면 분기점명+방향
@@ -289,17 +355,27 @@ function buildMergeOptions(route, selectedId, driverPreset = 'intermediate') {
         afterNextJunction: junctions[idx + 1] ? `다음: ${junctions[idx + 1].name} (${Math.round(mainKm)}km 후)` : '이후 직진',
         congestionPreview: route.congestionLabel,
         wayPoints: [{ id: `via-${jct.id}`, name: jct.name, lat: jct.lat, lng: jct.lng }],
+        urbanDensityScore: routeUrbanPenalty,
+        beginnerNote: getBeginnerNote(route, routeUrbanPenalty),
         isHidden: difficulty === '상' && driverPreset === 'beginner',
       }
     })
+
+    // 성향별 최소 유지거리 (rules.md 4항)
+    const minMaintainKm = driverPreset === 'beginner' ? 25 : driverPreset === 'intermediate' ? 15 : 10
 
     // 필터: 단거리이거나 컷오프 미달 시 첫 번째(현재경로) 빼고 숨김
     const filtered = allOptions.filter((opt, idx) => {
       if (idx === 0) return true  // 현재 경로는 항상 표시
       if (opt.isHidden) return false  // 초보에게 난이도 상 숨김
       if (isShort) return false  // 단거리: 나머지 숨김
-      // 기본 제외 규칙: 유지거리 < 10km 또는 점수 < 컷오프
-      if (opt.maintainKm < 10) return false
+      // 유지거리 컷오프 (성향별)
+      if (opt.maintainKm < minMaintainKm) return false
+      // 초보: 8분 이상 절약 또는 정체 2단계 이상 회피만 노출 (rules.md 4-초보)
+      if (driverPreset === 'beginner') {
+        const bigCongestionImprovement = route.congestionScore >= 3 && opt.afterRoadType === 'highway'
+        if (opt.timeSaving < 8 && !bigCongestionImprovement) return false
+      }
       if (isLong && opt.score < cutoff) return false
       return true
     }).slice(0, maxOptions)
@@ -390,8 +466,11 @@ function buildMergeOptions(route, selectedId, driverPreset = 'intermediate') {
     ] : []),
   ]
 
+  const fallbackNote = getBeginnerNote(route, routeUrbanPenalty)
   return fallbackOptions.slice(0, maxOptions).map((option) => ({
     ...option,
+    urbanDensityScore: routeUrbanPenalty,
+    beginnerNote: fallbackNote,
     isSelected: option.id === (selectedId ?? 'merge-current'),
   }))
 }
@@ -501,11 +580,22 @@ function decorateRoute(route, index, context) {
   nextRoute.averageSpeed = Math.round(nextRoute.segmentStats.reduce((sum, segment) => sum + segment.averageSpeed, 0) / nextRoute.segmentStats.length)
   nextRoute.maxSpeedLimit = Math.max(...nextRoute.segmentStats.map((segment) => segment.speedLimit))
   nextRoute.nextSegments = buildNextSegments(nextRoute)
+
+  // 도심 판단 밀도 (경로 카드·합류옵션 UI 표기용)
+  nextRoute.urbanDensityScore = calcUrbanDensityPenalty(nextRoute)
+  nextRoute.beginnerNote = getBeginnerNote(nextRoute, nextRoute.urbanDensityScore)
+
+  // 초보 경로 설명: 도심 밀도 반영
+  const urbanNote = driverPreset === 'beginner'
+    ? (nextRoute.urbanDensityScore >= 10 ? '도심 구간 주의' : nextRoute.urbanDensityScore >= 5 ? '도심 일부 통과' : '초반 직진 유리')
+    : null
+
   nextRoute.explanation = [
     driverPreset === 'beginner' ? '초보 기준' : driverPreset === 'expert' ? '고수 기준' : '중수 기준',
     routePreferences.roadType === 'highway_only' ? '고속 위주' : routePreferences.roadType === 'national_road' ? '국도 선호' : '고속+국도',
     `합류 ${mergeCount}회`,
     `최고 ${nextRoute.maxSpeedLimit} / 평균 ${nextRoute.averageSpeed}km/h`,
+    ...(urbanNote ? [urbanNote] : []),
   ].join(' · ')
   return nextRoute
 }

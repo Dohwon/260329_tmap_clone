@@ -115,6 +115,22 @@ export default function MergeOptionsSheet({ onClose }) {
                     </span>
                   </div>
 
+                  {/* 초반 판단 난이도 (도심 밀도 기반 — rules.md 9항) */}
+                  {opt.beginnerNote && (
+                    <div className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 ${
+                      opt.urbanDensityScore >= 10 ? 'bg-red-50' : opt.urbanDensityScore >= 5 ? 'bg-amber-50' : 'bg-green-50'
+                    }`}>
+                      <span className="text-sm">
+                        {opt.urbanDensityScore >= 10 ? '⚠️' : opt.urbanDensityScore >= 5 ? '🟡' : '✅'}
+                      </span>
+                      <span className={`text-xs font-medium ${
+                        opt.urbanDensityScore >= 10 ? 'text-red-700' : opt.urbanDensityScore >= 5 ? 'text-amber-700' : 'text-green-700'
+                      }`}>
+                        초반 판단: {opt.beginnerNote}
+                      </span>
+                    </div>
+                  )}
+
                   {/* 수치 비교 */}
                   <div className="grid grid-cols-4 gap-2">
                     <MiniStat
