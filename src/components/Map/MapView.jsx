@@ -158,6 +158,7 @@ export default function MapView({ darkMode = false }) {
     selectedRoadId,
     getSelectedRoadDetail,
     cameraReports,
+    searchRoute,
   } = useAppStore()
 
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
@@ -220,6 +221,12 @@ export default function MapView({ darkMode = false }) {
               {selectedRoad.startAddress && (
                 <div className="text-xs text-gray-500 mt-0.5">{selectedRoad.startAddress}</div>
               )}
+              <button
+                onClick={() => searchRoute({ name: `${selectedRoad.name} 시점`, lat: selectedRoad.startCoord[0], lng: selectedRoad.startCoord[1], address: selectedRoad.startAddress ?? '' })}
+                className="mt-2 w-full py-1.5 rounded-lg bg-tmap-blue text-white text-xs font-bold"
+              >
+                🚗 여기로 안내
+              </button>
             </Popup>
           </Marker>
 
@@ -289,6 +296,15 @@ export default function MapView({ darkMode = false }) {
               <Popup>
                 <div className="text-sm font-bold">{stop.name}</div>
                 <div className="text-xs text-gray-500">{selectedRoad.name} {stop.km}km 지점</div>
+                <div className="text-xs text-gray-400 mt-0.5">
+                  {stop.type === 'service' ? '휴게소' : '졸음쉼터'}
+                </div>
+                <button
+                  onClick={() => searchRoute({ name: stop.name, lat: stop.coord[0], lng: stop.coord[1], address: `${selectedRoad.name} ${stop.km}km 지점` })}
+                  className="mt-2 w-full py-1.5 rounded-lg bg-tmap-blue text-white text-xs font-bold"
+                >
+                  🚗 여기로 안내
+                </button>
               </Popup>
             </Marker>
           ))}
