@@ -157,9 +157,17 @@ export default function RoutePreviewPanel() {
                 : tmapStatus.lastError
                   ? `오류: ${tmapStatus.lastError}`
                   : tmapStatus.hasApiKey
-                    ? 'API 키가 있으나 경로 API 권한이 없거나 일일 한도가 초과되었습니다.'
-                    : 'API 키 미설정 — .env.local에 VITE_TMAP_API_KEY를 추가하세요.'}
+                    ? 'API 키 설정됨. 경로 호출 실패 — 진단: /api/meta/tmap-diag 확인'
+                    : 'API 키 미설정 — Railway 환경변수 TMAP_API_KEY를 추가하세요.'}
             </div>
+            {tmapStatus.mode !== 'live' && tmapStatus.hasApiKey && (
+              <button
+                onClick={() => fetch('/api/meta/tmap-diag').then(r => r.json()).then(d => alert(JSON.stringify(d, null, 2)))}
+                className="mt-2 text-xs text-tmap-blue underline"
+              >
+                진단 실행 (탭하면 오류 원인 표시)
+              </button>
+            )}
             {compareLabel && <div className="text-xs text-tmap-blue font-semibold mt-2">{compareLabel}</div>}
           </div>
 

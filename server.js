@@ -1,5 +1,6 @@
 import express from 'express'
 import { createProxyMiddleware } from 'http-proxy-middleware'
+import https from 'https'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
@@ -35,6 +36,54 @@ app.get('/api/meta/tmap-status', (_, res) => {
     hasApiKey: Boolean(TMAP_KEY),
     mode: TMAP_KEY ? 'live' : 'simulation',
   })
+})
+
+// 진단 엔드포인트: TMAP API 직접 테스트 (서버→TMAP 간 연결 확인)
+app.get('/api/meta/tmap-diag', (req, res) => {
+  if (!TMAP_KEY) {
+    return res.json({ ok: false, reason: 'TMAP_API_KEY 환경변수 미설정', key: '' })
+  }
+
+  const origin = req.headers['origin'] || req.headers['referer'] || `https://${req.headers['host']}`
+  const body = JSON.stringify({
+    startX: '126.9783882', startY: '37.5666103',
+    endX: '129.0756416', endY: '35.1795543',
+    reqCoordType: 'WGS84GEO', resCoordType: 'WGS84GEO',
+    searchOption: '0', carType: 0,
+  })
+
+  const options = {
+    hostname: 'apis.openapi.sk.com',
+    path: '/tmap/routes?version=1',
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'appKey': TMAP_KEY,
+      'origin': origin,
+      'referer': origin,
+      'Content-Length': Buffer.byteLength(body),
+    },
+  }
+
+  const request = https.request(options, (response) => {
+    let data = ''
+    response.on('data', (chunk) => { data += chunk })
+    response.on('end', () => {
+      let parsed = {}
+      try { parsed = JSON.parse(data) } catch { parsed = { raw: data.slice(0, 300) } }
+      res.json({
+        ok: response.statusCode === 200,
+        status: response.statusCode,
+        keyPreview: TMAP_KEY ? `${TMAP_KEY.slice(0, 6)}...` : '없음',
+        originSent: origin,
+        body: parsed,
+      })
+    })
+  })
+  request.on('error', (err) => res.json({ ok: false, reason: err.message }))
+  request.write(body)
+  request.end()
 })
 
 app.use('/api/tmap', createProxyMiddleware({
