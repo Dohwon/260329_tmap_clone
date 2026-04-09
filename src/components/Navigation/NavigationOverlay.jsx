@@ -2,18 +2,22 @@ import React, { useEffect, useRef, useState } from 'react'
 import useAppStore from '../../store/appStore'
 import MergeOptionsSheet from './MergeOptionsSheet'
 import { formatEta } from '../Route/RouteCard'
+import { SCENIC_SEGMENTS } from '../../data/scenicRoads'
 
 export default function NavigationOverlay() {
   const {
     isNavigating, stopNavigation, destination, routes, selectedRouteId,
     mergeOptions, userLocation, saveRoute, cameraReports, reportCamera,
+    navAutoFollow, setNavAutoFollow,
   } = useAppStore()
   const [showMerge, setShowMerge] = useState(false)
   const [showSaveDialog, setShowSaveDialog] = useState(false)
   const [showCameraReport, setShowCameraReport] = useState(null) // camera object
+  const [scenicToast, setScenicToast] = useState(null) // { emoji, name, type }
   const segmentRef = useRef(null)
   const wakeLockRef = useRef(null)
   const nearCameraNotifiedRef = useRef(new Set()) // 이미 알린 카메라 id
+  const notifiedScenicRef = useRef(new Set()) // 이미 알린 scenic segment id
 
   // 화면 꺼짐 방지
   useEffect(() => {
@@ -52,6 +56,22 @@ export default function NavigationOverlay() {
       }
     }
   }, [userLocation])
+
+  // 경관 구간 진입 감지 → 토스트 알림
+  useEffect(() => {
+    if (!isNavigating || !userLocation) return
+    const NOTIFY_KM = 4 // 이 거리 내에 들어오면 진입으로 판단
+    for (const seg of SCENIC_SEGMENTS) {
+      if (notifiedScenicRef.current.has(seg.id)) continue
+      const [mLat, mLng] = seg.segmentMid
+      const dist = haversineM(userLocation.lat, userLocation.lng, mLat, mLng) / 1000
+      if (dist <= NOTIFY_KM) {
+        notifiedScenicRef.current.add(seg.id)
+        setScenicToast({ emoji: seg.emoji, name: seg.name, type: seg.scenicType })
+        setTimeout(() => setScenicToast(null), 5000)
+      }
+    }
+  }, [userLocation, isNavigating])
 
   if (!isNavigating) return null
 
@@ -107,26 +127,35 @@ export default function NavigationOverlay() {
         </div>
 
         {/* 통계 바 */}
-        <div className="bg-white px-5 py-3 flex items-center shadow-md">
-          <div className="flex-1 text-center">
-            <div className="text-xs text-gray-400">남은시간</div>
-            <div className="text-lg font-black text-gray-900">{route?.eta ? formatEta(route.eta) : '--'}</div>
-          </div>
-          <div className="w-px h-8 bg-gray-200" />
-          <div className="flex-1 text-center">
-            <div className="text-xs text-gray-400">도착예정</div>
-            <div className="text-lg font-black text-gray-900">{getArrivalTime(route?.eta)}</div>
-          </div>
-          <div className="w-px h-8 bg-gray-200" />
-          <div className="flex-1 text-center">
-            <div className="text-xs text-gray-400">남은거리</div>
-            <div className="text-lg font-black text-gray-900">{route?.distance ?? '--'}km</div>
-          </div>
-          <div className="ml-3 flex flex-col items-center justify-center w-12 h-12 rounded-full border-[3px] border-red-500">
-            <span className="text-xs font-black text-red-600 leading-tight">{route?.maxSpeedLimit ?? 110}</span>
-            <span className="text-[9px] text-red-400">km/h</span>
-          </div>
-        </div>
+        {(() => {
+          const currentSpeed = Math.round(userLocation?.speedKmh ?? 0)
+          const speedLimit = route?.dominantSpeedLimit ?? route?.maxSpeedLimit ?? null
+          const overLimit = speedLimit && currentSpeed > speedLimit
+          return (
+            <div className="bg-white px-5 py-3 flex items-center shadow-md">
+              <div className="flex-1 text-center">
+                <div className="text-xs text-gray-400">남은시간</div>
+                <div className="text-lg font-black text-gray-900">{route?.eta ? formatEta(route.eta) : '--'}</div>
+              </div>
+              <div className="w-px h-8 bg-gray-200" />
+              <div className="flex-1 text-center">
+                <div className="text-xs text-gray-400">도착예정</div>
+                <div className="text-lg font-black text-gray-900">{getArrivalTime(route?.eta)}</div>
+              </div>
+              <div className="w-px h-8 bg-gray-200" />
+              <div className="flex-1 text-center">
+                <div className="text-xs text-gray-400">남은거리</div>
+                <div className="text-lg font-black text-gray-900">{route?.distance ?? '--'}km</div>
+              </div>
+              {/* 현재 속도 배지 */}
+              <div className={`ml-3 flex flex-col items-center justify-center w-14 h-14 rounded-full border-[3px] ${overLimit ? 'border-red-500 bg-red-50' : 'border-gray-300'}`}>
+                <span className={`text-base font-black leading-none ${overLimit ? 'text-red-600' : 'text-gray-900'}`}>{currentSpeed}</span>
+                {speedLimit && <span className={`text-[9px] leading-tight ${overLimit ? 'text-red-400' : 'text-gray-400'}`}>/{speedLimit}</span>}
+                <span className="text-[8px] text-gray-400 leading-none">km/h</span>
+              </div>
+            </div>
+          )
+        })()}
       </div>
 
       {/* 하단 분기점 바 */}
@@ -186,6 +215,31 @@ export default function NavigationOverlay() {
       </div>
 
       {showMerge && <MergeOptionsSheet onClose={() => setShowMerge(false)} />}
+
+      {/* 내 위치로 재중심 버튼 (auto-follow 꺼졌을 때) */}
+      {!navAutoFollow && (
+        <button
+          onClick={() => setNavAutoFollow(true)}
+          className="absolute right-4 bottom-48 z-20 w-12 h-12 bg-white rounded-full shadow-lg flex items-center justify-center border border-gray-200 active:bg-gray-50"
+        >
+          <svg className="w-6 h-6 text-tmap-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="4" fill="currentColor" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 2v3m0 14v3M2 12h3m14 0h3"/>
+          </svg>
+        </button>
+      )}
+
+      {/* 경관 구간 진입 토스트 */}
+      {scenicToast && (
+        <div className={`absolute top-36 left-4 right-4 z-30 rounded-2xl px-4 py-3 shadow-xl flex items-center gap-3 text-white ${scenicToast.type === 'coastal' ? 'bg-blue-500' : 'bg-green-600'}`}>
+          <span className="text-2xl">{scenicToast.emoji}</span>
+          <div>
+            <div className="text-xs font-medium opacity-80">{scenicToast.type === 'coastal' ? '해안도로 구간 진입' : '산악도로 구간 진입'}</div>
+            <div className="text-sm font-black">{scenicToast.name}</div>
+          </div>
+          <button onClick={() => setScenicToast(null)} className="ml-auto opacity-60">✕</button>
+        </div>
+      )}
 
       {/* 경로 저장 다이얼로그 */}
       {showSaveDialog && (

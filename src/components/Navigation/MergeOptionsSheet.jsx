@@ -72,12 +72,44 @@ export default function MergeOptionsSheet({ onClose }) {
                     </div>
                   </div>
 
+                  {/* 핵심 지표 — 절약시간·유지거리·난이도 */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {opt.timeSaving > 0 ? (
+                      <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
+                        {opt.timeSaving}분 절약
+                      </span>
+                    ) : opt.addedTime > 0 ? (
+                      <span className="text-xs font-bold text-orange-500 bg-orange-50 px-2 py-0.5 rounded-full">
+                        +{opt.addedTime}분
+                      </span>
+                    ) : (
+                      <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">기준</span>
+                    )}
+                    {opt.maintainKm != null && (
+                      <span className="text-xs text-gray-500 bg-gray-50 px-2 py-0.5 rounded-full">
+                        {opt.maintainKm}km 유지
+                      </span>
+                    )}
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                      opt.difficulty === '하' ? 'bg-green-50 text-green-700'
+                      : opt.difficulty === '중' ? 'bg-orange-50 text-orange-600'
+                      : 'bg-red-50 text-red-600'
+                    }`}>
+                      난이도 {opt.difficulty ?? '중'}
+                    </span>
+                  </div>
+
                   {/* 수치 비교 */}
                   <div className="grid grid-cols-4 gap-2">
                     <MiniStat
-                      label="추가시간"
-                      value={opt.addedTime === 0 ? '기준' : `+${opt.addedTime}분`}
-                      color={opt.addedTime > 0 ? '#FF9500' : '#00A84F'}
+                      label="평균속도"
+                      value={opt.avgSpeedAfter != null
+                        ? (opt.avgSpeedAfter > (opt.avgSpeedBefore ?? opt.avgSpeedAfter)
+                          ? `+${opt.avgSpeedAfter - (opt.avgSpeedBefore ?? opt.avgSpeedAfter)}`
+                          : `${opt.avgSpeedAfter}`)
+                        : '--'}
+                      unit="km/h"
+                      color={opt.avgSpeedAfter > (opt.avgSpeedBefore ?? opt.avgSpeedAfter) ? '#00A84F' : '#3A3A3C'}
                     />
                     <MiniStat
                       label="교통상황"
@@ -86,8 +118,8 @@ export default function MergeOptionsSheet({ onClose }) {
                     />
                     <MiniStat
                       label="카메라"
-                      value={`${opt.fixedCameraCount + opt.sectionCameraCount}개`}
-                      color={opt.fixedCameraCount + opt.sectionCameraCount > 0 ? '#FF3B30' : '#00A84F'}
+                      value={`${(opt.fixedCameraCount ?? 0) + (opt.sectionCameraCount ?? 0)}개`}
+                      color={(opt.fixedCameraCount ?? 0) + (opt.sectionCameraCount ?? 0) > 0 ? '#FF3B30' : '#00A84F'}
                     />
                     <MiniStat
                       label="제한속도"

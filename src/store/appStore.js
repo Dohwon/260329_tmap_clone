@@ -194,99 +194,203 @@ function buildRoadSummary(road) {
   }
 }
 
-function buildMergeOptions(route, selectedId) {
-  const junctions = route.junctions ?? []
+// 합류 점수 계산 (merge-strategy-rules.md 기준)
+function calcMergeScore(jct, idx, junctions, route) {
+  const timeGain = -jct.addedTime // 기준 대비 절약 분 (음수면 늦음)
+  const timePts = Math.min(20, Math.max(0, timeGain) * 2)
 
-  // 실제 분기점 있으면 분기점 기반 옵션
+  const congestionMap = { '원활': 0, '서행': 5, '정체': 12 }
+  const routeCongestion = congestionMap[route.congestionLabel] ?? 0
+  const afterCongestion = jct.afterRoadType === 'highway' ? Math.max(0, routeCongestion - 4) : routeCongestion
+  const flowPts = routeCongestion - afterCongestion
+
+  const mainKm = junctions[idx + 1]
+    ? (junctions[idx + 1].distanceFromStart - jct.distanceFromStart)
+    : Math.max(10, route.distance - jct.distanceFromStart)
+  const maintPts = mainKm > 40 ? 14 : mainKm > 25 ? 9 : mainKm > 15 ? 5 : mainKm > 10 ? 2 : 0
+
+  // 복잡도 패널티: JC는 더 복잡
+  const isJC = /JC|분기/i.test(jct.name)
+  const complexPenalty = isJC ? 5 : 2
+
+  // 원복 패널티: 유지거리 짧으면 패널티
+  const returnPenalty = mainKm < 10 ? 20 : mainKm < 15 ? 12 : 0
+
+  return timePts + flowPts + maintPts - complexPenalty - returnPenalty
+}
+
+// 난이도 라벨
+function getMergeDifficulty(jct, idx, junctions) {
+  const isJC = /JC|분기/i.test(jct.name)
+  const mainKm = junctions[idx + 1]
+    ? (junctions[idx + 1].distanceFromStart - jct.distanceFromStart)
+    : 30
+  if (isJC || mainKm < 10) return '상'
+  if (mainKm < 20) return '중'
+  return '하'
+}
+
+function buildMergeOptions(route, selectedId, driverPreset = 'intermediate') {
+  const junctions = route.junctions ?? []
+  const routeDistance = route.distance ?? 50
+  const routeEta = route.eta ?? 60
+
+  // 거리/시간에 따른 성향 차이 적용 강도
+  const isShort = routeDistance < 30 || routeEta < 35
+  const isLong = routeDistance > 80 || routeEta > 60
+  const isStrategic = routeDistance > 150 || routeEta > 120
+
+  // 성향별 컷오프 점수 + 최대 노출 수
+  const cutoff = isShort
+    ? 999  // 짧은 구간: 성향 차이 거의 없음 — 기본 옵션만
+    : driverPreset === 'expert' ? 8 : driverPreset === 'intermediate' ? 12 : 18
+  const maxOptions = driverPreset === 'expert' ? 4 : driverPreset === 'intermediate' ? 3 : 2
+
+  // 실제 분기점 있으면 분기점 기반 옵션 (merge-strategy-rules 적용)
   if (junctions.length > 0) {
-    const options = junctions.slice(0, 5).map((jct, idx) => {
+    const allOptions = junctions.map((jct, idx) => {
       const isHighway = jct.afterRoadType === 'highway'
+      const addedTime = idx === 0 ? 0 : Math.round((jct.distanceFromStart - junctions[0].distanceFromStart) * 0.8)
+      const mainKm = junctions[idx + 1]
+        ? Math.round((junctions[idx + 1].distanceFromStart - jct.distanceFromStart) * 10) / 10
+        : Math.max(10, Math.round((routeDistance - jct.distanceFromStart) * 10) / 10)
+      const difficulty = getMergeDifficulty(jct, idx, junctions)
+      const score = calcMergeScore({ ...jct, addedTime }, idx, junctions, route)
+
+      // 도로명: TMAP 데이터 우선, 없으면 분기점명+방향
+      const afterRoadName = jct.afterRoadName
+        || (isHighway
+          ? `${jct.name.replace(/IC|JC|나들목|분기점/g, '').trim()} 방면 고속도로`
+          : `${jct.name.replace(/IC|JC|나들목|분기점/g, '').trim()} 방면 국도`)
+      const speedLimit = isHighway ? Math.max(100, route.dominantSpeedLimit) : Math.min(80, route.dominantSpeedLimit)
+      const avgSpeedBefore = route.averageSpeed ?? 80
+      const avgSpeedAfter = isHighway ? Math.min(100, avgSpeedBefore + 12) : Math.max(55, avgSpeedBefore - 8)
+
       return {
         id: `merge-jct-${idx}`,
         name: jct.name,
         distanceFromCurrent: jct.distanceFromStart,
-        addedTime: idx === 0 ? 0 : Math.round((jct.distanceFromStart - junctions[0].distanceFromStart) * 0.8),
-        fixedCameraCount: route.fixedCameraCount,
-        sectionCameraCount: route.sectionCameraCount,
-        dominantSpeedLimit: isHighway ? Math.max(100, route.dominantSpeedLimit) : Math.min(80, route.dominantSpeedLimit),
+        addedTime,
+        timeSaving: -addedTime,  // 양수 = 절약
+        maintainKm: mainKm,
+        difficulty,
+        score,
+        fixedCameraCount: Math.max(1, Math.round(route.fixedCameraCount * mainKm / Math.max(1, routeDistance))),
+        sectionCameraCount: isHighway ? 1 : 0,
+        dominantSpeedLimit: speedLimit,
+        avgSpeedBefore,
+        avgSpeedAfter,
         isCurrent: idx === 0,
         afterRoadType: jct.afterRoadType,
-        afterRoadName: isHighway ? '고속도로 본선' : '국도 진입',
+        afterRoadName,
         afterDescription: isHighway
-          ? `${jct.name}을(를) 통해 고속 본선으로 이어집니다.`
-          : `${jct.name}에서 국도로 전환됩니다.`,
-        afterNextJunction: junctions[idx + 1] ? `다음: ${junctions[idx + 1].name}` : '이후 직진',
+          ? `${jct.name}에서 진입 후 ${mainKm}km 구간 이어집니다.`
+          : `${jct.name}에서 국도로 전환, ${mainKm}km 구간입니다.`,
+        afterNextJunction: junctions[idx + 1] ? `다음: ${junctions[idx + 1].name} (${Math.round(mainKm)}km 후)` : '이후 직진',
         congestionPreview: route.congestionLabel,
         wayPoints: [{ id: `via-${jct.id}`, name: jct.name, lat: jct.lat, lng: jct.lng }],
+        isHidden: difficulty === '상' && driverPreset === 'beginner',
       }
     })
-    return options.map((option) => ({
+
+    // 필터: 단거리이거나 컷오프 미달 시 첫 번째(현재경로) 빼고 숨김
+    const filtered = allOptions.filter((opt, idx) => {
+      if (idx === 0) return true  // 현재 경로는 항상 표시
+      if (opt.isHidden) return false  // 초보에게 난이도 상 숨김
+      if (isShort) return false  // 단거리: 나머지 숨김
+      // 기본 제외 규칙: 유지거리 < 10km 또는 점수 < 컷오프
+      if (opt.maintainKm < 10) return false
+      if (isLong && opt.score < cutoff) return false
+      return true
+    }).slice(0, maxOptions)
+
+    return filtered.map((option) => ({
       ...option,
-      isSelected: option.id === (selectedId ?? options[0]?.id),
+      isSelected: option.id === (selectedId ?? filtered[0]?.id),
     }))
   }
 
-  // 폴백: 기존 3-옵션
-  const options = [
+  // 폴백: 3-옵션 (실제 분기점 없을 때)
+  const fallbackOptions = [
     {
       id: 'merge-current',
       name: '현재 경로 유지',
-      distanceFromCurrent: 8.4,
+      distanceFromCurrent: routeDistance * 0.15,
       addedTime: 0,
+      timeSaving: 0,
+      maintainKm: routeDistance * 0.7,
+      difficulty: '하',
+      score: 20,
       fixedCameraCount: route.fixedCameraCount,
       sectionCameraCount: route.sectionCameraCount,
       dominantSpeedLimit: route.dominantSpeedLimit,
       isCurrent: true,
       afterRoadType: route.highwayRatio >= 50 ? 'highway' : 'national',
-      afterRoadName: route.highwayRatio >= 50 ? '고속도로 본선 유지' : '국도 본선 유지',
+      afterRoadName: route.highwayRatio >= 50 ? '현재 고속도로 본선 유지' : '현재 국도 유지',
       afterDescription: '현재 흐름을 유지하면서 가장 단순한 경로를 탑니다.',
       afterNextJunction: '다음 분기까지 직진 흐름이 이어집니다.',
       congestionPreview: route.congestionLabel,
+      avgSpeedBefore: route.averageSpeed ?? 80,
+      avgSpeedAfter: route.averageSpeed ?? 80,
       wayPoints: [],
     },
-    {
-      id: 'merge-highway',
-      name: '고속 본선 재합류',
-      distanceFromCurrent: 12.8,
-      addedTime: 2,
-      fixedCameraCount: route.fixedCameraCount + 1,
-      sectionCameraCount: Math.max(1, route.sectionCameraCount),
-      dominantSpeedLimit: Math.max(100, route.dominantSpeedLimit),
-      isCurrent: false,
-      afterRoadType: 'highway',
-      afterRoadName: '고속 본선 재합류',
-      afterDescription: '조금 더 빠르지만 카메라와 통행료가 늘어날 수 있습니다.',
-      afterNextJunction: '고속 직진 구간으로 다시 연결됩니다.',
-      congestionPreview: route.congestionScore >= 2 ? '원활' : route.congestionLabel,
-      wayPoints: (() => {
-        const idx = Math.floor((route.polyline?.length ?? 0) / 4)
-        const pt = route.polyline?.[idx]
-        return pt ? [{ id: 'via-highway', name: '고속 재합류 지점', lat: pt[0], lng: pt[1] }] : []
-      })(),
-    },
-    {
-      id: 'merge-national',
-      name: '국도로 전환',
-      distanceFromCurrent: 14.6,
-      addedTime: 5,
-      fixedCameraCount: Math.max(0, route.fixedCameraCount - 1),
-      sectionCameraCount: Math.max(0, route.sectionCameraCount - 1),
-      dominantSpeedLimit: Math.min(80, route.dominantSpeedLimit),
-      isCurrent: false,
-      afterRoadType: 'national',
-      afterRoadName: '국도 본선 전환',
-      afterDescription: '정체를 피할 수 있지만 신호와 합류는 늘어납니다.',
-      afterNextJunction: '국도 본선과 연결됩니다.',
-      congestionPreview: route.congestionScore === 3 ? '서행' : '원활',
-      wayPoints: (() => {
-        const idx = Math.floor((route.polyline?.length ?? 0) / 3)
-        const pt = route.polyline?.[idx]
-        return pt ? [{ id: 'via-national', name: '국도 전환 지점', lat: pt[0] + 0.008, lng: pt[1] - 0.012 }] : []
-      })(),
-    },
+    ...(!isShort ? [
+      {
+        id: 'merge-highway',
+        name: '고속 본선 재합류',
+        distanceFromCurrent: routeDistance * 0.2,
+        addedTime: -3,
+        timeSaving: 3,
+        maintainKm: routeDistance * 0.6,
+        difficulty: '중',
+        score: 15,
+        fixedCameraCount: route.fixedCameraCount + 2,
+        sectionCameraCount: Math.max(1, route.sectionCameraCount),
+        dominantSpeedLimit: Math.max(100, route.dominantSpeedLimit),
+        isCurrent: false,
+        afterRoadType: 'highway',
+        afterRoadName: '고속 본선 진입',
+        afterDescription: '고속도로 본선 진입 후 정체 없이 이어집니다.',
+        afterNextJunction: '고속 직진 구간으로 다시 연결됩니다.',
+        congestionPreview: route.congestionScore >= 2 ? '원활' : route.congestionLabel,
+        avgSpeedBefore: route.averageSpeed ?? 80,
+        avgSpeedAfter: Math.min(100, (route.averageSpeed ?? 80) + 12),
+        wayPoints: (() => {
+          const pt = route.polyline?.[Math.floor((route.polyline?.length ?? 0) / 4)]
+          return pt ? [{ id: 'via-highway', name: '고속 재합류 지점', lat: pt[0], lng: pt[1] }] : []
+        })(),
+      },
+    ] : []),
+    ...(!isShort && driverPreset !== 'beginner' ? [
+      {
+        id: 'merge-national',
+        name: '국도로 전환',
+        distanceFromCurrent: routeDistance * 0.25,
+        addedTime: 7,
+        timeSaving: -7,
+        maintainKm: routeDistance * 0.55,
+        difficulty: '중',
+        score: 10,
+        fixedCameraCount: Math.max(0, route.fixedCameraCount - 1),
+        sectionCameraCount: 0,
+        dominantSpeedLimit: Math.min(80, route.dominantSpeedLimit),
+        isCurrent: false,
+        afterRoadType: 'national',
+        afterRoadName: '국도 본선 전환',
+        afterDescription: '신호·합류 증가하지만 정체 회피 가능 구간입니다.',
+        afterNextJunction: '국도 본선과 연결됩니다.',
+        congestionPreview: route.congestionScore === 3 ? '서행' : '원활',
+        avgSpeedBefore: route.averageSpeed ?? 80,
+        avgSpeedAfter: Math.max(55, (route.averageSpeed ?? 80) - 10),
+        wayPoints: (() => {
+          const pt = route.polyline?.[Math.floor((route.polyline?.length ?? 0) / 3)]
+          return pt ? [{ id: 'via-national', name: '국도 전환 지점', lat: pt[0] + 0.008, lng: pt[1] - 0.012 }] : []
+        })(),
+      },
+    ] : []),
   ]
 
-  return options.map((option) => ({
+  return fallbackOptions.slice(0, maxOptions).map((option) => ({
     ...option,
     isSelected: option.id === (selectedId ?? 'merge-current'),
   }))
@@ -355,16 +459,17 @@ function decorateRoute(route, index, context) {
   let nationalRoadRatio = route.nationalRoadRatio
   let dominantSpeedLimit = route.dominantSpeedLimit
 
+  // 초보: 시간 페널티 없음 — 단순히 합류 횟수를 줄여서 표시
   if (driverPreset === 'beginner') {
-    eta += 3
-    mergeCount = Math.max(2, mergeCount - 1)
+    mergeCount = Math.max(1, mergeCount - 2)
   } else if (driverPreset === 'expert') {
     eta = Math.max(eta - 2, 1)
     mergeCount += 1
   }
 
+  // 고속도로만 = 빠른 경로와 동일한 수준 (시간 유지, 고속비율만 표시 조정)
   if (routePreferences.roadType === 'highway_only') {
-    highwayRatio = Math.max(82, highwayRatio)
+    highwayRatio = Math.max(85, highwayRatio)
     nationalRoadRatio = 100 - highwayRatio
     dominantSpeedLimit = Math.max(100, dominantSpeedLimit)
   } else if (routePreferences.roadType === 'national_road') {
@@ -373,9 +478,6 @@ function decorateRoute(route, index, context) {
     dominantSpeedLimit = Math.min(80, dominantSpeedLimit)
     eta += 5
   }
-
-  if (routePreferences.includeScenic && index === 2) eta += 6
-  if (routePreferences.includeMountain && index === 1) eta += 4
 
   const nextRoute = {
     ...route,
@@ -404,44 +506,54 @@ function decorateRoute(route, index, context) {
 
 function buildFallbackRoutes(origin, destination, routePreferences, driverPreset) {
   const distanceKm = haversineKm(origin.lat, origin.lng, destination.lat, destination.lng)
-  const baseEta = Math.max(20, Math.round((distanceKm / 82) * 60))
+  // 도로 유형별 실제 속도 가정 (시뮬레이션)
+  // 고속도로: 직선 거리의 1.1배, 평균 100km/h → 도심 포함 조정
+  // 혼합: 직선 거리의 1.25배, 평균 80km/h
+  // 국도 포함: 직선 거리의 1.4배, 평균 65km/h
+  const etaHighway = Math.max(15, Math.round((distanceKm * 1.1) / 100 * 60))
+  const etaMixed = Math.max(20, Math.round((distanceKm * 1.25) / 80 * 60))
+  const etaNational = Math.max(25, Math.round((distanceKm * 1.4) / 65 * 60))
+  // 카메라: 고속도로 1개/6km, 국도 1개/10km (실제 수준)
+  const hwCam = Math.max(2, Math.round(distanceKm * 1.1 / 6))
+  const mixCam = Math.max(1, Math.round(distanceKm * 1.25 / 8))
+
   const configs = [
     {
       id: 'route-fast',
-      title: '빠른 도로',
-      eta: baseEta,
-      distance: Number((distanceKm * 1.03).toFixed(1)),
-      highwayRatio: 72,
-      nationalRoadRatio: 28,
-      mergeCount: 6,
-      congestionScore: 2,
-      congestionLabel: '서행',
-      fixedCameraCount: 3,
-      sectionCameraCount: 1,
-      sectionEnforcementDistance: 6,
-      dominantSpeedLimit: 100,
-      tollFee: Math.round(distanceKm * 85),
+      title: '고속도로 중심',
+      eta: etaHighway,
+      distance: Number((distanceKm * 1.1).toFixed(1)),
+      highwayRatio: 88,
+      nationalRoadRatio: 12,
+      mergeCount: 4,
+      congestionScore: 1,
+      congestionLabel: '원활',
+      fixedCameraCount: hwCam,
+      sectionCameraCount: Math.max(1, Math.round(hwCam / 4)),
+      sectionEnforcementDistance: 10,
+      dominantSpeedLimit: 110,
+      tollFee: Math.round(distanceKm * 110),
       tag: '추천',
       tagColor: 'blue',
       routeColor: '#0064FF',
       polyline: buildPolyline(origin, destination, 0.03),
     },
     {
-      id: 'route-highway',
-      title: '고속도로 중심',
-      eta: baseEta + 3,
-      distance: Number((distanceKm * 1.05).toFixed(1)),
-      highwayRatio: 88,
-      nationalRoadRatio: 12,
-      mergeCount: 4,
-      congestionScore: 1,
-      congestionLabel: '원활',
-      fixedCameraCount: 4,
-      sectionCameraCount: 2,
-      sectionEnforcementDistance: 10,
-      dominantSpeedLimit: 110,
-      tollFee: Math.round(distanceKm * 110),
-      tag: '고속우선',
+      id: 'route-mixed',
+      title: '빠른 도로',
+      eta: etaMixed,
+      distance: Number((distanceKm * 1.25).toFixed(1)),
+      highwayRatio: 68,
+      nationalRoadRatio: 32,
+      mergeCount: 7,
+      congestionScore: 2,
+      congestionLabel: '서행',
+      fixedCameraCount: mixCam,
+      sectionCameraCount: Math.max(1, Math.round(mixCam / 5)),
+      sectionEnforcementDistance: 6,
+      dominantSpeedLimit: 100,
+      tollFee: Math.round(distanceKm * 75),
+      tag: '고속+국도',
       tagColor: 'blue',
       routeColor: '#8E8E93',
       polyline: buildPolyline(origin, destination, -0.04),
@@ -449,18 +561,18 @@ function buildFallbackRoutes(origin, destination, routePreferences, driverPreset
     {
       id: 'route-national',
       title: '국도 포함',
-      eta: baseEta + 8,
-      distance: Number((distanceKm * 1.1).toFixed(1)),
-      highwayRatio: 42,
-      nationalRoadRatio: 58,
-      mergeCount: 9,
+      eta: etaNational,
+      distance: Number((distanceKm * 1.4).toFixed(1)),
+      highwayRatio: 38,
+      nationalRoadRatio: 62,
+      mergeCount: 12,
       congestionScore: 1,
       congestionLabel: '원활',
-      fixedCameraCount: 2,
+      fixedCameraCount: Math.max(1, Math.round(distanceKm * 1.4 / 12)),
       sectionCameraCount: 0,
       sectionEnforcementDistance: 0,
       dominantSpeedLimit: 80,
-      tollFee: Math.round(distanceKm * 45),
+      tollFee: Math.round(distanceKm * 35),
       tag: '국도선호',
       tagColor: 'green',
       routeColor: '#8E8E93',
@@ -504,20 +616,22 @@ const useAppStore = create((set, get) => ({
     const route = get().routes.find((item) => item.id === selectedRouteId)
     set({
       selectedRouteId,
-      mergeOptions: route ? buildMergeOptions(route, get().selectedMergeOptionId) : [],
+      mergeOptions: route ? buildMergeOptions(route, get().selectedMergeOptionId, get().driverPreset) : [],
       mapCenter: route?.polyline?.[Math.floor(route.polyline.length / 2)] ?? get().mapCenter,
       mapZoom: route ? 9 : get().mapZoom,
     })
   },
   isLoadingRoutes: false,
   isNavigating: false,
+  navAutoFollow: false,
+  setNavAutoFollow: (val) => set({ navAutoFollow: val }),
   startNavigation: () => {
     const { userLocation } = get()
     // 내 위치로 지도 포커스
     const center = userLocation ? [userLocation.lat, userLocation.lng] : get().mapCenter
-    set({ isNavigating: true, showRoutePanel: false, routePanelMode: 'full', mapCenter: center, mapZoom: 15 })
+    set({ isNavigating: true, navAutoFollow: true, showRoutePanel: false, routePanelMode: 'full', mapCenter: center, mapZoom: 15 })
   },
-  stopNavigation: () => set({ isNavigating: false, destination: null, routes: [], selectedRouteId: null, routePanelMode: 'full' }),
+  stopNavigation: () => set({ isNavigating: false, navAutoFollow: false, destination: null, routes: [], selectedRouteId: null, routePanelMode: 'full' }),
 
   // ── 경로 저장 ──────────────────────────────────────
   savedRoutes: readStorage(STORAGE_KEYS.savedRoutes, []),
@@ -559,6 +673,56 @@ const useAppStore = create((set, get) => ({
   dismissScenicSuggestion: (id) => set((state) => ({
     scenicRoadSuggestions: state.scenicRoadSuggestions.filter((item) => item.id !== id),
   })),
+  scenicRouteError: null,
+  applyScenicRoute: async (suggestion) => {
+    const state = get()
+    const origin = state.userLocation ?? DEFAULT_ORIGIN
+    const { destination, routePreferences, driverPreset } = state
+    if (!destination) return
+    set({ isLoadingRoutes: true, scenicRouteError: null })
+
+    // viaPoints 없으면 segmentMid로 대체
+    const rawVia = suggestion.viaPoints?.length > 0
+      ? suggestion.viaPoints
+      : [{ name: suggestion.name, lat: suggestion.segmentMid[0], lng: suggestion.segmentMid[1] }]
+    const wayPoints = rawVia.map((pt, i) => ({
+      id: `scenic-via-${i}`,
+      name: pt.name,
+      lat: pt.lat,
+      lng: pt.lng,
+    }))
+
+    try {
+      const viaRoute = await fetchRouteByWaypoints(
+        { ...origin, name: '현재 위치' },
+        destination,
+        wayPoints,
+        { searchOption: '00', title: `${suggestion.name} 경유`, tag: '경관경로', tagColor: 'green' }
+      )
+      if (viaRoute) {
+        const scenicId = `route-scenic-${suggestion.id}`
+        const decorated = decorateRoute(
+          { ...viaRoute, id: scenicId, tag: '경관경로', tagColor: 'green', routeColor: '#10B981' },
+          99,
+          { origin, destination, routePreferences, driverPreset }
+        )
+        const nextRoutes = [...get().routes.filter(r => r.id !== scenicId), decorated]
+        set({
+          routes: nextRoutes,
+          selectedRouteId: decorated.id,
+          isLoadingRoutes: false,
+          mergeOptions: buildMergeOptions(decorated, null, driverPreset),
+          mapCenter: decorated.polyline?.[Math.floor(decorated.polyline.length / 2)] ?? get().mapCenter,
+          mapZoom: 9,
+          scenicRoadSuggestions: get().scenicRoadSuggestions.filter((s) => s.id !== suggestion.id),
+        })
+      } else {
+        set({ isLoadingRoutes: false, scenicRouteError: '경로를 찾을 수 없습니다.' })
+      }
+    } catch (err) {
+      set({ isLoadingRoutes: false, scenicRouteError: err?.message ?? '경로 탐색 실패' })
+    }
+  },
 
   tmapStatus: { hasApiKey: false, mode: 'simulation', lastError: null },
   setTmapStatus: (patch) => set((state) => ({ tmapStatus: { ...state.tmapStatus, ...patch } })),
@@ -678,7 +842,7 @@ const useAppStore = create((set, get) => ({
     set({ selectedMergeOptionId })
     const route = get().routes.find((item) => item.id === get().selectedRouteId)
     if (route) {
-      set({ mergeOptions: buildMergeOptions(route, selectedMergeOptionId) })
+      set({ mergeOptions: buildMergeOptions(route, selectedMergeOptionId, get().driverPreset) })
     }
   },
 
@@ -719,6 +883,7 @@ const useAppStore = create((set, get) => ({
     try {
       liveRoutes = await fetchRoutes(origin.lat, origin.lng, destination.lat, destination.lng, {
         allowNarrowRoads: routePreferences.allowNarrowRoads,
+        roadType: routePreferences.roadType,
       })
       if (liveRoutes.length > 0) {
         get().setTmapStatus({ hasApiKey: true, mode: 'live', lastError: null })
@@ -736,19 +901,18 @@ const useAppStore = create((set, get) => ({
     const selectedRouteId = routes[0]?.id ?? null
     const selectedRoute = routes[0] ?? null
 
-    // 해안/산악도로 감지 (경로 탐색 후 20분 이상 우회 필요한 것만)
-    const scenicRoadSuggestions = detectScenicRoads(
-      origin,
-      destination,
-      selectedRoute?.polyline ?? []
-    )
+    // 해안/산악도로 감지 — 해안/산길 선호 설정 또는 고수 프리셋일 때만
+    const wantsScenic = routePreferences.includeScenic || routePreferences.includeMountain || driverPreset === 'expert'
+    const scenicRoadSuggestions = wantsScenic
+      ? detectScenicRoads(origin, destination, selectedRoute?.polyline ?? [])
+      : []
 
     set({
       routes,
       selectedRouteId,
       isLoadingRoutes: false,
       selectedMergeOptionId: 'merge-current',
-      mergeOptions: selectedRoute ? buildMergeOptions(selectedRoute, 'merge-current') : [],
+      mergeOptions: selectedRoute ? buildMergeOptions(selectedRoute, 'merge-current', driverPreset) : [],
       mapCenter: selectedRoute?.polyline?.[Math.floor(selectedRoute.polyline.length / 2)] ?? [destination.lat, destination.lng],
       mapZoom: selectedRoute ? 8 : 14,
       scenicRoadSuggestions,
@@ -793,7 +957,7 @@ const useAppStore = create((set, get) => ({
         set({
           routes: [decorated, ...state.routes.filter((route) => route.id !== decorated.id)],
           selectedRouteId: decorated.id,
-          mergeOptions: buildMergeOptions(decorated, mergeOptionId),
+          mergeOptions: buildMergeOptions(decorated, mergeOptionId, state.driverPreset),
           isLoadingRoutes: false,
           mapCenter: decorated.polyline[Math.floor(decorated.polyline.length / 2)],
           mapZoom: 9,
@@ -809,7 +973,7 @@ const useAppStore = create((set, get) => ({
     }
 
     set({
-      mergeOptions: buildMergeOptions(baseRoute, mergeOptionId),
+      mergeOptions: buildMergeOptions(baseRoute, mergeOptionId, state.driverPreset),
       isLoadingRoutes: false,
     })
   },

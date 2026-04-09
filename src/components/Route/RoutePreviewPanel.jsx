@@ -28,6 +28,15 @@ export default function RoutePreviewPanel() {
   const baselineRoute = routes.find((route) => route.isBaseline) ?? routes[0]
   const mergePreview = mergeOptions[0]
 
+  // 단거리 판단 (30km 미만 또는 35분 미만)
+  const isShortDistance = selectedRoute
+    ? (selectedRoute.distance < 30 || selectedRoute.eta < 35)
+    : false
+  // 경로 간 최대 시간 차이
+  const maxTimeDiff = routes.length > 1
+    ? Math.max(...routes.map(r => r.eta)) - Math.min(...routes.map(r => r.eta))
+    : 0
+
   let compareLabel = null
   if (selectedRoute && baselineRoute) {
     const delta = selectedRoute.eta - baselineRoute.eta
@@ -177,7 +186,30 @@ export default function RoutePreviewPanel() {
           {/* 필터 */}
           <RouteFilterBar />
 
-          {/* 다음 10km 합류 미리보기 버튼 */}
+          {/* 단거리 성향차이 없음 배너 */}
+          {isShortDistance && (
+            <div className="rounded-xl px-4 py-3 bg-gray-50 border border-gray-200 flex items-center gap-2">
+              <span className="text-base">📍</span>
+              <div>
+                <div className="text-xs font-bold text-gray-700">단거리 구간 · 경로 차이 미미</div>
+                <div className="text-xs text-gray-400">
+                  {selectedRoute?.distance}km 이내 · 성향별 차이 없음 · 추천 경로를 이용하세요
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 경로 간 시간차 5분 미만이면 안내 */}
+          {!isShortDistance && maxTimeDiff < 5 && routes.length > 1 && (
+            <div className="rounded-xl px-4 py-3 bg-amber-50 border border-amber-100 flex items-center gap-2">
+              <span className="text-base">⚖️</span>
+              <div className="text-xs text-amber-700">
+                경로 간 시간 차이 <strong>{maxTimeDiff}분</strong> — 교통 상황에 따라 비슷한 수준입니다
+              </div>
+            </div>
+          )}
+
+          {/* 다음 분기점 합류 옵션 버튼 */}
           <button
             onClick={() => setShowMergeSheet(true)}
             className="w-full flex items-center justify-between bg-blue-50 rounded-xl px-4 py-3 border border-tmap-blue/20"
@@ -185,7 +217,7 @@ export default function RoutePreviewPanel() {
             <div className="flex items-center gap-2">
               <span className="text-lg">🔀</span>
               <div className="text-left">
-                <div className="text-sm font-semibold text-tmap-blue">다음 10km 합류 옵션 보기</div>
+                <div className="text-sm font-semibold text-tmap-blue">다음 분기점 합류 옵션 보기</div>
                 <div className="text-xs text-blue-400">
                   {mergePreview ? `${mergePreview.name}까지 ${mergePreview.distanceFromCurrent}km` : '합류 옵션 계산 중'}
                 </div>

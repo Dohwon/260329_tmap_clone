@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo } from 'react'
-import { CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from 'react-leaflet'
+import { CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import useAppStore from '../../store/appStore'
 
@@ -58,11 +58,17 @@ const endIcon = makeBadgeIcon({ text: '종', background: '#2563EB' })
 const junctionIcon = makeBadgeIcon({ text: '분', background: '#FF6B00', size: 26 })
 
 function MapController({ center, zoom }) {
-  const map = useMap()
   const isNavigating = useAppStore((s) => s.isNavigating)
+  const navAutoFollow = useAppStore((s) => s.navAutoFollow)
+  const setNavAutoFollow = useAppStore((s) => s.setNavAutoFollow)
   const userLocation = useAppStore((s) => s.userLocation)
 
-  // 안내 시작 시 내 위치로 강제 포커스 (mapCenter 값과 무관하게 즉시 이동)
+  // 드래그만 auto-follow 해제 (zoomstart는 setView/panTo 프로그래밍 호출도 발생시키므로 제외)
+  const map = useMapEvents({
+    dragstart: () => { if (isNavigating) setNavAutoFollow(false) },
+  })
+
+  // 안내 시작 시 내 위치로 강제 포커스
   useEffect(() => {
     if (!isNavigating) return
     const target = userLocation
@@ -70,6 +76,12 @@ function MapController({ center, zoom }) {
       : (Array.isArray(center) ? center : null)
     if (target) map.setView(target, 15, { animate: true, duration: 0.5 })
   }, [isNavigating]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 연속 auto-follow: GPS 위치가 바뀔 때마다 지도 중심을 내 위치로 고정 (panTo는 zoom 변경 없음)
+  useEffect(() => {
+    if (!isNavigating || !navAutoFollow || !userLocation) return
+    map.panTo([userLocation.lat, userLocation.lng], { animate: true, duration: 0.3 })
+  }, [userLocation, navAutoFollow, isNavigating]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 일반 지도 이동 (안내 중에는 무시)
   useEffect(() => {

@@ -238,37 +238,81 @@ export async function searchNearbyPOIs(category, lat, lng) {
   return buildNearbyFallback(category, lat, lng)
 }
 
-function getRouteOptions({ allowNarrowRoads = false } = {}) {
-  return [
-    {
-      searchOption: allowNarrowRoads ? '00' : '03',
-      title: allowNarrowRoads ? '추천경로' : '쉬운길',
-      tag: allowNarrowRoads ? '추천' : '쉬운길',
-      tagColor: 'green',
-      isBaseline: true,
-    },
-    { searchOption: '02', title: '빠른 도로', tag: '빠른', tagColor: 'blue' },
-    { searchOption: '04', title: '고속도로 중심', tag: '고속우선', tagColor: 'blue' },
-    { searchOption: '10', title: '최단거리', tag: '최단', tagColor: 'orange' },
-  ]
-}
-
 export async function fetchRoutes(startLat, startLng, endLat, endLng, preferences = {}) {
-  const routeOptions = getRouteOptions(preferences)
-  const results = await Promise.allSettled(
-    routeOptions.map((option) => fetchSingleRoute(startLat, startLng, endLat, endLng, option))
-  )
+  const start = { lat: startLat, lng: startLng, name: '출발' }
+  const dest = { lat: endLat, lng: endLng, name: '도착' }
+  const { roadType = 'mixed' } = preferences
 
-  const routes = results
-    .filter((result) => result.status === 'fulfilled' && result.value)
-    .map((result) => ({ ...result.value, source: 'live' }))
+  // roadType에 따라 기본 탐색 옵션 조정
+  // highway_only → 고속 우선을 베이스라인으로, national_road → 국도 포함 우선
+  const directOpts = roadType === 'highway_only'
+    ? [
+        { searchOption: '04', title: '고속도로 우선', tag: '추천', tagColor: 'blue', isBaseline: true },
+        { searchOption: '00', title: '추천 경로', tag: '추천경로', tagColor: 'blue' },
+      ]
+    : roadType === 'national_road'
+      ? [
+          { searchOption: '00', title: '추천 경로', tag: '추천', tagColor: 'blue', isBaseline: true },
+          { searchOption: '10', title: '최단거리', tag: '최단', tagColor: 'orange' },
+        ]
+      : [
+          { searchOption: '00', title: '추천 경로', tag: '추천', tagColor: 'blue', isBaseline: true },
+          { searchOption: '04', title: '고속도로 우선', tag: '고속', tagColor: 'blue' },
+        ]
+  const directResults = await Promise.allSettled(
+    directOpts.map((opt) => fetchSingleRoute(startLat, startLng, endLat, endLng, opt))
+  )
+  const routes = directResults
+    .filter((r) => r.status === 'fulfilled' && r.value)
+    .map((r) => ({ ...r.value, source: 'live' }))
 
   if (routes.length === 0) {
-    const failed = results.find((result) => result.status === 'rejected')
-    if (failed?.status === 'rejected') throw failed.reason
+    const failed = directResults.find((r) => r.status === 'rejected')
+    throw failed?.reason ?? new Error('경로를 찾을 수 없습니다')
   }
 
-  return routes.filter((route, index, all) => all.findIndex((item) => Math.abs(item.eta - route.eta) < 5) === index)
+  // Step 2: 기본 경로의 IC/JC 분기점을 경유지로 삼아 실제로 다른 경로 생성
+  const baseRoute = routes[0]
+  const junctions = baseRoute?.junctions ?? []
+
+  if (junctions.length >= 2) {
+    // 1/3 지점 분기점 경유 → 다른 경로 강제
+    const viaA = junctions[Math.floor(junctions.length * 0.35)]
+    // 2/3 지점 분기점 경유 → 또 다른 경로
+    const viaB = junctions[Math.floor(junctions.length * 0.65)]
+
+    const viaResults = await Promise.allSettled([
+      fetchRouteByWaypoints(start, dest, [viaA], {
+        id: `route-via-a`,
+        searchOption: '00',
+        title: `${viaA.name} 경유`,
+        tag: `${viaA.name}`,
+        tagColor: 'green',
+      }),
+      junctions.length >= 4
+        ? fetchRouteByWaypoints(start, dest, [viaB], {
+            id: `route-via-b`,
+            searchOption: '02',
+            title: `${viaB.name} 경유`,
+            tag: `${viaB.name}`,
+            tagColor: 'orange',
+          })
+        : Promise.reject(new Error('skip')),
+    ])
+
+    for (const r of viaResults) {
+      if (r.status === 'fulfilled' && r.value) {
+        routes.push({ ...r.value, source: 'live' })
+      }
+    }
+  }
+
+  // 중복 제거: ETA가 2분 미만 차이이고 거리도 1km 미만 차이면 같은 경로로 간주
+  return routes.filter((route, index, all) =>
+    all.findIndex((other) =>
+      Math.abs(other.eta - route.eta) < 2 && Math.abs((other.distance ?? 0) - (route.distance ?? 0)) < 1
+    ) === index
+  )
 }
 
 export async function fetchRouteByWaypoints(start, destination, wayPoints = [], option = {}) {
@@ -371,34 +415,78 @@ function parseRouteResponse(json, option) {
   let mergeCount = 0
   const junctions = [] // 실제 IC/JC 분기점
   let accumulatedDist = 0
+  let currentRoadName = ''  // 현재 통과 중인 도로명
+  let currentRoadNo = ''    // 현재 도로번호
 
-  for (const feature of features) {
-    if (feature.geometry?.type !== 'LineString') continue
-    for (const coord of feature.geometry.coordinates) {
-      polyline.push([coord[1], coord[0]])
-    }
-    const props = feature.properties ?? {}
-    const dist = props.distance ?? 0
-    if ([4, 5, 6].includes(props.roadType)) highwayDist += dist
-    else nationalDist += dist
+  for (let fi = 0; fi < features.length; fi++) {
+    const feature = features[fi]
+    if (feature.geometry?.type === 'LineString') {
+      for (const coord of feature.geometry.coordinates) {
+        polyline.push([coord[1], coord[0]])
+      }
+      const props = feature.properties ?? {}
+      const dist = props.distance ?? 0
+      // 도로명 업데이트 (있으면)
+      if (props.roadName) currentRoadName = props.roadName
+      if (props.roadNo) currentRoadNo = props.roadNo
 
-    // 분기점/합류/IC/JC 추출
-    if (JUNCTION_TURN_TYPES.has(props.turnType)) {
-      mergeCount += 1
-      const firstCoord = feature.geometry.coordinates[0]
-      if (firstCoord) {
-        junctions.push({
-          id: `jct-${junctions.length}`,
-          name: props.description ?? props.name ?? `분기점 ${junctions.length + 1}`,
-          lat: firstCoord[1],
-          lng: firstCoord[0],
-          turnType: props.turnType,
-          distanceFromStart: Math.round(accumulatedDist / 100) / 10, // km
-          afterRoadType: [4, 5, 6].includes(props.roadType) ? 'highway' : 'national',
-        })
+      if ([4, 5, 6].includes(props.roadType)) highwayDist += dist
+      else nationalDist += dist
+
+      // LineString turnType으로도 분기점 추출 가능
+      if (JUNCTION_TURN_TYPES.has(props.turnType)) {
+        mergeCount += 1
+        const firstCoord = feature.geometry.coordinates[0]
+        if (firstCoord) {
+          // 다음 LineString 피처의 도로명 = 이 분기점 이후 도로
+          const nextFeature = features.slice(fi + 1).find(f => f.geometry?.type === 'LineString')
+          const afterRoadName = nextFeature?.properties?.roadName ?? currentRoadName
+          const afterRoadNo = nextFeature?.properties?.roadNo ?? currentRoadNo
+          const afterRoadType = [4, 5, 6].includes(props.roadType) ? 'highway' : 'national'
+          junctions.push({
+            id: `jct-${junctions.length}`,
+            name: props.description ?? props.name ?? `분기점 ${junctions.length + 1}`,
+            lat: firstCoord[1],
+            lng: firstCoord[0],
+            turnType: props.turnType,
+            distanceFromStart: Math.round(accumulatedDist / 100) / 10, // km
+            afterRoadType,
+            afterRoadName: afterRoadName
+              ? (afterRoadNo ? `${afterRoadName} (${afterRoadNo}호선)` : afterRoadName)
+              : (afterRoadType === 'highway' ? '고속도로' : '국도'),
+          })
+        }
+      }
+      accumulatedDist += dist
+    } else if (feature.geometry?.type === 'Point') {
+      // Point 피처(전환점) 에서 분기점 정보 보완
+      const props = feature.properties ?? {}
+      if (JUNCTION_TURN_TYPES.has(Number(props.turnType)) && props.name) {
+        mergeCount += 1
+        const [lng, lat] = feature.geometry.coordinates
+        const nextFeature = features.slice(fi + 1).find(f => f.geometry?.type === 'LineString')
+        const afterRoadName = nextFeature?.properties?.roadName ?? ''
+        const afterRoadNo = nextFeature?.properties?.roadNo ?? ''
+        const afterRoadType = [4, 5, 6].includes(nextFeature?.properties?.roadType)
+          ? 'highway' : 'national'
+        // 이미 같은 위치에 추가된 분기점 중복 방지
+        const isDup = junctions.some(j => Math.abs(j.lat - lat) < 0.001 && Math.abs(j.lng - lng) < 0.001)
+        if (!isDup) {
+          junctions.push({
+            id: `jct-${junctions.length}`,
+            name: props.name ?? props.description ?? `분기점 ${junctions.length + 1}`,
+            lat,
+            lng,
+            turnType: Number(props.turnType),
+            distanceFromStart: Math.round((props.totalDistance ?? accumulatedDist) / 100) / 10,
+            afterRoadType,
+            afterRoadName: afterRoadName
+              ? (afterRoadNo ? `${afterRoadName} (${afterRoadNo}호선)` : afterRoadName)
+              : (afterRoadType === 'highway' ? '고속도로' : '국도'),
+          })
+        }
       }
     }
-    accumulatedDist += dist
   }
 
   const totalDistance = summary.totalDistance ?? highwayDist + nationalDist
@@ -410,8 +498,46 @@ function parseRouteResponse(json, option) {
   const nationalRoadRatio = 100 - highwayRatio
   const congestionScore = trafficTime / Math.max(totalTime, 1) > 0.3 ? 3 : trafficTime / Math.max(totalTime, 1) > 0.1 ? 2 : 1
 
+  // TMAP safetyFacilityList에서 실제 카메라 위치 추출
+  const safetyList = summary.safetyFacilityList ?? []
+  const cameras = []
+  for (let i = 0; i < safetyList.length; i++) {
+    const cam = safetyList[i]
+    const isSection = String(cam.type) === '2'
+    const lat = parseFloat(cam.lat ?? cam.noorLat ?? cam.startLat)
+    const lng = parseFloat(cam.lon ?? cam.noorLon ?? cam.startLon)
+    if (!isFinite(lat) || !isFinite(lng)) continue
+    const base = {
+      id: `cam-${i}`,
+      coord: [lat, lng],
+      type: isSection ? 'section_start' : 'fixed',
+      speedLimit: parseInt(cam.speed ?? cam.speedLimit ?? 100, 10),
+      label: isSection ? '구간단속' : '지점단속',
+    }
+    cameras.push(base)
+    if (isSection && cam.endLat) {
+      base.endCoord = [parseFloat(cam.endLat), parseFloat(cam.endLon)]
+      base.sectionLength = parseFloat(cam.distance ?? '5')
+      cameras.push({
+        ...base,
+        id: `cam-${i}-end`,
+        coord: base.endCoord,
+        type: 'section_end',
+        label: '구간단속 종료',
+      })
+    }
+  }
+
+  // 실제 카메라 기반 집계 (없으면 거리 기반 추정)
+  const totalKm = totalDistance / 1000
+  const hwKm = highwayDist / 1000
+  const fixedCameraCount = cameras.filter(c => c.type === 'fixed').length
+    || Math.max(1, Math.round(hwKm / 6 + (totalKm - hwKm) / 12))
+  const sectionCameraCount = cameras.filter(c => c.type === 'section_start').length
+    || (highwayRatio >= 40 ? Math.max(1, Math.round(hwKm / 25)) : 0)
+
   return {
-    id: `route-${option.searchOption}`,
+    id: option.id ?? `route-${option.searchOption}`,
     title: option.title,
     explanation: buildExplanation(highwayRatio, mergeCount, congestionScore, option.isBaseline),
     eta: Math.ceil(totalTime / 60),
@@ -421,8 +547,8 @@ function parseRouteResponse(json, option) {
     mergeCount,
     congestionScore,
     congestionLabel: ['', '원활', '서행', '정체'][congestionScore],
-    fixedCameraCount: Math.max(1, Math.round(highwayRatio / 25)),
-    sectionCameraCount: highwayRatio >= 60 ? 1 : 0,
+    fixedCameraCount,
+    sectionCameraCount,
     sectionEnforcementDistance: highwayRatio >= 60 ? 6 : 0,
     dominantSpeedLimit: highwayRatio >= 60 ? 100 : 80,
     tollFee: totalFare,
@@ -433,6 +559,7 @@ function parseRouteResponse(json, option) {
     isBaseline: option.isBaseline === true,
     polyline,
     junctions, // 실제 IC/JC 분기점 목록
+    cameras,   // 실제 과속카메라 위치 (TMAP safetyFacilityList 기반)
   }
 }
 

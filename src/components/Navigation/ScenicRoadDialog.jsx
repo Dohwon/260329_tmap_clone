@@ -2,7 +2,7 @@ import React from 'react'
 import useAppStore from '../../store/appStore'
 
 export default function ScenicRoadDialog() {
-  const { scenicRoadSuggestions, dismissScenicSuggestion, destination, routes, selectedRouteId } = useAppStore()
+  const { scenicRoadSuggestions, dismissScenicSuggestion, applyScenicRoute, destination, routes, selectedRouteId, isLoadingRoutes, scenicRouteError } = useAppStore()
 
   // 가장 첫 번째 제안만 표시 (순서대로 하나씩)
   const suggestion = scenicRoadSuggestions[0]
@@ -73,6 +73,13 @@ export default function ScenicRoadDialog() {
             {destination && ` 최종 목적지(${destination.name})까지 총 ${formatMin(totalEta)} 예상.`}
           </div>
 
+          {/* 오류 메시지 */}
+          {scenicRouteError && (
+            <div className="bg-red-50 border border-red-100 rounded-xl px-3 py-2 text-xs text-red-600">
+              ⚠️ {scenicRouteError}
+            </div>
+          )}
+
           {/* 버튼 */}
           <div className="flex gap-3 pb-2">
             <button
@@ -82,14 +89,11 @@ export default function ScenicRoadDialog() {
               직행으로 가기
             </button>
             <button
-              onClick={() => {
-                // TODO: 경유지 추가하여 경로 재탐색
-                dismissScenicSuggestion(suggestion.id)
-                alert(`${suggestion.name} 경유 경로는 준비 중입니다.\n(TMAP 경유지 API로 연동 예정)`)
-              }}
-              className={`flex-1 py-3.5 rounded-2xl text-sm font-bold text-white bg-gradient-to-r ${bgClass}`}
+              disabled={isLoadingRoutes}
+              onClick={() => applyScenicRoute(suggestion)}
+              className={`flex-1 py-3.5 rounded-2xl text-sm font-bold text-white bg-gradient-to-r ${bgClass} disabled:opacity-60`}
             >
-              {typeLabel} 경유
+              {isLoadingRoutes ? '경로 탐색 중…' : `${typeLabel} 경유`}
             </button>
           </div>
         </div>
