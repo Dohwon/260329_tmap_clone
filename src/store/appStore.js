@@ -808,15 +808,23 @@ const useAppStore = create((set, get) => ({
       // POI 검색 실패는 무시
     }
 
-    // 모든 좌표 후보로 routeSequential30 순차 시도
+    // 모든 좌표 후보로 routeSequential30 순차 시도 (에러 종류와 무관하게 모두 시도)
     let viaRoute = null
     for (const pt of coordCandidates) {
       try {
         viaRoute = await fetchRouteByWaypoints(start, destination, [pt], scenicRouteOpt)
         if (viaRoute) break
-      } catch (err) {
-        // 1100이 아닌 다른 오류(네트워크 등)면 중단
-        if (!String(err?.message ?? '').includes('1100')) break
+      } catch {
+        // 다음 후보로 계속 시도
+      }
+    }
+
+    // 경유지 경로 실패 시 직접 경로로 폴백 (경관 경로 태그는 유지)
+    if (!viaRoute) {
+      try {
+        viaRoute = await fetchDirectRoute(origin.lat, origin.lng, destination.lat, destination.lng, scenicRouteOpt)
+      } catch {
+        // 직접 경로도 실패
       }
     }
 
@@ -843,7 +851,7 @@ const useAppStore = create((set, get) => ({
     } else {
       set({
         isLoadingRoutes: false,
-        scenicRouteError: `${suggestion.name} 경유 경로를 찾을 수 없습니다. TMAP 다중경유지 API가 지원되지 않거나 해당 구간이 통행 불가입니다.`,
+        scenicRouteError: `${suggestion.name} 경로를 찾을 수 없습니다. 목적지까지 TMAP 경로 탐색에 실패했습니다.`,
       })
     }
   },
