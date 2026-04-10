@@ -369,16 +369,17 @@ async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
   const body = {
     startX: String(startLng),
     startY: String(startLat),
+    startName: '출발',
     endX: String(endLng),
     endY: String(endLat),
-    endRpFlag: 'G',
-    carType: 0,
-    detailPosFlag: '2',
+    endName: '도착',
     reqCoordType: 'WGS84GEO',
     resCoordType: 'WGS84GEO',
     searchOption: option.searchOption,
-    sort: 'index',
+    carType: '0',
     trafficInfo: 'Y',
+    detailPosFlag: '2',
+    sort: 'index',
   }
 
   const res = await fetch(`${BASE}/routes?version=1`, {

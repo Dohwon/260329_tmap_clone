@@ -93,24 +93,25 @@ app.get('/api/meta/tmap-diag', async (req, res) => {
   const host = req.headers['host'] || 'localhost'
   const hdrs = { origin: `https://${host}`, referer: `https://${host}/` }
 
-  // 1. POI 검색
+  // 1. POI 검색 (한글 URL 인코딩 필수)
   try {
-    const r = await tmapFetch('/tmap/pois?version=1&searchKeyword=서울역&count=1&reqCoordType=WGS84GEO&resCoordType=WGS84GEO', 'GET', hdrs, null)
+    const keyword = encodeURIComponent('서울역')
+    const r = await tmapFetch(`/tmap/pois?version=1&searchKeyword=${keyword}&count=1&reqCoordType=WGS84GEO&resCoordType=WGS84GEO`, 'GET', hdrs, null)
     let b = {}; try { b = JSON.parse(r.body.toString()) } catch {}
     report.tests.poi = { status: r.status, ok: r.status === 200 && !!b?.searchPoiInfo, errorCode: b?.error?.code ?? null }
   } catch (e) { report.tests.poi = { ok: false, error: e.message } }
 
-  // 2. 경로 API (/routes)
+  // 2. 경로 API (/routes) — fetchSingleRoute와 동일한 포맷
   try {
-    const body = JSON.stringify({ startX:'126.978', startY:'37.566', endX:'127.028', endY:'37.498', reqCoordType:'WGS84GEO', resCoordType:'WGS84GEO', searchOption:'00', sort:'index', carType:0, trafficInfo:'Y', detailPosFlag:'2', endRpFlag:'G' })
+    const body = JSON.stringify({ startX:'126.978', startY:'37.566', startName:'출발', endX:'127.028', endY:'37.498', endName:'도착', reqCoordType:'WGS84GEO', resCoordType:'WGS84GEO', searchOption:'00', carType:'0', trafficInfo:'Y', detailPosFlag:'2', sort:'index' })
     const r = await tmapFetch('/tmap/routes?version=1', 'POST', hdrs, body)
     let b = {}; try { b = JSON.parse(r.body.toString()) } catch {}
     report.tests.routes = { status: r.status, ok: r.status === 200 && !!b?.features?.length, errorCode: b?.error?.code ?? b?.error?.errorCode ?? null, errorMsg: b?.error?.message ?? null }
   } catch (e) { report.tests.routes = { ok: false, error: e.message } }
 
-  // 3. 다중경유지 API (routeSequential30)
+  // 3. 다중경유지 API (routeSequential30) — viaPoint 1개 포함
   try {
-    const body = JSON.stringify({ startX:'126.978', startY:'37.566', startName:'출발', endX:'127.028', endY:'37.498', endName:'도착', reqCoordType:'WGS84GEO', resCoordType:'WGS84GEO', carType:'0', startTime:'202601010000', viaPoints:[] })
+    const body = JSON.stringify({ startX:'126.978', startY:'37.566', startName:'출발', endX:'127.028', endY:'37.498', endName:'도착', reqCoordType:'WGS84GEO', resCoordType:'WGS84GEO', carType:'0', startTime:new Date().toISOString().slice(0,16).replace(/[-:T]/g,''), viaPoints:[{ viaPointId:'test-0', viaPointName:'서울시청', viaX:'126.9784', viaY:'37.5663', viaTime:'0' }] })
     const r = await tmapFetch('/tmap/routes/routeSequential30?version=1', 'POST', hdrs, body)
     let b = {}; try { b = JSON.parse(r.body.toString()) } catch {}
     report.tests.sequential = { status: r.status, ok: r.status === 200 && !!b?.features?.length, errorCode: b?.error?.code ?? b?.error?.errorCode ?? null, errorMsg: b?.error?.message ?? null }

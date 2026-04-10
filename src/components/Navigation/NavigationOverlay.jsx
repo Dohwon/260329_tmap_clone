@@ -88,9 +88,9 @@ export default function NavigationOverlay() {
     ? (nextRealJunction.afterRoadName
         ? `${nextRealJunction.afterRoadName} 진입`
         : `${nextRealJunction.afterRoadType === 'highway' ? '고속도로' : '국도'} 진입`)
-    : `${route?.distance ?? '--'}km · ${route?.eta ? formatEta(route.eta) : '--'} 소요`
+    : `${route?.distance != null ? Number(route.distance).toFixed(2) : '--'}km · ${route?.eta ? formatEta(route.eta) : '--'} 소요`
   const bannerLabel = nextRealJunction
-    ? `${nextRealJunction.distanceFromStart}km 앞`
+    ? `${Number(nextRealJunction.distanceFromStart).toFixed(2)}km 앞`
     : '직진'
   const bannerTurnType = nextRealJunction?.turnType ?? 11
 
@@ -146,7 +146,7 @@ export default function NavigationOverlay() {
               <div className="w-px h-8 bg-gray-200" />
               <div className="flex-1 text-center">
                 <div className="text-xs text-gray-400">남은거리</div>
-                <div className="text-lg font-black text-gray-900">{route?.distance ?? '--'}km</div>
+                <div className="text-lg font-black text-gray-900">{route?.distance != null ? Number(route.distance).toFixed(2) : '--'}km</div>
               </div>
               {/* 현재 속도 배지 */}
               <div className={`ml-3 flex flex-col items-center justify-center w-14 h-14 rounded-full border-[3px] ${overLimit ? 'border-red-500 bg-red-50' : 'border-gray-300'}`}>
@@ -174,7 +174,7 @@ export default function NavigationOverlay() {
                   <div className="text-sm font-bold text-gray-900 truncate">
                     {nextMergeOpt.name}
                     <span className="text-xs font-normal text-gray-500 ml-1">
-                      ({nextMergeOpt.distanceFromCurrent}km 앞)
+                      ({Number(nextMergeOpt.distanceFromCurrent).toFixed(2)}km 앞)
                     </span>
                   </div>
                 ) : (
@@ -294,7 +294,7 @@ function JunctionChip({ opt, onSelect }) {
         {isHighway ? '고속' : '국도'} 진입
       </div>
       <div className="text-xs text-gray-400 mt-0.5">
-        {opt.distanceFromCurrent}km 앞
+        {Number(opt.distanceFromCurrent).toFixed(2)}km 앞
         {opt.addedTime > 0 && <span className="ml-1 text-orange-400">+{opt.addedTime}분</span>}
       </div>
     </button>
@@ -314,7 +314,7 @@ function SaveRouteDialog({ route, destination, onSave, onDiscard }) {
         </div>
         <div className="text-lg font-black text-gray-900 mb-1">이 경로를 저장할까요?</div>
         <div className="text-sm text-gray-500 mb-4">
-          {route?.distance ?? '--'}km · {route?.eta ? formatEta(route.eta) : '--'} · 통행료 {route?.tollFee ? `${route.tollFee.toLocaleString()}원` : '없음'}
+          {route?.distance != null ? Number(route.distance).toFixed(2) : '--'}km · {route?.eta ? formatEta(route.eta) : '--'} · 통행료 {route?.tollFee ? `${route.tollFee.toLocaleString()}원` : '없음'}
         </div>
         <input
           className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-4 outline-none focus:border-tmap-blue"

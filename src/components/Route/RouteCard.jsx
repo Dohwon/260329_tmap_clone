@@ -64,7 +64,7 @@ export default function RouteCard({ route, isSelected, onClick }) {
           <span className="text-2xl font-black text-gray-900">{formatEta(route.eta)}</span>
         </div>
         <div className="text-sm text-gray-400">·</div>
-        <div className="text-sm text-gray-600 font-medium">{route.distance}km</div>
+        <div className="text-sm text-gray-600 font-medium">{Number(route.distance).toFixed(2)}km</div>
         <div className="text-sm text-gray-400">·</div>
         <span
           className="text-xs font-semibold px-2 py-0.5 rounded-full"

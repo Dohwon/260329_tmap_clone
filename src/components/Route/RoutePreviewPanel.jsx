@@ -72,7 +72,7 @@ export default function RoutePreviewPanel() {
                 <div className="flex items-center gap-2 text-xs text-gray-500">
                   <span className="font-bold text-gray-900 text-base">{formatEta(selectedRoute.eta)}</span>
                   <span>·</span>
-                  <span>{selectedRoute.distance}km</span>
+                  <span>{Number(selectedRoute.distance).toFixed(2)}km</span>
                   <span>·</span>
                   <span>{selectedRoute.congestionLabel}</span>
                   {selectedRoute.tollFee > 0 && (
@@ -195,7 +195,7 @@ export default function RoutePreviewPanel() {
               <div>
                 <div className="text-xs font-bold text-gray-700">단거리 구간 · 경로 차이 미미</div>
                 <div className="text-xs text-gray-400">
-                  {selectedRoute?.distance}km 이내 · 성향별 차이 없음 · 추천 경로를 이용하세요
+                  {selectedRoute?.distance != null ? Number(selectedRoute.distance).toFixed(2) : '--'}km 이내 · 성향별 차이 없음 · 추천 경로를 이용하세요
                 </div>
               </div>
             </div>

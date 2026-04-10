@@ -50,7 +50,7 @@ export default function RouteFilterBar() {
               <div className="text-xs font-semibold text-gray-500">도심·단거리 구간</div>
               <div className="text-xs text-gray-400">
                 {selectedRoute && selectedRoute.distance < 30
-                  ? `${selectedRoute.distance}km 단거리`
+                  ? `${Number(selectedRoute.distance).toFixed(2)}km 단거리`
                   : '고속도로 비율이 낮은 도심 구간'}에서는 도로 유형 설정이 경로에 반영되지 않습니다.
                 초보/중수/고수 성향은 계속 적용됩니다.
               </div>
