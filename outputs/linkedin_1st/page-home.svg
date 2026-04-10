@@ -1,0 +1,104 @@
+<svg width="1080" height="1350" viewBox="0 0 1080 1350" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="120" y1="40" x2="920" y2="1280" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#EAF4FF"/>
+      <stop offset="1" stop-color="#F5FAFF"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#0F172A" flood-opacity="0.10"/>
+    </filter>
+  </defs>
+
+  <rect width="1080" height="1350" fill="url(#bg)"/>
+  <text x="96" y="108" fill="#0F172A" font-size="40" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">홈 화면</text>
+  <text x="96" y="148" fill="#475569" font-size="22" font-weight="500" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">지도 중심 탐색, 빠른 목적지 진입, 도로 선택을 한 화면에 모은 메인 허브</text>
+
+  <rect x="230" y="210" width="620" height="1000" rx="56" fill="#111827" filter="url(#shadow)"/>
+  <rect x="255" y="238" width="570" height="944" rx="40" fill="#F8FAFC"/>
+  <rect x="448" y="226" width="184" height="18" rx="9" fill="#1F2937"/>
+
+  <rect x="279" y="280" width="522" height="516" rx="28" fill="#DCEEFF"/>
+  <path d="M300 370C410 320 488 334 580 360C655 380 717 366 777 330" stroke="#FFFFFF" stroke-width="30" stroke-linecap="round"/>
+  <path d="M310 374C418 323 493 340 580 366C652 387 709 373 772 338" stroke="#2563EB" stroke-width="16" stroke-linecap="round"/>
+  <path d="M332 477C430 430 517 440 606 466C676 486 731 470 782 436" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" opacity="0.85"/>
+  <path d="M336 479C432 433 516 445 604 472C673 492 725 477 776 443" stroke="#38BDF8" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="515" cy="362" r="12" fill="#EF4444"/>
+  <circle cx="642" cy="460" r="12" fill="#F59E0B"/>
+  <circle cx="725" cy="338" r="12" fill="#EF4444"/>
+
+  <rect x="300" y="300" width="480" height="62" rx="22" fill="white" opacity="0.96"/>
+  <rect x="320" y="316" width="36" height="30" rx="10" fill="#2563EB"/>
+  <text x="330" y="338" fill="white" font-size="20" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">T</text>
+  <text x="372" y="339" fill="#94A3B8" font-size="20" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">어디로 갈까요?</text>
+
+  <circle cx="760" cy="842" r="25" fill="white"/>
+  <circle cx="760" cy="904" r="25" fill="white"/>
+  <circle cx="760" cy="966" r="25" fill="white"/>
+  <text x="751" y="849" fill="#2563EB" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">◎</text>
+  <text x="751" y="910" fill="#111827" font-size="20" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">🛣</text>
+  <text x="751" y="973" fill="#111827" font-size="16" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">▤</text>
+
+  <rect x="279" y="814" width="522" height="326" rx="28" fill="white"/>
+  <rect x="490" y="830" width="100" height="8" rx="4" fill="#CBD5E1"/>
+
+  <rect x="302" y="856" width="96" height="36" rx="18" fill="#F1F5F9"/>
+  <rect x="408" y="856" width="96" height="36" rx="18" fill="#F1F5F9"/>
+  <rect x="514" y="856" width="96" height="36" rx="18" fill="#F1F5F9"/>
+  <rect x="620" y="856" width="84" height="36" rx="18" fill="#F1F5F9"/>
+  <rect x="714" y="856" width="66" height="36" rx="18" fill="#F1F5F9"/>
+  <text x="319" y="880" fill="#0F172A" font-size="16" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">🏠 집</text>
+  <text x="424" y="880" fill="#0F172A" font-size="16" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">🏢 회사</text>
+  <text x="531" y="880" fill="#0F172A" font-size="16" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">⭐ 최근</text>
+  <text x="639" y="880" fill="#0F172A" font-size="16" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">⛽ 주유소</text>
+  <text x="726" y="880" fill="#0F172A" font-size="16" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">🅿 주차장</text>
+
+  <rect x="302" y="908" width="476" height="58" rx="20" fill="#F1F5F9"/>
+  <rect x="320" y="922" width="36" height="30" rx="10" fill="#2563EB"/>
+  <text x="331" y="944" fill="white" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">T</text>
+  <text x="372" y="943" fill="#94A3B8" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">어디로 갈까요?</text>
+
+  <rect x="302" y="978" width="476" height="44" rx="14" fill="#ECFDF5"/>
+  <circle cx="324" cy="1000" r="6" fill="#22C55E"/>
+  <text x="340" y="1006" fill="#166534" font-size="16" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">현재 3시 · 전반적으로 원활한 편</text>
+
+  <text x="302" y="1054" fill="#64748B" font-size="14" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">고속도로 / 국도 탐색</text>
+  <rect x="302" y="1070" width="146" height="56" rx="18" fill="#DBEAFE" stroke="#2563EB"/>
+  <rect x="458" y="1070" width="146" height="56" rx="18" fill="#F8FAFC"/>
+  <rect x="614" y="1070" width="146" height="56" rx="18" fill="#F8FAFC"/>
+  <text x="322" y="1092" fill="#1D4ED8" font-size="14" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">1</text>
+  <text x="344" y="1092" fill="#0F172A" font-size="14" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">경부고속도로</text>
+  <text x="344" y="1113" fill="#64748B" font-size="12" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">서울 → 부산</text>
+  <text x="499" y="1092" fill="#0F172A" font-size="14" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">29 세종포천</text>
+  <text x="499" y="1113" fill="#64748B" font-size="12" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">안성 → 구리</text>
+  <text x="655" y="1092" fill="#0F172A" font-size="14" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">7 국도</text>
+  <text x="655" y="1113" fill="#64748B" font-size="12" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">부산 → 함경북도</text>
+
+  <rect x="279" y="1144" width="522" height="38" fill="white"/>
+  <rect x="299" y="1148" width="482" height="26" rx="13" fill="#FFFFFF"/>
+  <text x="334" y="1166" fill="#2563EB" font-size="14" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">홈</text>
+  <text x="454" y="1166" fill="#94A3B8" font-size="14" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">검색</text>
+  <text x="562" y="1166" fill="#94A3B8" font-size="14" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">즐겨찾기</text>
+  <text x="704" y="1166" fill="#94A3B8" font-size="14" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">더보기</text>
+
+  <rect x="74" y="276" width="116" height="90" rx="22" fill="#FFFFFF" filter="url(#shadow)"/>
+  <text x="96" y="312" fill="#0F172A" font-size="16" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">핵심 1</text>
+  <text x="96" y="338" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">지도와 경로,</text>
+  <text x="96" y="358" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">교통 정보가</text>
+  <text x="96" y="378" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">한 화면에 모임</text>
+
+  <rect x="872" y="430" width="144" height="104" rx="22" fill="#FFFFFF" filter="url(#shadow)"/>
+  <text x="894" y="466" fill="#0F172A" font-size="16" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">핵심 2</text>
+  <text x="894" y="492" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">주유소, 주차장,</text>
+  <text x="894" y="512" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">최근, 집, 회사</text>
+  <text x="894" y="532" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">빠른 진입</text>
+
+  <rect x="86" y="986" width="136" height="110" rx="22" fill="#FFFFFF" filter="url(#shadow)"/>
+  <text x="108" y="1022" fill="#0F172A" font-size="16" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">핵심 3</text>
+  <text x="108" y="1048" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">고속도로 선택 시</text>
+  <text x="108" y="1068" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">시점 / 종점 /</text>
+  <text x="108" y="1088" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">속도 흐름 연결</text>
+
+  <path d="M190 322H255" stroke="#94A3B8" stroke-width="3" stroke-dasharray="8 8"/>
+  <path d="M872 482H825" stroke="#94A3B8" stroke-width="3" stroke-dasharray="8 8"/>
+  <path d="M222 1044H279" stroke="#94A3B8" stroke-width="3" stroke-dasharray="8 8"/>
+</svg>

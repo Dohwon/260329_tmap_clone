@@ -1,0 +1,66 @@
+<svg width="1080" height="1350" viewBox="0 0 1080 1350" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1080" y2="1350" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7FBFF"/>
+      <stop offset="1" stop-color="#F8FAFC"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#0F172A" flood-opacity="0.10"/>
+    </filter>
+  </defs>
+
+  <rect width="1080" height="1350" fill="url(#bg)"/>
+  <text x="96" y="108" fill="#0F172A" font-size="40" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">더보기 화면</text>
+  <text x="96" y="148" fill="#475569" font-size="22" font-weight="500" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">근처 찾기, 교통 정보, 안전, 설정을 섹션형 메뉴로 묶은 보조 진입 화면</text>
+
+  <rect x="230" y="210" width="620" height="1000" rx="56" fill="#111827" filter="url(#shadow)"/>
+  <rect x="255" y="238" width="570" height="944" rx="40" fill="#F8FAFC"/>
+  <rect x="448" y="226" width="184" height="18" rx="9" fill="#1F2937"/>
+
+  <rect x="279" y="278" width="522" height="92" fill="white"/>
+  <text x="304" y="334" fill="#0F172A" font-size="32" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">더보기</text>
+
+  <text x="302" y="404" fill="#94A3B8" font-size="15" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">드라이브</text>
+  <rect x="302" y="424" width="476" height="132" rx="24" fill="white" stroke="#E2E8F0"/>
+  <text x="326" y="461" fill="#0F172A" font-size="17" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">📊 드라이브 기록</text>
+  <text x="326" y="484" fill="#94A3B8" font-size="14" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">최근 주행 이력 확인</text>
+  <text x="326" y="520" fill="#0F172A" font-size="17" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">🧠 내 운전 습관</text>
+  <text x="326" y="543" fill="#94A3B8" font-size="14" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">합류 / 감속 패턴 분석</text>
+
+  <text x="302" y="598" fill="#94A3B8" font-size="15" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">근처 찾기</text>
+  <rect x="302" y="618" width="476" height="182" rx="24" fill="white" stroke="#E2E8F0"/>
+  <text x="326" y="655" fill="#0F172A" font-size="17" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">⛽ 주유 / 충전소</text>
+  <rect x="490" y="636" width="40" height="22" rx="11" fill="#2563EB"/>
+  <text x="500" y="651" fill="white" font-size="11" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">Live</text>
+  <text x="326" y="678" fill="#94A3B8" font-size="14" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">현재 위치 기준 탐색</text>
+  <text x="326" y="714" fill="#0F172A" font-size="17" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">🅿 주차장</text>
+  <text x="326" y="737" fill="#94A3B8" font-size="14" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">현재 위치 기준 탐색</text>
+  <text x="326" y="773" fill="#0F172A" font-size="17" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">🏥 병원 / ☕ 카페 / 🍽 음식점</text>
+
+  <text x="302" y="842" fill="#94A3B8" font-size="15" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">교통 정보 / 안전 / 설정</text>
+  <rect x="302" y="862" width="476" height="170" rx="24" fill="white" stroke="#E2E8F0"/>
+  <text x="326" y="899" fill="#0F172A" font-size="17" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">🚌 실시간 버스 / 🚇 지하철 / 🛣 고속도로 정보</text>
+  <text x="326" y="934" fill="#0F172A" font-size="17" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">📷 과속카메라 정보 / 🆘 긴급 신고</text>
+  <text x="326" y="969" fill="#0F172A" font-size="17" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">⚙ 설정 / ❓ 고객센터 / ℹ 앱 정보</text>
+  <text x="326" y="1000" fill="#94A3B8" font-size="14" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">Phase 2 예고 기능과 외부 정보 연결이 함께 배치</text>
+
+  <rect x="279" y="1144" width="522" height="38" fill="#F8FAFC"/>
+  <text x="334" y="1166" fill="#94A3B8" font-size="14" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">홈</text>
+  <text x="454" y="1166" fill="#94A3B8" font-size="14" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">검색</text>
+  <text x="562" y="1166" fill="#94A3B8" font-size="14" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">즐겨찾기</text>
+  <text x="704" y="1166" fill="#2563EB" font-size="14" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">더보기</text>
+
+  <rect x="84" y="646" width="138" height="104" rx="22" fill="white" filter="url(#shadow)"/>
+  <text x="106" y="682" fill="#0F172A" font-size="16" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">핵심 1</text>
+  <text x="106" y="708" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">내 주변 카테고리</text>
+  <text x="106" y="728" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">빠른 진입</text>
+
+  <rect x="874" y="908" width="146" height="110" rx="22" fill="white" filter="url(#shadow)"/>
+  <text x="896" y="944" fill="#0F172A" font-size="16" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">핵심 2</text>
+  <text x="896" y="970" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">앱 내부 기능과</text>
+  <text x="896" y="990" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">외부 교통 정보</text>
+  <text x="896" y="1010" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">브리지 역할</text>
+
+  <path d="M222 698H255" stroke="#94A3B8" stroke-width="3" stroke-dasharray="8 8"/>
+  <path d="M874 964H825" stroke="#94A3B8" stroke-width="3" stroke-dasharray="8 8"/>
+</svg>

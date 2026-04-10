@@ -1,0 +1,77 @@
+<svg width="1080" height="1350" viewBox="0 0 1080 1350" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1080" y2="1350" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7FBFF"/>
+      <stop offset="1" stop-color="#F8FAFC"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#0F172A" flood-opacity="0.10"/>
+    </filter>
+  </defs>
+
+  <rect width="1080" height="1350" fill="url(#bg)"/>
+  <text x="96" y="108" fill="#0F172A" font-size="40" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">즐겨찾기 화면</text>
+  <text x="96" y="148" fill="#475569" font-size="22" font-weight="500" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">집, 회사, 커스텀 장소를 저장하고 바로 길찾기 또는 주소 수정으로 이어지는 저장 허브</text>
+
+  <rect x="230" y="210" width="620" height="1000" rx="56" fill="#111827" filter="url(#shadow)"/>
+  <rect x="255" y="238" width="570" height="944" rx="40" fill="#F8FAFC"/>
+  <rect x="448" y="226" width="184" height="18" rx="9" fill="#1F2937"/>
+
+  <rect x="279" y="278" width="522" height="92" fill="white"/>
+  <text x="304" y="334" fill="#0F172A" font-size="32" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">즐겨찾기</text>
+
+  <text x="302" y="412" fill="#94A3B8" font-size="15" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">저장된 장소</text>
+
+  <rect x="302" y="432" width="476" height="348" rx="26" fill="white" stroke="#E2E8F0"/>
+  <rect x="324" y="456" width="432" height="74" rx="18" fill="white"/>
+  <rect x="324" y="540" width="432" height="74" rx="18" fill="white"/>
+  <rect x="324" y="624" width="432" height="74" rx="18" fill="white"/>
+  <rect x="324" y="708" width="432" height="48" rx="18" fill="white"/>
+  <circle cx="352" cy="493" r="22" fill="#DBEAFE"/>
+  <circle cx="352" cy="577" r="22" fill="#DBEAFE"/>
+  <circle cx="352" cy="661" r="22" fill="#DBEAFE"/>
+  <text x="342" y="500" fill="#2563EB" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">🏠</text>
+  <text x="342" y="584" fill="#2563EB" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">🏢</text>
+  <text x="342" y="668" fill="#2563EB" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">⭐</text>
+  <text x="388" y="487" fill="#0F172A" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">집</text>
+  <text x="388" y="511" fill="#94A3B8" font-size="14" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">주소를 설정해주세요 → 또는 저장된 주소</text>
+  <text x="388" y="571" fill="#0F172A" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">회사</text>
+  <text x="388" y="595" fill="#94A3B8" font-size="14" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">실제 주소 검색 후 저장 가능</text>
+  <text x="388" y="655" fill="#0F172A" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">헬스장</text>
+  <text x="388" y="679" fill="#94A3B8" font-size="14" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">경기도 성남시 ...</text>
+  <rect x="684" y="475" width="56" height="28" rx="12" fill="#DBEAFE"/>
+  <text x="695" y="494" fill="#2563EB" font-size="12" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">수정</text>
+  <rect x="676" y="559" width="64" height="28" rx="12" fill="#DBEAFE"/>
+  <text x="686" y="578" fill="#2563EB" font-size="12" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">길찾기</text>
+  <rect x="684" y="643" width="56" height="28" rx="12" fill="#FEE2E2"/>
+  <text x="695" y="662" fill="#DC2626" font-size="12" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">삭제</text>
+
+  <rect x="302" y="798" width="476" height="64" rx="22" fill="white" stroke="#CBD5E1" stroke-dasharray="6 6"/>
+  <text x="468" y="838" fill="#2563EB" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">+ 장소 추가</text>
+
+  <rect x="302" y="882" width="476" height="102" rx="24" fill="white"/>
+  <text x="324" y="924" fill="#0F172A" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">집/회사도 바로 수정됩니다.</text>
+  <text x="324" y="952" fill="#64748B" font-size="14" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">연필 버튼으로 실제 주소 검색 후 저장 가능</text>
+  <text x="324" y="974" fill="#64748B" font-size="14" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">저장하면 홈과 검색 탭에 바로 반영</text>
+
+  <rect x="279" y="1144" width="522" height="38" fill="#F8FAFC"/>
+  <text x="334" y="1166" fill="#94A3B8" font-size="14" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">홈</text>
+  <text x="454" y="1166" fill="#94A3B8" font-size="14" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">검색</text>
+  <text x="562" y="1166" fill="#2563EB" font-size="14" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">즐겨찾기</text>
+  <text x="704" y="1166" fill="#94A3B8" font-size="14" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">더보기</text>
+
+  <rect x="84" y="464" width="138" height="102" rx="22" fill="white" filter="url(#shadow)"/>
+  <text x="106" y="500" fill="#0F172A" font-size="16" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">핵심 1</text>
+  <text x="106" y="526" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">집 / 회사도</text>
+  <text x="106" y="546" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">고정이 아니라</text>
+  <text x="106" y="566" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">실제 주소 수정</text>
+
+  <rect x="874" y="618" width="140" height="108" rx="22" fill="white" filter="url(#shadow)"/>
+  <text x="896" y="654" fill="#0F172A" font-size="16" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">핵심 2</text>
+  <text x="896" y="680" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">추가 장소도</text>
+  <text x="896" y="700" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">같은 로직으로</text>
+  <text x="896" y="720" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">길찾기 연결</text>
+
+  <path d="M222 516H255" stroke="#94A3B8" stroke-width="3" stroke-dasharray="8 8"/>
+  <path d="M874 672H825" stroke="#94A3B8" stroke-width="3" stroke-dasharray="8 8"/>
+</svg>

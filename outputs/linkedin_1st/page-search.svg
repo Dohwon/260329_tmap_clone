@@ -1,0 +1,85 @@
+<svg width="1080" height="1350" viewBox="0 0 1080 1350" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1080" y2="1350" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F2F7FF"/>
+      <stop offset="1" stop-color="#F8FAFC"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#0F172A" flood-opacity="0.10"/>
+    </filter>
+  </defs>
+
+  <rect width="1080" height="1350" fill="url(#bg)"/>
+  <text x="96" y="108" fill="#0F172A" font-size="40" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">검색 화면</text>
+  <text x="96" y="148" fill="#475569" font-size="22" font-weight="500" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">주소 검색, 주변 POI, 최근 검색, 인기 목적지를 같은 시트 구조로 재사용</text>
+
+  <rect x="230" y="210" width="620" height="1000" rx="56" fill="#111827" filter="url(#shadow)"/>
+  <rect x="255" y="238" width="570" height="944" rx="40" fill="white"/>
+  <rect x="448" y="226" width="184" height="18" rx="9" fill="#1F2937"/>
+
+  <rect x="279" y="278" width="522" height="96" rx="0" fill="white"/>
+  <rect x="300" y="306" width="34" height="34" rx="17" fill="#F1F5F9"/>
+  <text x="312" y="329" fill="#475569" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">←</text>
+  <rect x="350" y="300" width="430" height="48" rx="16" fill="#F1F5F9"/>
+  <text x="376" y="330" fill="#94A3B8" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">주소, 장소, 고속도로 시점/종점 검색</text>
+
+  <text x="302" y="410" fill="#334155" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">즐겨찾기</text>
+  <rect x="302" y="430" width="226" height="82" rx="22" fill="#F8FAFC"/>
+  <rect x="552" y="430" width="226" height="82" rx="22" fill="#F8FAFC"/>
+  <text x="324" y="470" fill="#0F172A" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">🏠 집</text>
+  <text x="324" y="494" fill="#94A3B8" font-size="14" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">주소 설정 필요 / 저장 주소</text>
+  <text x="574" y="470" fill="#0F172A" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">🏢 회사</text>
+  <text x="574" y="494" fill="#94A3B8" font-size="14" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">주소 설정 필요 / 저장 주소</text>
+
+  <text x="302" y="560" fill="#334155" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">빠른 검색</text>
+  <rect x="302" y="582" width="146" height="78" rx="20" fill="#DBEAFE" stroke="#93C5FD"/>
+  <rect x="460" y="582" width="146" height="78" rx="20" fill="#F8FAFC"/>
+  <rect x="618" y="582" width="146" height="78" rx="20" fill="#F8FAFC"/>
+  <rect x="302" y="672" width="146" height="78" rx="20" fill="#F8FAFC"/>
+  <rect x="460" y="672" width="146" height="78" rx="20" fill="#F8FAFC"/>
+  <rect x="618" y="672" width="146" height="78" rx="20" fill="#F8FAFC"/>
+  <text x="342" y="624" fill="#1D4ED8" font-size="22" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">⛽</text>
+  <text x="330" y="647" fill="#1D4ED8" font-size="14" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">주유소</text>
+  <text x="500" y="624" fill="#0F172A" font-size="22" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">🅿</text>
+  <text x="489" y="647" fill="#0F172A" font-size="14" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">주차장</text>
+  <text x="658" y="624" fill="#0F172A" font-size="22" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">☕</text>
+  <text x="651" y="647" fill="#0F172A" font-size="14" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">카페</text>
+  <text x="342" y="714" fill="#0F172A" font-size="22" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">🍽</text>
+  <text x="328" y="737" fill="#0F172A" font-size="14" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">음식점</text>
+  <text x="500" y="714" fill="#0F172A" font-size="22" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">🏥</text>
+  <text x="490" y="737" fill="#0F172A" font-size="14" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">병원</text>
+  <text x="658" y="714" fill="#0F172A" font-size="22" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">🏪</text>
+  <text x="646" y="737" fill="#0F172A" font-size="14" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">편의점</text>
+
+  <text x="302" y="798" fill="#334155" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">주유소 근처 전체</text>
+  <text x="678" y="798" fill="#94A3B8" font-size="14" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">현재 위치 기준</text>
+  <rect x="302" y="818" width="476" height="74" rx="18" fill="#FFFFFF" stroke="#E2E8F0"/>
+  <rect x="302" y="900" width="476" height="74" rx="18" fill="#FFFFFF" stroke="#E2E8F0"/>
+  <rect x="302" y="982" width="476" height="74" rx="18" fill="#FFFFFF" stroke="#E2E8F0"/>
+  <text x="324" y="850" fill="#0F172A" font-size="17" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">S-OIL 분당점</text>
+  <text x="324" y="874" fill="#94A3B8" font-size="14" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">경기도 성남시 분당구 ... · 1.2km</text>
+  <text x="324" y="932" fill="#0F172A" font-size="17" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">GS칼텍스 구성점</text>
+  <text x="324" y="956" fill="#94A3B8" font-size="14" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">경기도 용인시 기흥구 ... · 2.3km</text>
+  <text x="324" y="1014" fill="#0F172A" font-size="17" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">현대오일뱅크 수지점</text>
+  <text x="324" y="1038" fill="#94A3B8" font-size="14" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">경기도 용인시 수지구 ... · 3.1km</text>
+
+  <rect x="279" y="1144" width="522" height="38" fill="white"/>
+  <text x="334" y="1166" fill="#94A3B8" font-size="14" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">홈</text>
+  <text x="454" y="1166" fill="#2563EB" font-size="14" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">검색</text>
+  <text x="562" y="1166" fill="#94A3B8" font-size="14" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">즐겨찾기</text>
+  <text x="704" y="1166" fill="#94A3B8" font-size="14" font-weight="700" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">더보기</text>
+
+  <rect x="90" y="332" width="126" height="94" rx="22" fill="#FFFFFF" filter="url(#shadow)"/>
+  <text x="112" y="368" fill="#0F172A" font-size="16" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">핵심 1</text>
+  <text x="112" y="394" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">검색 화면도</text>
+  <text x="112" y="414" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">하단 탭 유지</text>
+
+  <rect x="872" y="632" width="142" height="108" rx="22" fill="#FFFFFF" filter="url(#shadow)"/>
+  <text x="894" y="668" fill="#0F172A" font-size="16" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">핵심 2</text>
+  <text x="894" y="694" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">카테고리별</text>
+  <text x="894" y="714" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">내 주변 결과</text>
+  <text x="894" y="734" fill="#475569" font-size="13" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">리스트화</text>
+
+  <path d="M216 382H255" stroke="#94A3B8" stroke-width="3" stroke-dasharray="8 8"/>
+  <path d="M872 688H825" stroke="#94A3B8" stroke-width="3" stroke-dasharray="8 8"/>
+</svg>

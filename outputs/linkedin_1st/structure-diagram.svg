@@ -1,0 +1,78 @@
+<svg width="1600" height="900" viewBox="0 0 1600 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="900" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#EAF4FF"/>
+      <stop offset="1" stop-color="#F7F9FC"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#0F172A" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" rx="36" fill="url(#bg)"/>
+  <circle cx="1430" cy="120" r="180" fill="#CFE7FF" opacity="0.45"/>
+  <circle cx="140" cy="760" r="220" fill="#DDF3EC" opacity="0.7"/>
+
+  <text x="92" y="96" fill="#0F172A" font-size="42" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">TMAP Clone Web 구조도</text>
+  <text x="92" y="136" fill="#475569" font-size="20" font-weight="500" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">하단 탭 4개를 중심으로 지도, 경로, 검색, 즐겨찾기, 외부 데이터가 연결되는 MVP 구조</text>
+
+  <rect x="92" y="188" width="1416" height="110" rx="28" fill="#FFFFFF" filter="url(#shadow)"/>
+  <text x="132" y="236" fill="#2563EB" font-size="20" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">App Shell</text>
+  <text x="132" y="272" fill="#0F172A" font-size="30" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">App.jsx + BottomTabBar</text>
+  <text x="480" y="272" fill="#64748B" font-size="18" font-weight="500" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">activeTab 기준으로 홈 / 검색 / 즐겨찾기 / 더보기 전환</text>
+
+  <rect x="92" y="344" width="320" height="220" rx="28" fill="#FFFFFF" filter="url(#shadow)"/>
+  <text x="128" y="388" fill="#2563EB" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">지도 중심 화면</text>
+  <text x="128" y="430" fill="#0F172A" font-size="28" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">HomeScreen</text>
+  <text x="128" y="470" fill="#334155" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">MapView</text>
+  <text x="128" y="500" fill="#334155" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">RoutePreviewPanel</text>
+  <text x="128" y="530" fill="#334155" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">HomeBottomPanel</text>
+  <text x="128" y="560" fill="#334155" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">HighwayExplorer</text>
+
+  <rect x="452" y="344" width="320" height="220" rx="28" fill="#FFFFFF" filter="url(#shadow)"/>
+  <text x="488" y="388" fill="#2563EB" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">검색 흐름</text>
+  <text x="488" y="430" fill="#0F172A" font-size="28" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">SearchScreen</text>
+  <text x="488" y="470" fill="#334155" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">SearchSheet 재사용</text>
+  <text x="488" y="500" fill="#334155" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">빠른 카테고리</text>
+  <text x="488" y="530" fill="#334155" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">주변 POI / 최근 검색</text>
+  <text x="488" y="560" fill="#334155" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">인기 목적지</text>
+
+  <rect x="812" y="344" width="320" height="220" rx="28" fill="#FFFFFF" filter="url(#shadow)"/>
+  <text x="848" y="388" fill="#2563EB" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">저장 데이터</text>
+  <text x="848" y="430" fill="#0F172A" font-size="28" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">FavoritesScreen</text>
+  <text x="848" y="470" fill="#334155" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">집 / 회사 수정</text>
+  <text x="848" y="500" fill="#334155" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">즐겨찾기 추가 / 삭제</text>
+  <text x="848" y="530" fill="#334155" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">주소 검색 연동</text>
+  <text x="848" y="560" fill="#334155" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">저장 후 길찾기 진입</text>
+
+  <rect x="1172" y="344" width="336" height="220" rx="28" fill="#FFFFFF" filter="url(#shadow)"/>
+  <text x="1208" y="388" fill="#2563EB" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">보조 기능</text>
+  <text x="1208" y="430" fill="#0F172A" font-size="28" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">MoreScreen</text>
+  <text x="1208" y="470" fill="#334155" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">드라이브 / 교통 / 안전 / 설정</text>
+  <text x="1208" y="500" fill="#334155" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">근처 찾기 빠른 진입</text>
+  <text x="1208" y="530" fill="#334155" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">외부 링크 연결</text>
+  <text x="1208" y="560" fill="#334155" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">Phase 2 예고 영역</text>
+
+  <rect x="92" y="624" width="880" height="186" rx="28" fill="#FFFFFF" filter="url(#shadow)"/>
+  <text x="128" y="668" fill="#2563EB" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">공용 상태와 로직</text>
+  <text x="128" y="710" fill="#0F172A" font-size="30" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">Zustand Store: appStore.js</text>
+  <text x="128" y="748" fill="#334155" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">activeTab / destination / routes / selectedRoute / userLocation / favorites / recentSearches / nearbyPlaces / roadSelection / visibleLayers</text>
+  <text x="128" y="784" fill="#64748B" font-size="18" font-weight="500" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">화면 간 데이터를 끊지 않고 이어주며, 홈 탭과 검색 탭이 같은 상태를 공유</text>
+
+  <rect x="1012" y="624" width="496" height="186" rx="28" fill="#FFFFFF" filter="url(#shadow)"/>
+  <text x="1048" y="668" fill="#2563EB" font-size="18" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">외부 연동</text>
+  <text x="1048" y="710" fill="#0F172A" font-size="30" font-weight="800" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">TMAP API + 도로 데이터 + GPS</text>
+  <text x="1048" y="748" fill="#334155" font-size="18" font-weight="600" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">tmapService.js / highwayData.js / useGeolocation.js / server.js</text>
+  <text x="1048" y="784" fill="#64748B" font-size="18" font-weight="500" font-family="Pretendard, Apple SD Gothic Neo, sans-serif">실시간 경로, POI 검색, 고속도로 정보, 현재 위치 추적 연결</text>
+
+  <path d="M800 298V330" stroke="#94A3B8" stroke-width="4" stroke-linecap="round"/>
+  <path d="M252 564V604" stroke="#94A3B8" stroke-width="4" stroke-linecap="round"/>
+  <path d="M612 564V604" stroke="#94A3B8" stroke-width="4" stroke-linecap="round"/>
+  <path d="M972 564V604" stroke="#94A3B8" stroke-width="4" stroke-linecap="round"/>
+  <path d="M1340 564V604" stroke="#94A3B8" stroke-width="4" stroke-linecap="round"/>
+  <path d="M252 604H800" stroke="#94A3B8" stroke-width="4" stroke-linecap="round"/>
+  <path d="M612 604H800" stroke="#94A3B8" stroke-width="4" stroke-linecap="round"/>
+  <path d="M972 604H800" stroke="#94A3B8" stroke-width="4" stroke-linecap="round"/>
+  <path d="M1340 604V654" stroke="#94A3B8" stroke-width="4" stroke-linecap="round"/>
+  <path d="M1340 654H1260" stroke="#94A3B8" stroke-width="4" stroke-linecap="round"/>
+</svg>
