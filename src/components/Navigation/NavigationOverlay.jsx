@@ -236,21 +236,21 @@ export default function NavigationOverlay() {
 
       {showMerge && <MergeOptionsSheet onClose={() => setShowMerge(false)} />}
 
-      {/* 주유소/휴게소 빠른 추가 */}
-      <div className="absolute bottom-32 right-4 z-30 flex flex-col gap-2">
+      {/* 주유소/휴게소 빠른 추가 — 안내판 아래, 지도 우상단 */}
+      <div className="absolute top-36 right-3 z-20 flex flex-col gap-1.5">
         <button
           onClick={() => { setShowNearbyPanel(true); searchNearby('주유소') }}
-          className="w-12 h-12 rounded-full bg-orange-500 text-white shadow-lg flex items-center justify-center text-lg"
+          className="w-11 h-11 rounded-full bg-orange-500 text-white shadow-lg flex items-center justify-center text-base active:scale-95 transition-all"
           title="근처 주유소"
         >
           ⛽
         </button>
         <button
           onClick={() => { setShowNearbyPanel(true); searchNearby('휴게소') }}
-          className="w-12 h-12 rounded-full bg-green-600 text-white shadow-lg flex items-center justify-center text-lg"
+          className="w-11 h-11 rounded-full bg-green-600 text-white shadow-lg flex items-center justify-center text-base active:scale-95 transition-all"
           title="근처 휴게소"
         >
-          🅿️
+          🏪
         </button>
       </div>
 

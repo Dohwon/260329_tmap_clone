@@ -175,13 +175,15 @@ export default function MapView({ darkMode = false }) {
     [selectedRoad]
   )
 
+  // 야간: Stadia Alidade Smooth Dark (CartoDB dark보다 밝음, 건물명 선명, 무료 월 200K)
+  // 주간: CartoDB light base
   const tileUrl = darkMode
-    ? 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png'
+    ? 'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png'
     : 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png'
 
-  // 야간모드: 레이블을 별도 레이어로 올려서 경로 폴리라인 위에 표시
+  // Stadia는 라벨 내장 → 별도 레이어 불필요 (주간에만 CartoDB label 오버레이)
   const labelUrl = darkMode
-    ? 'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png'
+    ? null
     : null
 
   return (

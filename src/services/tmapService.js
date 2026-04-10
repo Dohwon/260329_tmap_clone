@@ -386,20 +386,20 @@ export async function snapToNearestRoad(lat, lng) {
 }
 
 async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
+  // 원래 동작하던 포맷 유지 (08cfcc7 기준)
   const body = {
     startX: String(startLng),
     startY: String(startLat),
-    startName: '출발',
     endX: String(endLng),
     endY: String(endLat),
-    endName: '도착',
+    endRpFlag: 'G',
+    carType: 0,
+    detailPosFlag: '2',
     reqCoordType: 'WGS84GEO',
     resCoordType: 'WGS84GEO',
     searchOption: option.searchOption,
-    carType: 0,
-    trafficInfo: 'Y',
-    detailPosFlag: '2',
     sort: 'index',
+    trafficInfo: 'Y',
   }
 
   const res = await fetch(`${BASE}/routes?version=1`, {

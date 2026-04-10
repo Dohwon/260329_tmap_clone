@@ -101,13 +101,26 @@ app.get('/api/meta/tmap-diag', async (req, res) => {
     report.tests.poi = { status: r.status, ok: r.status === 200 && !!b?.searchPoiInfo, errorCode: b?.error?.code ?? null }
   } catch (e) { report.tests.poi = { ok: false, error: e.message } }
 
-  // 2. 경로 API (/routes) — fetchSingleRoute와 동일한 포맷
-  try {
-    const body = JSON.stringify({ startX:'126.978', startY:'37.566', startName:'출발', endX:'127.028', endY:'37.498', endName:'도착', reqCoordType:'WGS84GEO', resCoordType:'WGS84GEO', searchOption:'00', carType:'0', trafficInfo:'Y', detailPosFlag:'2', sort:'index' })
-    const r = await tmapFetch('/tmap/routes?version=1', 'POST', hdrs, body)
-    let b = {}; try { b = JSON.parse(r.body.toString()) } catch {}
-    report.tests.routes = { status: r.status, ok: r.status === 200 && !!b?.features?.length, errorCode: b?.error?.code ?? b?.error?.errorCode ?? null, errorMsg: b?.error?.message ?? null }
-  } catch (e) { report.tests.routes = { ok: false, error: e.message } }
+  // 2. 경로 API — 4가지 포맷 순차 시도 (어떤 포맷이 동작하는지 확인)
+  const routeFormats = [
+    // 원래 동작하던 포맷 (08cfcc7) — 최우선
+    { label: 'original', body: { startX:'126.9784', startY:'37.5665', endX:'127.0276', endY:'37.4979', endRpFlag:'G', carType:0, detailPosFlag:'2', reqCoordType:'WGS84GEO', resCoordType:'WGS84GEO', searchOption:'00', sort:'index', trafficInfo:'Y' } },
+    { label: 'minimal', body: { startX:'126.9784', startY:'37.5665', endX:'127.0276', endY:'37.4979', reqCoordType:'WGS84GEO', resCoordType:'WGS84GEO', searchOption:'00' } },
+    { label: '+trafficInfo', body: { startX:'126.9784', startY:'37.5665', endX:'127.0276', endY:'37.4979', reqCoordType:'WGS84GEO', resCoordType:'WGS84GEO', searchOption:'00', trafficInfo:'Y' } },
+    { label: 'searchOption_0', body: { startX:'126.9784', startY:'37.5665', endX:'127.0276', endY:'37.4979', reqCoordType:'WGS84GEO', resCoordType:'WGS84GEO', searchOption:'0', trafficInfo:'Y' } },
+  ]
+  report.tests.routeFormats = {}
+  for (const fmt of routeFormats) {
+    try {
+      const r = await tmapFetch('/tmap/routes?version=1', 'POST', hdrs, JSON.stringify(fmt.body))
+      let b = {}; try { b = JSON.parse(r.body.toString()) } catch {}
+      const ok = r.status === 200 && !!b?.features?.length
+      report.tests.routeFormats[fmt.label] = { status: r.status, ok, errorCode: b?.error?.code ?? b?.error?.errorCode ?? null, errorMsg: b?.error?.message ?? null }
+      if (ok) break  // 성공하면 중단
+    } catch (e) { report.tests.routeFormats[fmt.label] = { ok: false, error: e.message } }
+  }
+  const workingFormat = Object.entries(report.tests.routeFormats).find(([, v]) => v.ok)?.[0] ?? null
+  report.tests.routes = { ok: !!workingFormat, workingFormat, allResults: report.tests.routeFormats }
 
   // 3. 다중경유지 API (routeSequential30) — viaPoint 1개 포함
   try {
