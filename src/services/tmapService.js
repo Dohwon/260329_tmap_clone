@@ -365,6 +365,26 @@ export async function fetchDirectRoute(startLat, startLng, endLat, endLng, optio
   return fetchSingleRoute(startLat, startLng, endLat, endLng, { searchOption: '00', ...option })
 }
 
+export async function snapToNearestRoad(lat, lng) {
+  const params = new URLSearchParams({
+    version: '1',
+    lat: String(lat),
+    lon: String(lng),
+    reqCoordType: 'WGS84GEO',
+    resCoordType: 'WGS84GEO',
+  })
+  try {
+    const res = await fetch(`${BASE}/road/nearestRoad?${params}`, { headers: { Accept: 'application/json' } })
+    if (!res.ok) return null
+    const json = await res.json()
+    const coord = json?.resultData?.coordinate
+    if (!coord) return null
+    return { lat: parseFloat(coord.lat), lng: parseFloat(coord.lon) }
+  } catch {
+    return null
+  }
+}
+
 async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
   const body = {
     startX: String(startLng),
@@ -376,7 +396,7 @@ async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
     reqCoordType: 'WGS84GEO',
     resCoordType: 'WGS84GEO',
     searchOption: option.searchOption,
-    carType: '0',
+    carType: 0,
     trafficInfo: 'Y',
     detailPosFlag: '2',
     sort: 'index',

@@ -4,6 +4,7 @@ import PresetSelector from './PresetSelector'
 import RouteFilterBar from './RouteFilterBar'
 import RouteCard, { formatEta } from './RouteCard'
 import MergeOptionsSheet from '../Navigation/MergeOptionsSheet'
+import WaypointSheet from './WaypointSheet'
 
 export default function RoutePreviewPanel() {
   const {
@@ -19,8 +20,10 @@ export default function RoutePreviewPanel() {
     isLoadingRoutes,
     tmapStatus,
     mergeOptions,
+    waypoints,
   } = useAppStore()
   const [showMergeSheet, setShowMergeSheet] = useState(false)
+  const [showWaypointSheet, setShowWaypointSheet] = useState(false)
 
   if (!showRoutePanel) return null
 
@@ -211,6 +214,27 @@ export default function RoutePreviewPanel() {
             </div>
           )}
 
+          {/* 경유지 추가 */}
+          <button
+            onClick={() => setShowWaypointSheet(true)}
+            className="w-full flex items-center justify-between bg-purple-50 rounded-xl px-4 py-3 border border-purple-200"
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-lg">📍</span>
+              <div className="text-left">
+                <div className="text-sm font-semibold text-purple-700">
+                  경유지 추가 {waypoints.length > 0 ? `(${waypoints.length}개)` : ''}
+                </div>
+                <div className="text-xs text-purple-400">
+                  {waypoints.length > 0 ? waypoints.map(w => w.name).join(' → ') : '목적지 전에 들를 장소'}
+                </div>
+              </div>
+            </div>
+            <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+
           {/* 다음 분기점 합류 옵션 버튼 */}
           <button
             onClick={() => setShowMergeSheet(true)}
@@ -275,6 +299,7 @@ export default function RoutePreviewPanel() {
       </div>
 
       {showMergeSheet && <MergeOptionsSheet onClose={() => setShowMergeSheet(false)} />}
+      {showWaypointSheet && <WaypointSheet onClose={() => setShowWaypointSheet(false)} />}
     </>
   )
 }

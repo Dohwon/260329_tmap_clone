@@ -699,6 +699,20 @@ const useAppStore = create((set, get) => ({
   routePanelMode: 'full',
   setShowRoutePanel: (showRoutePanel) => set({ showRoutePanel }),
   setRoutePanelMode: (routePanelMode) => set({ routePanelMode }),
+  addWaypoint: (point) => set((state) => ({
+    waypoints: [...state.waypoints, { ...point, id: point.id ?? `wp-${Date.now()}` }],
+  })),
+  removeWaypoint: (id) => set((state) => ({
+    waypoints: state.waypoints.filter(w => w.id !== id),
+  })),
+  clearWaypoints: () => set({ waypoints: [] }),
+  reorderWaypoints: (from, to) => set((state) => {
+    const arr = [...state.waypoints]
+    const [item] = arr.splice(from, 1)
+    arr.splice(to, 0, item)
+    return { waypoints: arr }
+  }),
+  waypoints: [],         // { id, name, lat, lng, address }
   routes: [],
   setRoutes: (routes) => set({ routes }),
   selectedRouteId: null,
@@ -1012,11 +1026,26 @@ const useAppStore = create((set, get) => ({
     get().setTmapStatus({ ...tmapStatus, lastError: null })
 
     let liveRoutes = []
+    const wps = get().waypoints
     try {
-      liveRoutes = await fetchRoutes(origin.lat, origin.lng, destination.lat, destination.lng, {
-        allowNarrowRoads: routePreferences.allowNarrowRoads,
-        roadType: routePreferences.roadType,
-      })
+      if (wps.length > 0) {
+        // Try routeSequential30 with waypoints first
+        try {
+          const wpRoute = await fetchRouteByWaypoints(
+            { lat: origin.lat, lng: origin.lng, name: '출발' },
+            destination,
+            wps,
+            { id: 'route-wp', searchOption: '00', title: `경유 ${wps.length}개소`, tag: '경유', tagColor: 'purple', isBaseline: true }
+          )
+          if (wpRoute) liveRoutes = [wpRoute]
+        } catch { /* fall through to normal routes */ }
+      }
+      if (liveRoutes.length === 0) {
+        liveRoutes = await fetchRoutes(origin.lat, origin.lng, destination.lat, destination.lng, {
+          allowNarrowRoads: routePreferences.allowNarrowRoads,
+          roadType: routePreferences.roadType,
+        })
+      }
       if (liveRoutes.length > 0) {
         get().setTmapStatus({ hasApiKey: true, mode: 'live', lastError: null })
       }

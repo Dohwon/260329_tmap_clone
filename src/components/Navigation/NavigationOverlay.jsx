@@ -8,12 +8,16 @@ export default function NavigationOverlay() {
   const {
     isNavigating, stopNavigation, destination, routes, selectedRouteId,
     mergeOptions, userLocation, saveRoute, cameraReports, reportCamera,
-    navAutoFollow, setNavAutoFollow,
+    navAutoFollow, setNavAutoFollow, addWaypoint, searchRoute, waypoints,
   } = useAppStore()
   const [showMerge, setShowMerge] = useState(false)
   const [showSaveDialog, setShowSaveDialog] = useState(false)
   const [showCameraReport, setShowCameraReport] = useState(null) // camera object
   const [scenicToast, setScenicToast] = useState(null) // { emoji, name, type }
+  const [showNearbyPanel, setShowNearbyPanel] = useState(false)
+  const [nearbyPOIs, setNearbyPOIs] = useState([])
+  const [nearbyLoading, setNearbyLoading] = useState(false)
+  const [nearbyCategory, setNearbyCategory] = useState('주유소')
   const segmentRef = useRef(null)
   const wakeLockRef = useRef(null)
   const nearCameraNotifiedRef = useRef(new Set()) // 이미 알린 카메라 id
@@ -93,6 +97,21 @@ export default function NavigationOverlay() {
     ? `${Number(nextRealJunction.distanceFromStart).toFixed(2)}km 앞`
     : '직진'
   const bannerTurnType = nextRealJunction?.turnType ?? 11
+
+  async function searchNearby(category) {
+    setNearbyCategory(category)
+    setNearbyLoading(true)
+    try {
+      const { searchNearbyPOIs } = await import('../../services/tmapService')
+      const lat = userLocation?.lat ?? 37.5665
+      const lng = userLocation?.lng ?? 126.978
+      const pois = await searchNearbyPOIs(category, lat, lng)
+      setNearbyPOIs(pois.slice(0, 6))
+    } catch {
+      setNearbyPOIs([])
+    }
+    setNearbyLoading(false)
+  }
 
   const handleWheelScroll = (e) => {
     if (segmentRef.current) segmentRef.current.scrollLeft += e.deltaY
@@ -217,6 +236,24 @@ export default function NavigationOverlay() {
 
       {showMerge && <MergeOptionsSheet onClose={() => setShowMerge(false)} />}
 
+      {/* 주유소/휴게소 빠른 추가 */}
+      <div className="absolute bottom-32 right-4 z-30 flex flex-col gap-2">
+        <button
+          onClick={() => { setShowNearbyPanel(true); searchNearby('주유소') }}
+          className="w-12 h-12 rounded-full bg-orange-500 text-white shadow-lg flex items-center justify-center text-lg"
+          title="근처 주유소"
+        >
+          ⛽
+        </button>
+        <button
+          onClick={() => { setShowNearbyPanel(true); searchNearby('휴게소') }}
+          className="w-12 h-12 rounded-full bg-green-600 text-white shadow-lg flex items-center justify-center text-lg"
+          title="근처 휴게소"
+        >
+          🅿️
+        </button>
+      </div>
+
       {/* 내 위치로 재중심 버튼 (auto-follow 꺼졌을 때) */}
       {!navAutoFollow && (
         <button
@@ -270,6 +307,58 @@ export default function NavigationOverlay() {
           }}
           onClose={() => setShowCameraReport(null)}
         />
+      )}
+
+      {showNearbyPanel && (
+        <>
+          <div className="absolute inset-0 bg-black/30 z-40" onClick={() => setShowNearbyPanel(false)} />
+          <div className="absolute bottom-0 left-0 right-0 z-50 bg-white rounded-t-3xl slide-up">
+            <div className="flex justify-center pt-3 pb-1">
+              <div className="w-10 h-1 bg-gray-300 rounded-full" />
+            </div>
+            <div className="px-5 py-3 border-b border-gray-100">
+              <div className="text-sm font-bold text-gray-900">📍 근처 {nearbyCategory} — 경유지로 추가</div>
+              <div className="flex gap-2 mt-2">
+                {['주유소', '휴게소', '주차장'].map(cat => (
+                  <button
+                    key={cat}
+                    onClick={() => searchNearby(cat)}
+                    className={`px-3 py-1 rounded-full text-xs font-bold border ${nearbyCategory === cat ? 'bg-tmap-blue text-white border-tmap-blue' : 'bg-white text-gray-500 border-gray-200'}`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="px-5 py-3 max-h-64 overflow-y-auto space-y-2">
+              {nearbyLoading && <div className="text-center text-sm text-gray-400 py-4">검색 중...</div>}
+              {!nearbyLoading && nearbyPOIs.length === 0 && <div className="text-center text-sm text-gray-400 py-4">근처에 없음</div>}
+              {nearbyPOIs.map(poi => (
+                <div key={poi.id} className="flex items-center gap-3 bg-gray-50 rounded-xl px-3 py-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-gray-800 truncate">{poi.name}</div>
+                    <div className="text-xs text-gray-400">{poi.distanceKm != null ? `${poi.distanceKm.toFixed(1)}km` : ''} {poi.address ?? ''}</div>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      addWaypoint({ id: `wp-nav-${poi.lat}-${poi.lng}`, name: poi.name, lat: poi.lat, lng: poi.lng, address: poi.address })
+                      if (destination) await searchRoute(destination)
+                      setShowNearbyPanel(false)
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-tmap-blue text-white text-xs font-bold flex-shrink-0"
+                  >
+                    경유
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="px-5 pb-6 pt-2 safe-bottom">
+              <button onClick={() => setShowNearbyPanel(false)} className="w-full py-3 bg-gray-100 rounded-2xl text-sm font-semibold text-gray-700">
+                닫기
+              </button>
+            </div>
+          </div>
+        </>
       )}
     </>
   )

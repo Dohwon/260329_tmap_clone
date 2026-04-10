@@ -2,6 +2,7 @@ import React, { useEffect, useMemo } from 'react'
 import { CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import useAppStore from '../../store/appStore'
+import { snapToNearestRoad } from '../../services/tmapService'
 
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -175,8 +176,13 @@ export default function MapView({ darkMode = false }) {
   )
 
   const tileUrl = darkMode
-    ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+    ? 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png'
     : 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png'
+
+  // 야간모드: 레이블을 별도 레이어로 올려서 경로 폴리라인 위에 표시
+  const labelUrl = darkMode
+    ? 'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png'
+    : null
 
   return (
     <MapContainer
@@ -190,6 +196,13 @@ export default function MapView({ darkMode = false }) {
         url={tileUrl}
         attribution='&copy; OpenStreetMap contributors &copy; CARTO'
       />
+      {labelUrl && (
+        <TileLayer
+          url={labelUrl}
+          attribution=''
+          pane="overlayPane"
+        />
+      )}
       <MapController center={mapCenter} zoom={mapZoom} />
 
       {locationHistory.length > 1 && (
@@ -222,7 +235,11 @@ export default function MapView({ darkMode = false }) {
                 <div className="text-xs text-gray-500 mt-0.5">{selectedRoad.startAddress}</div>
               )}
               <button
-                onClick={() => searchRoute({ name: `${selectedRoad.name} 시점`, lat: selectedRoad.startCoord[0], lng: selectedRoad.startCoord[1], address: selectedRoad.startAddress ?? '' })}
+                onClick={async () => {
+                  const [lat, lng] = selectedRoad.startCoord
+                  const snapped = await snapToNearestRoad(lat, lng)
+                  searchRoute({ name: `${selectedRoad.name} 시점`, lat: snapped?.lat ?? lat, lng: snapped?.lng ?? lng, address: selectedRoad.startAddress ?? '' })
+                }}
                 className="mt-2 w-full py-1.5 rounded-lg bg-tmap-blue text-white text-xs font-bold"
               >
                 🚗 여기로 안내
@@ -300,7 +317,11 @@ export default function MapView({ darkMode = false }) {
                   {stop.type === 'service' ? '휴게소' : '졸음쉼터'}
                 </div>
                 <button
-                  onClick={() => searchRoute({ name: stop.name, lat: stop.coord[0], lng: stop.coord[1], address: `${selectedRoad.name} ${stop.km}km 지점` })}
+                  onClick={async () => {
+                    const [lat, lng] = stop.coord
+                    const snapped = await snapToNearestRoad(lat, lng)
+                    searchRoute({ name: stop.name, lat: snapped?.lat ?? lat, lng: snapped?.lng ?? lng, address: `${selectedRoad.name} ${stop.km}km 지점` })
+                  }}
                   className="mt-2 w-full py-1.5 rounded-lg bg-tmap-blue text-white text-xs font-bold"
                 >
                   🚗 여기로 안내
