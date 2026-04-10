@@ -221,7 +221,7 @@ export default function RoutePreviewPanel() {
               <div className="text-left">
                 <div className="text-sm font-semibold text-tmap-blue">다음 분기점 합류 옵션 보기</div>
                 <div className="text-xs text-blue-400">
-                  {mergePreview ? `${mergePreview.name}까지 ${mergePreview.distanceFromCurrent}km` : '합류 옵션 계산 중'}
+                  {mergePreview ? `${mergePreview.name}까지 ${Number(mergePreview.distanceFromCurrent).toFixed(1)}km` : '합류 옵션 계산 중'}
                 </div>
               </div>
             </div>

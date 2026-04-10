@@ -83,6 +83,47 @@ app.get('/api/meta/tmap-status', async (req, res) => {
   }
 })
 
+// TMAP 상세 진단: POI + 경로 API 둘 다 테스트
+app.get('/api/meta/tmap-diag', async (req, res) => {
+  const report = { key: TMAP_KEY ? `${TMAP_KEY.slice(0, 6)}...` : '미설정', tests: {} }
+  if (!TMAP_KEY) {
+    return res.json({ ...report, summary: 'API 키 없음 — Railway 환경변수 TMAP_API_KEY 추가 필요' })
+  }
+
+  const host = req.headers['host'] || 'localhost'
+  const hdrs = { origin: `https://${host}`, referer: `https://${host}/` }
+
+  // 1. POI 검색
+  try {
+    const r = await tmapFetch('/tmap/pois?version=1&searchKeyword=서울역&count=1&reqCoordType=WGS84GEO&resCoordType=WGS84GEO', 'GET', hdrs, null)
+    let b = {}; try { b = JSON.parse(r.body.toString()) } catch {}
+    report.tests.poi = { status: r.status, ok: r.status === 200 && !!b?.searchPoiInfo, errorCode: b?.error?.code ?? null }
+  } catch (e) { report.tests.poi = { ok: false, error: e.message } }
+
+  // 2. 경로 API (/routes)
+  try {
+    const body = JSON.stringify({ startX:'126.978', startY:'37.566', endX:'127.028', endY:'37.498', reqCoordType:'WGS84GEO', resCoordType:'WGS84GEO', searchOption:'00', sort:'index', carType:0, trafficInfo:'Y', detailPosFlag:'2', endRpFlag:'G' })
+    const r = await tmapFetch('/tmap/routes?version=1', 'POST', hdrs, body)
+    let b = {}; try { b = JSON.parse(r.body.toString()) } catch {}
+    report.tests.routes = { status: r.status, ok: r.status === 200 && !!b?.features?.length, errorCode: b?.error?.code ?? b?.error?.errorCode ?? null, errorMsg: b?.error?.message ?? null }
+  } catch (e) { report.tests.routes = { ok: false, error: e.message } }
+
+  // 3. 다중경유지 API (routeSequential30)
+  try {
+    const body = JSON.stringify({ startX:'126.978', startY:'37.566', startName:'출발', endX:'127.028', endY:'37.498', endName:'도착', reqCoordType:'WGS84GEO', resCoordType:'WGS84GEO', carType:'0', startTime:'202601010000', viaPoints:[] })
+    const r = await tmapFetch('/tmap/routes/routeSequential30?version=1', 'POST', hdrs, body)
+    let b = {}; try { b = JSON.parse(r.body.toString()) } catch {}
+    report.tests.sequential = { status: r.status, ok: r.status === 200 && !!b?.features?.length, errorCode: b?.error?.code ?? b?.error?.errorCode ?? null, errorMsg: b?.error?.message ?? null }
+  } catch (e) { report.tests.sequential = { ok: false, error: e.message } }
+
+  const allOk = report.tests.poi?.ok && report.tests.routes?.ok
+  report.summary = allOk
+    ? `정상 (POI ✅, 경로 ✅, 다중경유지 ${report.tests.sequential?.ok ? '✅' : '❌ — 이 티어에서 미지원 가능'})`
+    : `오류 — POI:${report.tests.poi?.ok?'✅':'❌'} 경로:${report.tests.routes?.ok?'✅':'❌'} / errorCode: ${report.tests.routes?.errorCode ?? report.tests.poi?.errorCode}`
+
+  res.json(report)
+})
+
 // TMAP API 프록시 (GET + POST 모두 처리)
 // app.use 방식 → Express 4/5 모두 호환, req.url = 마운트 이후 경로+쿼리
 app.use('/api/tmap', express.json({ limit: '2mb' }), async (req, res) => {
