@@ -14,6 +14,7 @@ L.Icon.Default.mergeOptions({
 
 const COLORS = {
   selectedRoute: '#0064FF',
+  navigationGuide: '#FF4FD8',
   secondaryRoute: '#AEB7C6',
   fixedCamera: '#FF3B30',
   sectionCamera: '#FF3B30',
@@ -61,12 +62,12 @@ const junctionIcon = makeBadgeIcon({ text: '분', background: '#FF6B00', size: 2
 const schoolZoneIcon = makeBadgeIcon({ text: '30', background: '#F59E0B', size: 30 })
 const speedBumpIcon = makeBadgeIcon({ text: '턱', background: '#0EA5E9', size: 30 })
 
-function getLookAheadCenter(map, location, zoom = 17, enabled = true) {
+function getLookAheadCenter(map, location, zoom = 18, enabled = true) {
   if (!location) return null
   const latLng = L.latLng(location.lat, location.lng)
   if (!enabled) return latLng
   const projected = map.project(latLng, zoom)
-  return map.unproject(projected.add([0, -160]), zoom)
+  return map.unproject(projected.add([0, -220]), zoom)
 }
 
 function MapController({ center, zoom, darkMode, minimalMap }) {
@@ -86,9 +87,9 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
     if (!isNavigating) return
     const freshLoc = useAppStore.getState().userLocation
     const target = freshLoc
-      ? getLookAheadCenter(map, freshLoc, 17, settings.navigationLookAhead)
+      ? getLookAheadCenter(map, freshLoc, 18, settings.navigationLookAhead)
       : (Array.isArray(center) ? center : null)
-    if (target) map.setView(target, 17, { animate: true, duration: 0.5 })
+    if (target) map.setView(target, 18, { animate: true, duration: 0.5 })
     // 시작 시 자동추적 활성화
     useAppStore.getState().setNavAutoFollow(true)
   }, [isNavigating, settings.navigationLookAhead]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -96,10 +97,10 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
   // 연속 auto-follow: 내비 시작 직후에는 확대 수준을 유지하고, 이후에는 부드럽게 중심만 이동
   useEffect(() => {
     if (!isNavigating || !navAutoFollow || !userLocation) return
-    const target = getLookAheadCenter(map, userLocation, 17, settings.navigationLookAhead) ?? L.latLng(userLocation.lat, userLocation.lng)
+    const target = getLookAheadCenter(map, userLocation, 18, settings.navigationLookAhead) ?? L.latLng(userLocation.lat, userLocation.lng)
     const centerDistance = map.distance(map.getCenter(), target)
-    if (map.getZoom() < 17 || centerDistance > 80) {
-      map.setView(target, Math.max(17, map.getZoom()), { animate: true, duration: 0.35 })
+    if (map.getZoom() < 18 || centerDistance > 60) {
+      map.setView(target, Math.max(18, map.getZoom()), { animate: true, duration: 0.35 })
       return
     }
     map.panTo(target, { animate: true, duration: 0.3 })
@@ -436,7 +437,7 @@ export default function MapView({ darkMode = false }) {
         <>
           <Polyline
             positions={getRoutePath(selectedRoute, 0.1)}
-            pathOptions={{ color: COLORS.selectedRoute, weight: showMinimalNavigationMap ? 8 : 7, opacity: 0.98 }}
+            pathOptions={{ color: isNavigating ? COLORS.navigationGuide : COLORS.selectedRoute, weight: showMinimalNavigationMap ? 9 : 7, opacity: 0.98 }}
           />
 
           {visibleLayers.congestion && !showMinimalNavigationMap && (selectedRoute.segmentStats ?? []).map((segment) => (

@@ -77,12 +77,6 @@ function getRoadPath(road) {
   return [road.startCoord, ...road.majorJunctions.map((junction) => junction.coord), road.endCoord]
 }
 
-/**
- * 경로 근처의 해안/산악 경관 구간을 감지하여 반환
- * - 폴리라인의 샘플 포인트 중 하나가 segment.nearKm 이내에 있으면 "근처"
- * - detourMinutes >= minDetourMinutes 인 것만 반환
- * - 같은 타입(coastal/mountain) 최대 MAX_PER_TYPE개까지만
- */
 function detectScenicRoads(origin, destination, polyline = [], minDetourMinutes = 20) {
   // 경로 전체에서 최대 12개 포인트 샘플
   const step = Math.max(1, Math.floor(polyline.length / 12))
@@ -92,20 +86,56 @@ function detectScenicRoads(origin, destination, polyline = [], minDetourMinutes 
     ...polyline.filter((_, i) => i % step === 0),
   ]
 
-  const MAX_PER_TYPE = 2
-  const countByType = { coastal: 0, mountain: 0 }
+  const ranked = SCENIC_SEGMENTS_SORTED
+    .filter((seg) => seg.detourMinutes >= minDetourMinutes)
+    .map((seg) => {
+      const [mLat, mLng] = seg.segmentMid
+      const routeDistanceKm = Math.min(...checkPoints.map(([lat, lng]) => haversineKm(lat, lng, mLat, mLng)))
+      const directDistanceKm = Math.min(
+        haversineKm(origin.lat, origin.lng, mLat, mLng),
+        haversineKm(destination.lat, destination.lng, mLat, mLng)
+      )
+      return {
+        ...seg,
+        routeDistanceKm: Number(routeDistanceKm.toFixed(1)),
+        directDistanceKm: Number(directDistanceKm.toFixed(1)),
+        isRecommended: routeDistanceKm <= 10,
+        isReachableSoon: routeDistanceKm <= 30,
+      }
+    })
+    .sort((a, b) => {
+      if (a.routeDistanceKm !== b.routeDistanceKm) return a.routeDistanceKm - b.routeDistanceKm
+      return b.stars - a.stars
+    })
 
-  return SCENIC_SEGMENTS_SORTED.filter((seg) => {
-    if (seg.detourMinutes < minDetourMinutes) return false
-    if (countByType[seg.scenicType] >= MAX_PER_TYPE) return false
+  const types = ['coastal', 'mountain']
+  const suggestions = []
 
-    const [mLat, mLng] = seg.segmentMid
-    const isNear = checkPoints.some(([lat, lng]) =>
-      haversineKm(lat, lng, mLat, mLng) <= seg.nearKm
-    )
-    if (isNear) countByType[seg.scenicType]++
-    return isNear
-  })
+  for (const type of types) {
+    const sameType = ranked.filter((item) => item.scenicType === type)
+    const recommended = sameType.filter((item) => item.isRecommended).slice(0, 1)
+    if (recommended.length > 0) {
+      suggestions.push(...recommended.map((item) => ({ ...item, recommendationMode: 'nearby' })))
+      continue
+    }
+
+    const reachable = sameType.filter((item) => item.isReachableSoon).slice(0, 1)
+    if (reachable.length > 0) {
+      suggestions.push(...reachable.map((item) => ({ ...item, recommendationMode: 'reachable' })))
+      continue
+    }
+
+    const nearest = sameType[0]
+    if (nearest) {
+      suggestions.push({
+        ...nearest,
+        recommendationMode: 'distant',
+        noScenicWithin30Km: true,
+      })
+    }
+  }
+
+  return suggestions
 }
 
 function getRoadById(roadId) {
@@ -555,28 +585,39 @@ function decorateRoute(route, index, context) {
   let mergeCount = route.mergeCount
   let highwayRatio = route.highwayRatio
   let nationalRoadRatio = route.nationalRoadRatio
+  let localRoadRatio = route.localRoadRatio ?? Math.max(0, 100 - route.highwayRatio - route.nationalRoadRatio)
   let dominantSpeedLimit = route.dominantSpeedLimit
   let maxSpeedLimit = route.maxSpeedLimit ?? route.dominantSpeedLimit
   let averageSpeed = route.averageSpeed
+  const routeDistance = route.distance ?? 0
+  const routeComplexity = route.mergeCount + calcUrbanDensityPenalty(route) * 0.6
+  const longTripFactor = routeDistance > 120 ? 1 : routeDistance > 60 ? 0.65 : routeDistance > 30 ? 0.35 : 0.1
 
-  // 초보: 시간 페널티 없음 — 단순히 합류 횟수를 줄여서 표시
+  // 초보/중수/고수는 장거리일수록 ETA 차이를 더 벌린다.
   if (driverPreset === 'beginner') {
+    eta += Math.round((routeComplexity * longTripFactor) / 2.2)
     mergeCount = Math.max(1, mergeCount - 2)
+    averageSpeed = Math.max(40, Math.round((averageSpeed ?? 70) - (6 * longTripFactor)))
+  } else if (driverPreset === 'intermediate') {
+    eta += Math.round((routeComplexity * longTripFactor) / 6)
   } else if (driverPreset === 'expert') {
-    eta = Math.max(eta - 2, 1)
+    eta = Math.max(eta - Math.max(2, Math.round(3 * longTripFactor)), 1)
     mergeCount += 1
+    averageSpeed = Math.min(maxSpeedLimit ?? 110, Math.round((averageSpeed ?? 75) + 3 * longTripFactor))
   }
 
   // 고속도로만 = 빠른 경로와 동일한 수준 (시간 유지, 고속비율만 표시 조정)
   if (routePreferences.roadType === 'highway_only') {
     highwayRatio = Math.max(85, highwayRatio)
     nationalRoadRatio = 100 - highwayRatio
+    localRoadRatio = Math.max(0, 100 - highwayRatio - nationalRoadRatio)
     dominantSpeedLimit = Math.max(100, dominantSpeedLimit)
     maxSpeedLimit = Math.max(110, maxSpeedLimit)
     averageSpeed = Math.max(averageSpeed ?? 0, 82)
   } else if (routePreferences.roadType === 'national_road') {
     nationalRoadRatio = Math.max(58, nationalRoadRatio)
     highwayRatio = 100 - nationalRoadRatio
+    localRoadRatio = Math.max(0, 100 - highwayRatio - nationalRoadRatio)
     dominantSpeedLimit = Math.min(80, dominantSpeedLimit)
     maxSpeedLimit = Math.min(90, maxSpeedLimit)
     averageSpeed = Math.min(averageSpeed ?? 68, 68)
@@ -589,6 +630,7 @@ function decorateRoute(route, index, context) {
     mergeCount,
     highwayRatio,
     nationalRoadRatio,
+    localRoadRatio,
     dominantSpeedLimit,
     maxSpeedLimit,
     averageSpeed,
@@ -615,9 +657,10 @@ function decorateRoute(route, index, context) {
     driverPreset === 'beginner' ? '초보 기준' : driverPreset === 'expert' ? '고수 기준' : '중수 기준',
     routePreferences.roadType === 'highway_only' ? '고속 위주' : routePreferences.roadType === 'national_road' ? '국도 선호' : '고속+국도',
     `합류 ${mergeCount}회`,
+    nextRoute.localRoadRatio >= 18 ? `일반도로 ${nextRoute.localRoadRatio}%` : null,
     `최고 ${nextRoute.maxSpeedLimit} / 평균 ${nextRoute.averageSpeed}km/h`,
     ...(urbanNote ? [urbanNote] : []),
-  ].join(' · ')
+  ].filter(Boolean).join(' · ')
   return nextRoute
 }
 
@@ -821,7 +864,7 @@ const useAppStore = create((set, get) => ({
       return false
     }
 
-    set({ isNavigating: true, navAutoFollow: true, showRoutePanel: false, routePanelMode: 'full', mapCenter: center, mapZoom: 17 })
+    set({ isNavigating: true, navAutoFollow: true, showRoutePanel: false, routePanelMode: 'full', mapCenter: center, mapZoom: 18 })
     return true
   },
   stopNavigation: () => set({

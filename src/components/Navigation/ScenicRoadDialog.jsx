@@ -16,6 +16,11 @@ export default function ScenicRoadDialog() {
   const bgClass = suggestion.scenicType === 'coastal'
     ? 'from-blue-500 to-cyan-400'
     : 'from-green-600 to-emerald-400'
+  const recommendationLabel = suggestion.recommendationMode === 'nearby'
+    ? '경로 10km 이내 추천'
+    : suggestion.recommendationMode === 'reachable'
+      ? '경로 30km 이내 우회 가능'
+      : '30km 이내 없음 · 가장 가까운 경관도로'
 
   return (
     <>
@@ -34,6 +39,7 @@ export default function ScenicRoadDialog() {
             {suggestion.emoji} {suggestion.name}
           </div>
           <div className="text-white/80 text-sm mt-1">{suggestion.roadLabel}</div>
+          <div className="text-white/90 text-xs font-semibold mt-2">{recommendationLabel}</div>
         </div>
 
         <div className="px-5 py-4 space-y-4">
@@ -69,7 +75,11 @@ export default function ScenicRoadDialog() {
 
           {/* 안내 문구 */}
           <div className="bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 text-xs text-amber-700">
-            경로에서 약 <strong>{suggestion.detourKm}km · {suggestion.detourMinutes}분</strong> 더 걸립니다.
+            {suggestion.noScenicWithin30Km
+              ? `현재 경로 30km 이내에는 ${typeLabel}가 없습니다. 가장 가까운 ${typeLabel}는 경로에서 약 `
+              : '경로에서 약 '}
+            <strong>{suggestion.routeDistanceKm ?? suggestion.detourKm}km</strong> 떨어져 있고,
+            우회 시 <strong>{suggestion.detourMinutes}분</strong> 더 걸립니다.
             {destination && ` 최종 목적지(${destination.name})까지 총 ${formatMin(totalEta)} 예상.`}
           </div>
 

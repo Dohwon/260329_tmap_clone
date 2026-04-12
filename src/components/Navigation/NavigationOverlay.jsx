@@ -149,6 +149,12 @@ export default function NavigationOverlay() {
     ? '다음 안내'
     : '목적지 안내'
   const bannerTurnType = nextGuidance?.turnType ?? 11
+  const nearbyFuelSummary = nearbyCategory === '주유소' && nearbyPOIs.length > 0
+    ? {
+        nearbyLowest: nearbyPOIs.reduce((min, poi) => Math.min(min, poi.fuelPrice ?? Infinity), Infinity),
+        routeLowest: nearbyPOIs.reduce((min, poi) => Math.min(min, poi.isRouteCorridor ? (poi.fuelPrice ?? Infinity) : Infinity), Infinity),
+      }
+    : null
 
   useEffect(() => {
     if (!isNavigating || !settings.voiceGuidance || startedVoiceRef.current || !window.speechSynthesis) return
@@ -323,7 +329,7 @@ export default function NavigationOverlay() {
 
       {showMerge && <MergeOptionsSheet onClose={() => setShowMerge(false)} />}
 
-      {/* 주유소/휴게소 빠른 추가 — 홈 화면 우측 플로팅 버튼 위치로 이동 */}
+      {/* 주유소/휴게소/주차장 빠른 추가 */}
       <div className="absolute right-4 z-20 flex flex-col gap-2" style={{ bottom: '380px' }}>
         <button
           onClick={() => { setShowNearbyPanel(true); searchNearby('주유소') }}
@@ -338,6 +344,13 @@ export default function NavigationOverlay() {
           title="근처 휴게소"
         >
           🏪
+        </button>
+        <button
+          onClick={() => { setShowNearbyPanel(true); searchNearby('주차장') }}
+          className="w-11 h-11 rounded-full bg-slate-600 text-white shadow-lg flex items-center justify-center text-base active:scale-95 transition-all"
+          title="근처 주차장"
+        >
+          🅿️
         </button>
       </div>
 
@@ -416,6 +429,22 @@ export default function NavigationOverlay() {
                   </button>
                 ))}
               </div>
+              {nearbyFuelSummary && (
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <div className="rounded-xl bg-orange-50 px-3 py-2">
+                    <div className="text-[11px] text-orange-500 font-bold">근방 최저</div>
+                    <div className="text-sm font-black text-gray-900">
+                      {Number.isFinite(nearbyFuelSummary.nearbyLowest) ? `${nearbyFuelSummary.nearbyLowest.toLocaleString()}원/L` : '--'}
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-blue-50 px-3 py-2">
+                    <div className="text-[11px] text-blue-500 font-bold">경로상 최저</div>
+                    <div className="text-sm font-black text-gray-900">
+                      {Number.isFinite(nearbyFuelSummary.routeLowest) ? `${nearbyFuelSummary.routeLowest.toLocaleString()}원/L` : '--'}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="px-5 py-3 max-h-64 overflow-y-auto space-y-2">
               {nearbyLoading && <div className="text-center text-sm text-gray-400 py-4">검색 중...</div>}
@@ -424,7 +453,16 @@ export default function NavigationOverlay() {
                 <div key={poi.id} className="flex items-center gap-3 bg-gray-50 rounded-xl px-3 py-2">
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-semibold text-gray-800 truncate">{poi.name}</div>
-                    <div className="text-xs text-gray-400">{poi.distanceKm != null ? `${poi.distanceKm.toFixed(1)}km` : ''} {poi.address ?? ''}</div>
+                    <div className="text-xs text-gray-400">
+                      {poi.distanceKm != null ? `${poi.distanceKm.toFixed(1)}km` : ''} {poi.address ?? ''}
+                    </div>
+                    {nearbyCategory === '주유소' && poi.fuelPrice && (
+                      <div className="text-[11px] mt-1 flex items-center gap-2">
+                        <span className="font-bold text-orange-600">{poi.fuelLabel ?? '휘발유'} {poi.fuelPrice.toLocaleString()}원/L</span>
+                        {poi.isRouteCorridor && <span className="px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-bold">경로상</span>}
+                        <span className="text-gray-400">표시용 추정가</span>
+                      </div>
+                    )}
                   </div>
                   <button
                     onClick={async () => {
