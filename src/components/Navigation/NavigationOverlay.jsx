@@ -6,8 +6,8 @@ import { SCENIC_SEGMENTS } from '../../data/scenicRoads'
 import {
   analyzeRouteProgress,
   formatGuidanceDistance,
+  getGuidanceInstruction,
   getRemainingEta,
-  getTurnInstruction,
   getUpcomingMergeOptions,
   getUpcomingJunction,
   haversineM,
@@ -125,11 +125,14 @@ export default function NavigationOverlay() {
 
   // 상단 배너: 일반 회전 안내 우선, 없으면 분기점, 없으면 목적지
   const nextGuidance = nextManeuver ?? nextRealJunction
+  const nextGuidanceText = nextGuidance ? getGuidanceInstruction(nextGuidance) : null
   const bannerTitle = nextGuidance
-    ? `${formatGuidanceDistance(nextGuidance.remainingDistanceKm)} 후 ${getTurnInstruction(nextGuidance.turnType)}`
+    ? `${formatGuidanceDistance(nextGuidance.remainingDistanceKm)} 후 ${nextGuidanceText}`
     : destination?.name ?? '목적지'
   const bannerSub = nextGuidance
-    ? (nextGuidance.afterRoadName
+    ? (nextGuidance.instructionText
+        ? nextGuidance.instructionText
+        : nextGuidance.afterRoadName
         ? `${nextGuidance.afterRoadName} 진입`
         : `${nextGuidance.afterRoadType === 'highway' ? '고속도로' : '국도'} 진입`)
     : `${routeProgress.remainingKm != null ? Number(routeProgress.remainingKm).toFixed(2) : '--'}km · ${remainingEta ? formatEta(remainingEta) : '--'} 소요`

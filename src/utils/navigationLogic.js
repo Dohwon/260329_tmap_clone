@@ -107,6 +107,27 @@ export function getTurnInstruction(turnType) {
   return '직진'
 }
 
+export function getGuidanceInstruction(guidance) {
+  const text = String(guidance?.instructionText ?? guidance?.description ?? '').trim()
+
+  if (text.includes('좌회전')) return '좌회전'
+  if (text.includes('우회전')) return '우회전'
+  if (text.includes('유턴')) return '유턴'
+  if (text.includes('좌측으로 합류')) return '좌측으로 합류'
+  if (text.includes('우측으로 합류')) return '우측으로 합류'
+  if (text.includes('좌측 분기')) return '좌측 분기'
+  if (text.includes('우측 분기')) return '우측 분기'
+  if (text.includes('왼쪽 방향')) return '좌측 방향'
+  if (text.includes('오른쪽 방향')) return '우측 방향'
+  if (text.includes('도시고속도로 입구')) return '도시고속도로 진입'
+  if (text.includes('도시고속도로 출구')) return '도시고속도로 진출'
+  if (text.includes('지하차도')) return '지하차도 진입'
+  if (text.includes('고가차도')) return '고가차도 진입'
+  if (text.includes('터널')) return '터널 진입'
+
+  return getTurnInstruction(guidance?.turnType)
+}
+
 export function getRemainingEta(route, remainingKm) {
   if (!route?.eta) return null
   const baseDistance = Math.max(route.distance ?? 0, 0.1)

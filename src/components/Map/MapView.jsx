@@ -186,8 +186,8 @@ export default function MapView({ darkMode = false }) {
     [selectedRoad]
   )
 
-  // 한국어 지명이 포함된 OSM Korea 타일 사용
-  const tileUrl = 'https://tiles.osm.kr/osm/{z}/{x}/{y}.png'
+  // OSM Korea HOT 타일은 현재 유효한 한국어 라벨 베이스맵을 제공한다.
+  const tileUrl = 'https://tiles.osm.kr/hot/{z}/{x}/{y}.png'
   const labelUrl = null
 
   return (

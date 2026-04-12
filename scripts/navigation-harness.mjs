@@ -3,6 +3,7 @@ import {
   analyzeRouteProgress,
   ensureLiveRouteSource,
   formatGuidanceDistance,
+  getGuidanceInstruction,
   getRemainingEta,
   getTurnInstruction,
   getUpcomingJunction,
@@ -61,6 +62,23 @@ run('navigation progress is based on current location, not first junction distan
   assert.ok(nextJunction.remainingDistanceKm < legacyDistanceKm, 'remaining distance should shrink as driver moves')
   assert.equal(getTurnInstruction(nextJunction.turnType), '좌회전')
   assert.equal(formatGuidanceDistance(nextJunction.remainingDistanceKm), '350m')
+})
+
+run('guidance text prefers real TMAP instruction wording when available', () => {
+  assert.equal(
+    getGuidanceInstruction({
+      turnType: 113,
+      instructionText: '개포 지하차도에서 전방 도시고속도로 입구 후 분당내곡로를 따라 213m 이동',
+    }),
+    '도시고속도로 진입'
+  )
+  assert.equal(
+    getGuidanceInstruction({
+      turnType: 13,
+      instructionText: '정자일로1 사거리에서 금곡동행정복지센터 방면으로 우회전 후 정자일로를 따라 41m 이동',
+    }),
+    '우회전'
+  )
 })
 
 run('remaining ETA shrinks with route progress', () => {

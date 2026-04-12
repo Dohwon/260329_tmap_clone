@@ -469,8 +469,7 @@ async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
   throw new Error(lastMessage)
 }
 
-// TMAP turnType: 12=좌회전, 13=우회전, 16/17=합류, 18/19=분기, 125~130=IC/JC/진출입
-const GUIDANCE_TURN_TYPES = new Set([12, 13, 14, 16, 17, 18, 19, 125, 126, 127, 128, 129, 130])
+// TMAP pointType=N 이면서 start/end가 아닌 안내 포인트는 가능한 한 모두 배너 후보로 유지한다.
 const JUNCTION_TURN_TYPES = new Set([125, 126, 127, 128, 129, 130])
 
 function parseRouteResponse(json, option) {
@@ -531,7 +530,9 @@ function parseRouteResponse(json, option) {
     } else if (feature.geometry?.type === 'Point') {
       // Point 피처(전환점) 에서 분기점 정보 보완
       const props = feature.properties ?? {}
-      if (GUIDANCE_TURN_TYPES.has(Number(props.turnType)) && (props.name || props.description)) {
+      const turnType = Number(props.turnType)
+      const isGuidePoint = props.pointType === 'N' && ![200, 201].includes(turnType)
+      if (isGuidePoint && (props.name || props.description || props.nextRoadName)) {
         const [lng, lat] = feature.geometry.coordinates
         const nextFeature = features.slice(fi + 1).find(f => f.geometry?.type === 'LineString')
         const afterRoadName = nextFeature?.properties?.roadName ?? ''
@@ -543,9 +544,11 @@ function parseRouteResponse(json, option) {
           name: props.name ?? props.description ?? `안내 ${maneuvers.length + 1}`,
           lat,
           lng,
-          turnType: Number(props.turnType),
+          turnType,
           distanceFromStart: Math.round((props.totalDistance ?? accumulatedDist) / 100) / 10,
           afterRoadType,
+          instructionText: props.description ?? '',
+          nextRoadName: props.nextRoadName ?? '',
           afterRoadName: afterRoadName
             ? (afterRoadNo ? `${afterRoadName} (${afterRoadNo}호선)` : afterRoadName)
             : (afterRoadType === 'highway' ? '고속도로' : '국도'),
