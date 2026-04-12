@@ -2,7 +2,7 @@ import React, { useEffect, useMemo } from 'react'
 import { CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import useAppStore from '../../store/appStore'
-import { snapToNearestRoad } from '../../services/tmapService'
+import { shouldUseRawRoutePolyline } from '../../utils/navigationLogic'
 
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -76,15 +76,21 @@ function MapController({ center, zoom }) {
     const target = freshLoc
       ? [freshLoc.lat, freshLoc.lng]
       : (Array.isArray(center) ? center : null)
-    if (target) map.setView(target, 15, { animate: true, duration: 0.5 })
+    if (target) map.setView(target, 16, { animate: true, duration: 0.5 })
     // 시작 시 자동추적 활성화
     useAppStore.getState().setNavAutoFollow(true)
   }, [isNavigating]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 연속 auto-follow: GPS 위치가 바뀔 때마다 지도 중심을 내 위치로 고정 (panTo는 zoom 변경 없음)
+  // 연속 auto-follow: 내비 시작 직후에는 확대 수준을 유지하고, 이후에는 부드럽게 중심만 이동
   useEffect(() => {
     if (!isNavigating || !navAutoFollow || !userLocation) return
-    map.panTo([userLocation.lat, userLocation.lng], { animate: true, duration: 0.3 })
+    const target = L.latLng(userLocation.lat, userLocation.lng)
+    const centerDistance = map.distance(map.getCenter(), target)
+    if (map.getZoom() < 16 || centerDistance > 120) {
+      map.setView(target, Math.max(16, map.getZoom()), { animate: true, duration: 0.35 })
+      return
+    }
+    map.panTo(target, { animate: true, duration: 0.3 })
   }, [userLocation, navAutoFollow, isNavigating]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 일반 지도 이동 (안내 중에는 무시)
@@ -142,6 +148,11 @@ function getCongestionColor(score) {
   return COLORS.congestion1
 }
 
+function getRoutePath(route, curvature = 0.1) {
+  if (!route?.polyline) return []
+  return shouldUseRawRoutePolyline(route) ? route.polyline : smoothPath(route.polyline, curvature)
+}
+
 const reportedOffIcon = makeBadgeIcon({ text: '끔', background: '#F59E0B', size: 28 })
 const reportedFakeIcon = makeBadgeIcon({ text: '없음', background: '#EF4444', size: 32 })
 
@@ -175,16 +186,9 @@ export default function MapView({ darkMode = false }) {
     [selectedRoad]
   )
 
-  // 야간: Stadia Alidade Smooth Dark (CartoDB dark보다 밝음, 건물명 선명, 무료 월 200K)
-  // 주간: CartoDB light base
-  const tileUrl = darkMode
-    ? 'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png'
-    : 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png'
-
-  // Stadia는 라벨 내장 → 별도 레이어 불필요 (주간에만 CartoDB label 오버레이)
-  const labelUrl = darkMode
-    ? null
-    : null
+  // 한국어 지명이 포함된 OSM Korea 타일 사용
+  const tileUrl = 'https://tiles.osm.kr/osm/{z}/{x}/{y}.png'
+  const labelUrl = null
 
   return (
     <MapContainer
@@ -196,7 +200,7 @@ export default function MapView({ darkMode = false }) {
     >
       <TileLayer
         url={tileUrl}
-        attribution='&copy; OpenStreetMap contributors &copy; CARTO'
+        attribution='&copy; OpenStreetMap contributors &copy; OSM Korea'
       />
       {labelUrl && (
         <TileLayer
@@ -237,10 +241,9 @@ export default function MapView({ darkMode = false }) {
                 <div className="text-xs text-gray-500 mt-0.5">{selectedRoad.startAddress}</div>
               )}
               <button
-                onClick={async () => {
+                onClick={() => {
                   const [lat, lng] = selectedRoad.startCoord
-                  const snapped = await snapToNearestRoad(lat, lng)
-                  searchRoute({ name: `${selectedRoad.name} 시점`, lat: snapped?.lat ?? lat, lng: snapped?.lng ?? lng, address: selectedRoad.startAddress ?? '' })
+                  searchRoute({ name: `${selectedRoad.name} 시점`, lat, lng, address: selectedRoad.startAddress ?? '' })
                 }}
                 className="mt-2 w-full py-1.5 rounded-lg bg-tmap-blue text-white text-xs font-bold"
               >
@@ -319,10 +322,9 @@ export default function MapView({ darkMode = false }) {
                   {stop.type === 'service' ? '휴게소' : '졸음쉼터'}
                 </div>
                 <button
-                  onClick={async () => {
+                  onClick={() => {
                     const [lat, lng] = stop.coord
-                    const snapped = await snapToNearestRoad(lat, lng)
-                    searchRoute({ name: stop.name, lat: snapped?.lat ?? lat, lng: snapped?.lng ?? lng, address: `${selectedRoad.name} ${stop.km}km 지점` })
+                    searchRoute({ name: stop.name, lat, lng, address: `${selectedRoad.name} ${stop.km}km 지점` })
                   }}
                   className="mt-2 w-full py-1.5 rounded-lg bg-tmap-blue text-white text-xs font-bold"
                 >
@@ -345,7 +347,7 @@ export default function MapView({ darkMode = false }) {
       {otherRoutes.map((route) => (
         <Polyline
           key={route.id}
-          positions={smoothPath(route.polyline, 0.1)}
+          positions={getRoutePath(route, 0.1)}
           pathOptions={{ color: route.routeColor ?? COLORS.secondaryRoute, weight: 5, opacity: 0.6 }}
         />
       ))}
@@ -353,7 +355,7 @@ export default function MapView({ darkMode = false }) {
       {selectedRoute && (
         <>
           <Polyline
-            positions={smoothPath(selectedRoute.polyline, 0.1)}
+            positions={getRoutePath(selectedRoute, 0.1)}
             pathOptions={{ color: COLORS.selectedRoute, weight: 7, opacity: 0.94 }}
           />
 

@@ -3,6 +3,7 @@ import { HIGHWAYS } from '../data/highwayData'
 import { SCENIC_SEGMENTS_SORTED } from '../data/scenicRoads'
 import { PRESET_INFO, MOCK_RECENT_SEARCHES } from '../data/mockData'
 import { fetchDirectRoute, fetchRouteByWaypoints, fetchRoutes, fetchTmapStatus, searchNearbyPOIs, searchPOI } from '../services/tmapService'
+import { ensureLiveRouteSource, isUsableLiveRoute } from '../utils/navigationLogic'
 
 const DEFAULT_CENTER = [37.5665, 126.978]
 const DEFAULT_ORIGIN = { lat: 37.5665, lng: 126.978, speedKmh: 0, heading: 0, accuracy: null }
@@ -673,6 +674,35 @@ function buildFallbackRoutes(origin, destination, routePreferences, driverPreset
   return configs.map((route, index) => decorateRoute(route, index, { origin, destination, routePreferences, driverPreset }))
 }
 
+async function loadLiveRoutes(origin, destination, waypoints = [], routePreferences = {}) {
+  const validWaypoints = (waypoints ?? []).filter((point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lng))
+
+  if (validWaypoints.length > 0) {
+    try {
+      const waypointRoute = await fetchRouteByWaypoints(
+        { lat: origin.lat, lng: origin.lng, name: '출발' },
+        destination,
+        validWaypoints,
+        { id: 'route-wp', searchOption: '00', title: `경유 ${validWaypoints.length}개소`, tag: '경유', tagColor: 'purple', isBaseline: true }
+      )
+      if (waypointRoute) return [ensureLiveRouteSource(waypointRoute)]
+    } catch {
+      // fall through to direct route lookup
+    }
+  }
+
+  const directRoutes = await fetchRoutes(origin.lat, origin.lng, destination.lat, destination.lng, {
+    allowNarrowRoads: routePreferences.allowNarrowRoads,
+    roadType: routePreferences.roadType,
+  })
+
+  return directRoutes.map((route) => ensureLiveRouteSource(route))
+}
+
+async function resolveRoutingOrigin(origin) {
+  return origin
+}
+
 const useAppStore = create((set, get) => ({
   activeTab: 'home',
   setActiveTab: (tab) => set({ activeTab: tab }),
@@ -728,14 +758,49 @@ const useAppStore = create((set, get) => ({
   isLoadingRoutes: false,
   isNavigating: false,
   navAutoFollow: false,
+  isRefreshingNavigation: false,
+  navigationLastRefreshedAt: 0,
   setNavAutoFollow: (val) => set({ navAutoFollow: val }),
-  startNavigation: () => {
-    const { userLocation } = get()
+  startNavigation: async () => {
+    const { userLocation, destination, routes, selectedRouteId } = get()
     // 내 위치로 지도 포커스
     const center = userLocation ? [userLocation.lat, userLocation.lng] : get().mapCenter
+    let selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? routes[0] ?? null
+    const routeStart = selectedRoute?.polyline?.[0]
+    const shouldRefreshLiveRoute =
+      Boolean(destination && userLocation) && (
+        !isUsableLiveRoute(selectedRoute)
+        || !Array.isArray(routeStart)
+        || haversineKm(userLocation.lat, userLocation.lng, routeStart[0], routeStart[1]) > 1.2
+      )
+
+    if (shouldRefreshLiveRoute) {
+      selectedRoute = await get().refreshNavigationRoute('navigation-start')
+    }
+
+    if (!isUsableLiveRoute(selectedRoute)) {
+      get().setTmapStatus({
+        hasApiKey: get().tmapStatus.hasApiKey,
+        mode: 'simulation',
+        lastError: '실제 TMAP 경로를 받아오지 못해 안내를 시작할 수 없습니다.',
+      })
+      set({ showRoutePanel: true, routePanelMode: 'full' })
+      return false
+    }
+
     set({ isNavigating: true, navAutoFollow: true, showRoutePanel: false, routePanelMode: 'full', mapCenter: center, mapZoom: 15 })
+    return true
   },
-  stopNavigation: () => set({ isNavigating: false, navAutoFollow: false, destination: null, routes: [], selectedRouteId: null, routePanelMode: 'full' }),
+  stopNavigation: () => set({
+    isNavigating: false,
+    navAutoFollow: false,
+    destination: null,
+    routes: [],
+    selectedRouteId: null,
+    routePanelMode: 'full',
+    isRefreshingNavigation: false,
+    navigationLastRefreshedAt: 0,
+  }),
 
   // ── 경로 저장 ──────────────────────────────────────
   savedRoutes: readStorage(STORAGE_KEYS.savedRoutes, []),
@@ -1008,7 +1073,7 @@ const useAppStore = create((set, get) => ({
   },
 
   searchRoute: async (destination) => {
-    const origin = get().userLocation ?? DEFAULT_ORIGIN
+    const origin = await resolveRoutingOrigin(get().userLocation ?? DEFAULT_ORIGIN)
     const { routePreferences, driverPreset } = get()
     set({
       activeTab: 'home',
@@ -1026,37 +1091,20 @@ const useAppStore = create((set, get) => ({
     get().setTmapStatus({ ...tmapStatus, lastError: null })
 
     let liveRoutes = []
-    const wps = get().waypoints
     try {
-      if (wps.length > 0) {
-        // Try routeSequential30 with waypoints first
-        try {
-          const wpRoute = await fetchRouteByWaypoints(
-            { lat: origin.lat, lng: origin.lng, name: '출발' },
-            destination,
-            wps,
-            { id: 'route-wp', searchOption: '00', title: `경유 ${wps.length}개소`, tag: '경유', tagColor: 'purple', isBaseline: true }
-          )
-          if (wpRoute) liveRoutes = [wpRoute]
-        } catch { /* fall through to normal routes */ }
-      }
-      if (liveRoutes.length === 0) {
-        liveRoutes = await fetchRoutes(origin.lat, origin.lng, destination.lat, destination.lng, {
-          allowNarrowRoads: routePreferences.allowNarrowRoads,
-          roadType: routePreferences.roadType,
-        })
-      }
+      liveRoutes = await loadLiveRoutes(origin, destination, get().waypoints, routePreferences)
       if (liveRoutes.length > 0) {
         get().setTmapStatus({ hasApiKey: true, mode: 'live', lastError: null })
       }
     } catch (error) {
       get().setTmapStatus({
+        hasApiKey: tmapStatus.hasApiKey,
         mode: 'simulation',
         lastError: error?.message ?? 'TMAP 경로 응답 실패',
       })
     }
 
-    const routes = (liveRoutes.length > 0 ? liveRoutes : buildFallbackRoutes(origin, destination, routePreferences, driverPreset))
+    const routes = liveRoutes
       .map((route, index) => decorateRoute(route, index, { origin, destination, routePreferences, driverPreset }))
 
     const selectedRouteId = routes[0]?.id ?? null
@@ -1080,6 +1128,53 @@ const useAppStore = create((set, get) => ({
       mapZoom: selectedRoute ? 8 : 14,
       scenicRoadSuggestions,
     })
+  },
+
+  refreshNavigationRoute: async (reason = 'manual') => {
+    const state = get()
+    if (state.isRefreshingNavigation || !state.destination) return null
+
+    const origin = await resolveRoutingOrigin(state.userLocation ?? DEFAULT_ORIGIN)
+    set({ isRefreshingNavigation: true })
+
+    try {
+      const liveRoutes = await loadLiveRoutes(origin, state.destination, state.waypoints, state.routePreferences)
+      if (liveRoutes.length === 0) throw new Error('TMAP 경로 응답 없음')
+
+      const routes = liveRoutes.map((route, index) => decorateRoute(route, index, {
+        origin,
+        destination: state.destination,
+        routePreferences: state.routePreferences,
+        driverPreset: state.driverPreset,
+      }))
+      const selectedRoute = routes.find((route) => route.id === state.selectedRouteId) ?? routes[0] ?? null
+
+      set({
+        routes,
+        selectedRouteId: selectedRoute?.id ?? null,
+        selectedMergeOptionId: 'merge-current',
+        mergeOptions: selectedRoute ? buildMergeOptions(selectedRoute, 'merge-current', state.driverPreset) : [],
+        isRefreshingNavigation: false,
+        navigationLastRefreshedAt: Date.now(),
+      })
+      get().setTmapStatus({
+        hasApiKey: true,
+        mode: 'live',
+        lastError: reason === 'off-route' ? '경로 이탈 감지 후 재탐색 완료' : null,
+      })
+      return selectedRoute
+    } catch (error) {
+      set({
+        isRefreshingNavigation: false,
+        navigationLastRefreshedAt: Date.now(),
+      })
+      get().setTmapStatus({
+        hasApiKey: state.tmapStatus.hasApiKey,
+        mode: state.routes.some((route) => isUsableLiveRoute(route)) ? 'live' : state.tmapStatus.mode,
+        lastError: error?.message ?? 'TMAP 실시간 재탐색 실패',
+      })
+      return null
+    }
   },
 
   applyMergeOption: async (mergeOptionId) => {

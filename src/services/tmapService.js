@@ -1,4 +1,5 @@
 import { HIGHWAYS } from '../data/highwayData'
+import { ensureLiveRouteSource, normalizeSearchOption } from '../utils/navigationLogic'
 
 const BASE = '/api/tmap'
 const ROAD_KEYWORD_PATTERN = /(고속|국도|jc|ic|분기|인터체인지|나들목|휴게소|톨게이트)/i
@@ -326,7 +327,7 @@ export async function fetchRouteByWaypoints(start, destination, wayPoints = [], 
     endName: destination.name ?? '도착',
     endX: String(destination.lng),
     endY: String(destination.lat),
-    searchOption: option.searchOption ?? '00',
+    searchOption: normalizeSearchOption(option.searchOption ?? '00'),
     carType: '0',
     viaPoints: wayPoints.map((point, index) => ({
       viaPointId: point.id ?? `via-${index}`,
@@ -386,44 +387,58 @@ export async function snapToNearestRoad(lat, lng) {
 }
 
 async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
-  // 원래 동작하던 포맷 유지 (08cfcc7 기준)
-  const body = {
-    startX: String(startLng),
-    startY: String(startLat),
-    endX: String(endLng),
-    endY: String(endLat),
-    endRpFlag: 'G',
-    carType: 0,
-    detailPosFlag: '2',
-    reqCoordType: 'WGS84GEO',
-    resCoordType: 'WGS84GEO',
-    searchOption: option.searchOption,
-    sort: 'index',
-    trafficInfo: 'Y',
-  }
-
-  const res = await fetch(`${BASE}/routes?version=1`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
+  const normalizedSearchOption = normalizeSearchOption(option.searchOption)
+  const bodies = [
+    {
+      startX: String(startLng),
+      startY: String(startLat),
+      endX: String(endLng),
+      endY: String(endLat),
+      reqCoordType: 'WGS84GEO',
+      resCoordType: 'WGS84GEO',
+      searchOption: normalizedSearchOption,
     },
-    body: JSON.stringify(body),
-  })
+    {
+      startX: String(startLng),
+      startY: String(startLat),
+      endX: String(endLng),
+      endY: String(endLat),
+      endRpFlag: 'G',
+      carType: 0,
+      detailPosFlag: '2',
+      reqCoordType: 'WGS84GEO',
+      resCoordType: 'WGS84GEO',
+      searchOption: normalizedSearchOption,
+      sort: 'index',
+      trafficInfo: 'Y',
+    },
+  ]
 
-  if (!res.ok) {
-    let message = `TMAP HTTP ${res.status}`
+  let lastMessage = 'TMAP 경로 응답 실패'
+  for (const body of bodies) {
+    const res = await fetch(`${BASE}/routes?version=1`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
+
+    if (res.ok) {
+      const json = await res.json()
+      return parseRouteResponse(json, option)
+    }
+
     try {
       const json = await res.json()
-      message = json?.error?.errorMessage ?? json?.error?.code ?? json?.error?.message ?? message
+      lastMessage = json?.error?.errorMessage ?? json?.error?.code ?? json?.error?.message ?? `TMAP HTTP ${res.status}`
     } catch {
-      // noop
+      lastMessage = `TMAP HTTP ${res.status}`
     }
-    throw new Error(message)
   }
 
-  const json = await res.json()
-  return parseRouteResponse(json, option)
+  throw new Error(lastMessage)
 }
 
 // TMAP turnType: 125=분기, 126=합류, 127=진입, 128=진출, 129=IC, 130=JC
@@ -561,7 +576,7 @@ function parseRouteResponse(json, option) {
   const sectionCameraCount = cameras.filter(c => c.type === 'section_start').length
     || (highwayRatio >= 40 ? Math.max(1, Math.round(hwKm / 25)) : 0)
 
-  return {
+  return ensureLiveRouteSource({
     id: option.id ?? `route-${option.searchOption}`,
     title: option.title,
     explanation: buildExplanation(highwayRatio, mergeCount, congestionScore, option.isBaseline),
@@ -585,7 +600,7 @@ function parseRouteResponse(json, option) {
     polyline,
     junctions, // 실제 IC/JC 분기점 목록
     cameras,   // 실제 과속카메라 위치 (TMAP safetyFacilityList 기반)
-  }
+  })
 }
 
 function buildExplanation(highwayRatio, mergeCount, congestionScore, isBaseline) {

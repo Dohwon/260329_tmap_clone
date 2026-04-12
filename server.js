@@ -64,8 +64,9 @@ app.get('/api/meta/tmap-status', async (req, res) => {
   }
   try {
     const host = req.headers['host'] || 'localhost'
+    const keyword = encodeURIComponent('서울역')
     const result = await tmapFetch(
-      '/tmap/pois?version=1&searchKeyword=서울역&count=1&reqCoordType=WGS84GEO&resCoordType=WGS84GEO',
+      `/tmap/pois?version=1&searchKeyword=${keyword}&count=1&reqCoordType=WGS84GEO&resCoordType=WGS84GEO`,
       'GET',
       { origin: `https://${host}`, referer: `https://${host}/` },
       null

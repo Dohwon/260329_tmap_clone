@@ -5,6 +5,7 @@ import RouteFilterBar from './RouteFilterBar'
 import RouteCard, { formatEta } from './RouteCard'
 import MergeOptionsSheet from '../Navigation/MergeOptionsSheet'
 import WaypointSheet from './WaypointSheet'
+import { isUsableLiveRoute } from '../../utils/navigationLogic'
 
 export default function RoutePreviewPanel() {
   const {
@@ -30,6 +31,7 @@ export default function RoutePreviewPanel() {
   const selectedRoute = routes.find(r => r.id === selectedRouteId)
   const baselineRoute = routes.find((route) => route.isBaseline) ?? routes[0]
   const mergePreview = mergeOptions[0]
+  const canStartNavigation = isUsableLiveRoute(selectedRoute)
 
   // 단거리 판단 (30km 미만 또는 35분 미만)
   const isShortDistance = selectedRoute
@@ -98,7 +100,12 @@ export default function RoutePreviewPanel() {
               </button>
               <button
                 onClick={startNavigation}
-                className="flex-[2] py-3 rounded-2xl bg-tmap-blue text-white text-sm font-bold shadow-lg shadow-blue-200 active:scale-95 transition-all"
+                disabled={!canStartNavigation}
+                className={`flex-[2] py-3 rounded-2xl text-sm font-bold shadow-lg transition-all ${
+                  canStartNavigation
+                    ? 'bg-tmap-blue text-white shadow-blue-200 active:scale-95'
+                    : 'bg-gray-200 text-gray-500 shadow-none cursor-not-allowed'
+                }`}
               >
                 <div className="flex items-center justify-center gap-2">
                   <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
@@ -167,9 +174,7 @@ export default function RoutePreviewPanel() {
               {tmapStatus.mode === 'live'
                 ? '실시간 교통 흐름과 경로 응답을 기준으로 비교 중입니다.'
                 : tmapStatus.lastError
-                  ? (tmapStatus.lastError.includes('1100') || tmapStatus.lastError.includes('NOT_FOUND')
-                      ? 'TMAP 경로를 찾을 수 없어 시뮬레이션 경로로 표시 중입니다.'
-                      : `오류: ${tmapStatus.lastError}`)
+                  ? `오류: ${tmapStatus.lastError}`
                   : tmapStatus.hasApiKey
                     ? 'API 키 설정됨. 경로 호출 실패 — 진단: /api/meta/tmap-diag 확인'
                     : 'API 키 미설정 — Railway 환경변수 TMAP_API_KEY를 추가하세요.'}
@@ -260,6 +265,13 @@ export default function RoutePreviewPanel() {
               <div className="w-8 h-8 border-3 border-tmap-blue border-t-transparent rounded-full animate-spin"/>
               <div className="text-sm text-gray-400">경로 탐색 중...</div>
             </div>
+          ) : routes.length === 0 ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-5">
+              <div className="text-sm font-bold text-amber-800">실제 TMAP 경로를 받아오지 못했습니다</div>
+              <div className="text-xs text-amber-700 mt-1">
+                현재는 예상 직선 경로를 보여주지 않습니다. API 키, 프록시 응답, 현재 위치 오차를 먼저 확인하세요.
+              </div>
+            </div>
           ) : (
             <div className="space-y-3">
               {routes.map(route => (
@@ -285,7 +297,12 @@ export default function RoutePreviewPanel() {
             </button>
             <button
               onClick={startNavigation}
-              className="flex-[2] py-4 bg-tmap-blue rounded-2xl text-sm font-bold text-white active:scale-95 transition-all shadow-lg shadow-blue-200"
+              disabled={!canStartNavigation}
+              className={`flex-[2] py-4 rounded-2xl text-sm font-bold transition-all ${
+                canStartNavigation
+                  ? 'bg-tmap-blue text-white active:scale-95 shadow-lg shadow-blue-200'
+                  : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+              }`}
             >
               <div className="flex items-center justify-center gap-2">
                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">

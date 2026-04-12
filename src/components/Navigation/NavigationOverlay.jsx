@@ -3,12 +3,22 @@ import useAppStore from '../../store/appStore'
 import MergeOptionsSheet from './MergeOptionsSheet'
 import { formatEta } from '../Route/RouteCard'
 import { SCENIC_SEGMENTS } from '../../data/scenicRoads'
+import {
+  analyzeRouteProgress,
+  formatGuidanceDistance,
+  getRemainingEta,
+  getTurnInstruction,
+  getUpcomingMergeOptions,
+  getUpcomingJunction,
+  haversineM,
+} from '../../utils/navigationLogic'
 
 export default function NavigationOverlay() {
   const {
     isNavigating, stopNavigation, destination, routes, selectedRouteId,
     mergeOptions, userLocation, saveRoute, cameraReports, reportCamera,
     navAutoFollow, setNavAutoFollow, addWaypoint, searchRoute, waypoints,
+    refreshNavigationRoute, navigationLastRefreshedAt, isRefreshingNavigation,
   } = useAppStore()
   const [showMerge, setShowMerge] = useState(false)
   const [showSaveDialog, setShowSaveDialog] = useState(false)
@@ -77,25 +87,54 @@ export default function NavigationOverlay() {
     }
   }, [userLocation, isNavigating])
 
-  if (!isNavigating) return null
-
   const route = routes.find(r => r.id === selectedRouteId)
-  const junctions = route?.junctions ?? []   // TMAP 실제 분기점
-  const nextRealJunction = junctions[0]      // 경로 상 첫 번째 실제 IC/JC
-  const nextMergeOpt = mergeOptions[0]       // merge 옵션 첫 번째
+  const routeProgress = analyzeRouteProgress(route, userLocation)
+  const { nextJunction: nextRealJunction } = getUpcomingJunction(route, userLocation)
+  const liveMergeOptions = getUpcomingMergeOptions(mergeOptions, routeProgress.progressKm)
+  const nextMergeOpt = liveMergeOptions.find((option) => option.remainingDistanceKm > 0.03) ?? liveMergeOptions[0]
+  const remainingEta = getRemainingEta(route, routeProgress.remainingKm)
+
+  useEffect(() => {
+    if (!isNavigating) return
+    const timer = window.setInterval(() => {
+      refreshNavigationRoute('traffic-refresh')
+    }, 120000)
+    return () => window.clearInterval(timer)
+  }, [isNavigating, refreshNavigationRoute])
+
+  useEffect(() => {
+    if (!isNavigating || !route || !userLocation || isRefreshingNavigation) return
+    const cooldownPassed = Date.now() - navigationLastRefreshedAt > 15000
+    const shouldRefreshForFallback = route.source !== 'live' && cooldownPassed
+    const shouldRefreshForOffRoute = routeProgress.distanceToRouteM != null && routeProgress.distanceToRouteM > 180 && cooldownPassed
+
+    if (shouldRefreshForFallback || shouldRefreshForOffRoute) {
+      refreshNavigationRoute(shouldRefreshForOffRoute ? 'off-route' : 'live-retry')
+    }
+  }, [
+    isNavigating,
+    isRefreshingNavigation,
+    navigationLastRefreshedAt,
+    refreshNavigationRoute,
+    route,
+    routeProgress.distanceToRouteM,
+    userLocation,
+  ])
+
+  if (!isNavigating) return null
 
   // 상단 배너: 실제 분기점 우선, 없으면 목적지
   const bannerTitle = nextRealJunction
-    ? nextRealJunction.name
+    ? `${formatGuidanceDistance(nextRealJunction.remainingDistanceKm)} 후 ${getTurnInstruction(nextRealJunction.turnType)}`
     : destination?.name ?? '목적지'
   const bannerSub = nextRealJunction
     ? (nextRealJunction.afterRoadName
         ? `${nextRealJunction.afterRoadName} 진입`
         : `${nextRealJunction.afterRoadType === 'highway' ? '고속도로' : '국도'} 진입`)
-    : `${route?.distance != null ? Number(route.distance).toFixed(2) : '--'}km · ${route?.eta ? formatEta(route.eta) : '--'} 소요`
+    : `${routeProgress.remainingKm != null ? Number(routeProgress.remainingKm).toFixed(2) : '--'}km · ${remainingEta ? formatEta(remainingEta) : '--'} 소요`
   const bannerLabel = nextRealJunction
-    ? `${Number(nextRealJunction.distanceFromStart).toFixed(2)}km 앞`
-    : '직진'
+    ? '다음 안내'
+    : '목적지 안내'
   const bannerTurnType = nextRealJunction?.turnType ?? 11
 
   async function searchNearby(category) {
@@ -155,17 +194,17 @@ export default function NavigationOverlay() {
             <div className="bg-white px-5 py-3 flex items-center shadow-md">
               <div className="flex-1 text-center">
                 <div className="text-xs text-gray-400">남은시간</div>
-                <div className="text-lg font-black text-gray-900">{route?.eta ? formatEta(route.eta) : '--'}</div>
+                <div className="text-lg font-black text-gray-900">{remainingEta ? formatEta(remainingEta) : '--'}</div>
               </div>
               <div className="w-px h-8 bg-gray-200" />
               <div className="flex-1 text-center">
                 <div className="text-xs text-gray-400">도착예정</div>
-                <div className="text-lg font-black text-gray-900">{getArrivalTime(route?.eta)}</div>
+                <div className="text-lg font-black text-gray-900">{getArrivalTime(remainingEta)}</div>
               </div>
               <div className="w-px h-8 bg-gray-200" />
               <div className="flex-1 text-center">
                 <div className="text-xs text-gray-400">남은거리</div>
-                <div className="text-lg font-black text-gray-900">{route?.distance != null ? Number(route.distance).toFixed(2) : '--'}km</div>
+                <div className="text-lg font-black text-gray-900">{routeProgress.remainingKm != null ? Number(routeProgress.remainingKm).toFixed(2) : '--'}km</div>
               </div>
               {/* 현재 속도 배지 */}
               <div className={`ml-3 flex flex-col items-center justify-center w-14 h-14 rounded-full border-[3px] ${overLimit ? 'border-red-500 bg-red-50' : 'border-gray-300'}`}>
@@ -193,7 +232,7 @@ export default function NavigationOverlay() {
                   <div className="text-sm font-bold text-gray-900 truncate">
                     {nextMergeOpt.name}
                     <span className="text-xs font-normal text-gray-500 ml-1">
-                      ({Number(nextMergeOpt.distanceFromCurrent).toFixed(2)}km 앞)
+                      ({Number(nextMergeOpt.remainingDistanceKm ?? nextMergeOpt.distanceFromCurrent).toFixed(2)}km 앞)
                     </span>
                   </div>
                 ) : (
@@ -213,9 +252,9 @@ export default function NavigationOverlay() {
             </div>
           </button>
 
-          {mergeOptions.length > 0 && (
+          {liveMergeOptions.length > 0 && (
             <div ref={segmentRef} onWheel={handleWheelScroll} className="flex overflow-x-auto no-scrollbar px-4 py-3 gap-2 snap-x">
-              {mergeOptions.slice(0, 4).map((opt) => (
+              {liveMergeOptions.slice(0, 4).map((opt) => (
                 <JunctionChip key={opt.id} opt={opt} onSelect={() => setShowMerge(true)} />
               ))}
             </div>
@@ -230,6 +269,9 @@ export default function NavigationOverlay() {
               <span className="text-sm">🚧</span>
               <span className="text-xs text-gray-500">구간단속 <strong className="text-orange-500">{Math.max(8, Math.round((route?.distance ?? 0) / 4))}km</strong> 앞</span>
             </div>
+            {isRefreshingNavigation && (
+              <div className="ml-auto text-[11px] font-semibold text-tmap-blue">실시간 재탐색 중</div>
+            )}
           </div>
         </div>
       </div>
@@ -383,7 +425,7 @@ function JunctionChip({ opt, onSelect }) {
         {isHighway ? '고속' : '국도'} 진입
       </div>
       <div className="text-xs text-gray-400 mt-0.5">
-        {Number(opt.distanceFromCurrent).toFixed(2)}km 앞
+        {Number(opt.remainingDistanceKm ?? opt.distanceFromCurrent).toFixed(2)}km 앞
         {opt.addedTime > 0 && <span className="ml-1 text-orange-400">+{opt.addedTime}분</span>}
       </div>
     </button>
@@ -536,12 +578,4 @@ function TurnArrow({ turnType }) {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 10l7-7m0 0l7 7m-7-7v18"/>
     </svg>
   )
-}
-
-function haversineM(lat1, lng1, lat2, lng2) {
-  const R = 6371000
-  const dLat = (lat2 - lat1) * Math.PI / 180
-  const dLng = (lng2 - lng1) * Math.PI / 180
-  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2
-  return 2 * R * Math.asin(Math.sqrt(a))
 }
