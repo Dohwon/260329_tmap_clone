@@ -73,6 +73,44 @@ function haversineKm(lat1, lng1, lat2, lng2) {
   return 2 * R * Math.asin(Math.sqrt(a))
 }
 
+function getPolylineDistanceKm(polyline = []) {
+  if (!Array.isArray(polyline) || polyline.length < 2) return 0
+  let total = 0
+  for (let index = 0; index < polyline.length - 1; index += 1) {
+    total += haversineKm(polyline[index][0], polyline[index][1], polyline[index + 1][0], polyline[index + 1][1])
+  }
+  return Number(total.toFixed(2))
+}
+
+function samplePolyline(polyline = [], sampleSize = 12) {
+  if (!Array.isArray(polyline) || polyline.length === 0) return []
+  if (polyline.length <= sampleSize) return polyline
+  return Array.from({ length: sampleSize }, (_, index) => {
+    const ratio = index / Math.max(1, sampleSize - 1)
+    return polyline[Math.min(polyline.length - 1, Math.round((polyline.length - 1) * ratio))]
+  })
+}
+
+function areSimilarPolylines(a = [], b = []) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length < 2 || b.length < 2) return false
+  const aStart = a[0]
+  const bStart = b[0]
+  const aEnd = a[a.length - 1]
+  const bEnd = b[b.length - 1]
+  if (haversineKm(aStart[0], aStart[1], bStart[0], bStart[1]) > 0.25) return false
+  if (haversineKm(aEnd[0], aEnd[1], bEnd[0], bEnd[1]) > 0.25) return false
+
+  const aSample = samplePolyline(a)
+  const bSample = samplePolyline(b, aSample.length)
+  let diffSum = 0
+  for (let index = 0; index < Math.min(aSample.length, bSample.length); index += 1) {
+    diffSum += haversineKm(aSample[index][0], aSample[index][1], bSample[index][0], bSample[index][1])
+  }
+  const avgDiffKm = diffSum / Math.max(1, Math.min(aSample.length, bSample.length))
+  const distanceGapKm = Math.abs(getPolylineDistanceKm(a) - getPolylineDistanceKm(b))
+  return avgDiffKm <= 0.12 && distanceGapKm <= 1.5
+}
+
 function getRoadPath(road) {
   return [road.startCoord, ...road.majorJunctions.map((junction) => junction.coord), road.endCoord]
 }
@@ -461,7 +499,7 @@ function buildMergeOptions(route, selectedId, driverPreset = 'intermediate') {
     ...(!isShort ? [
       {
         id: 'merge-highway',
-        name: '고속 본선 재합류',
+        name: '분기점 통과 후 고속 본선 연결',
         distanceFromCurrent: routeDistance * 0.2,
         addedTime: -3,
         timeSaving: 3,
@@ -485,7 +523,7 @@ function buildMergeOptions(route, selectedId, driverPreset = 'intermediate') {
     ...(!isShort && driverPreset !== 'beginner' ? [
       {
         id: 'merge-national',
-        name: '국도로 전환',
+        name: '분기점 통과 후 국도 연결',
         distanceFromCurrent: routeDistance * 0.25,
         addedTime: 7,
         timeSaving: -7,
@@ -592,20 +630,12 @@ function decorateRoute(route, index, context) {
   const routeDistance = route.distance ?? 0
   const urbanDensityPenalty = calcUrbanDensityPenalty(route)
   const urbanCongestionPressure = ((route.congestionScore ?? 1) * 4) + (urbanDensityPenalty * 0.9) + (localRoadRatio * 0.22)
-  const routeComplexity = route.mergeCount + urbanDensityPenalty * 0.6
-  const longTripFactor = routeDistance > 120 ? 1 : routeDistance > 60 ? 0.65 : routeDistance > 30 ? 0.35 : 0.1
 
-  // 초보/중수/고수는 장거리뿐 아니라 도심 혼잡도에서도 차이가 난다.
+  // 프리셋은 기본 경로 순서를 뒤집지 않고 설명/난이도/합류 옵션에만 반영한다.
   if (driverPreset === 'beginner') {
-    eta += Math.round((routeComplexity * longTripFactor) / 2.2) + Math.max(1, Math.round(urbanCongestionPressure / 5))
-    mergeCount = Math.max(1, mergeCount - 2)
-    averageSpeed = Math.max(34, Math.round((averageSpeed ?? 70) - (6 * longTripFactor) - (urbanCongestionPressure / 9)))
-  } else if (driverPreset === 'intermediate') {
-    eta += Math.round((routeComplexity * longTripFactor) / 6) + Math.round(urbanCongestionPressure / 14)
+    mergeCount = Math.max(1, mergeCount - 1)
   } else if (driverPreset === 'expert') {
-    eta = Math.max(eta - Math.max(2, Math.round(3 * longTripFactor) + Math.round(urbanCongestionPressure / 10)), 1)
     mergeCount += 1
-    averageSpeed = Math.min(maxSpeedLimit ?? 110, Math.round((averageSpeed ?? 75) + 3 * longTripFactor + (urbanCongestionPressure / 18)))
   }
 
   // 고속도로만 = 빠른 경로와 동일한 수준 (시간 유지, 고속비율만 표시 조정)
@@ -704,6 +734,8 @@ function getRoutePreferenceScore(route, driverPreset) {
 
 function rankRoutesByDriverPreset(routes, driverPreset) {
   return [...routes].sort((a, b) => {
+    const etaDiff = (a.eta ?? Infinity) - (b.eta ?? Infinity)
+    if (Math.abs(etaDiff) >= 1) return etaDiff
     const scoreDiff = getRoutePreferenceScore(a, driverPreset) - getRoutePreferenceScore(b, driverPreset)
     if (scoreDiff !== 0) return scoreDiff
     return (a.eta ?? Infinity) - (b.eta ?? Infinity)
@@ -968,23 +1000,46 @@ const useAppStore = create((set, get) => ({
 
   // ── 경로 저장 ──────────────────────────────────────
   savedRoutes: readStorage(STORAGE_KEYS.savedRoutes, []),
-  saveRoute: ({ route, destination, name }) => {
+  saveRoute: ({ route, destination, name, forceNoMovement = false }) => {
     const actualDrivePath = get().drivePathHistory
     const routeSnapshot = get().driveRouteSnapshot ?? route
+    const hasActualDrive = !forceNoMovement && actualDrivePath.length > 1
+    const recordedPolyline = hasActualDrive ? actualDrivePath.slice(-1200) : []
+    const source = forceNoMovement
+      ? 'no_movement'
+      : hasActualDrive
+        ? 'recorded'
+        : (routeSnapshot?.source ?? 'live')
+    const duplicate = source === 'recorded'
+      ? get().savedRoutes.find((savedRoute) => savedRoute.source === 'recorded' && areSimilarPolylines(savedRoute.polyline, recordedPolyline))
+      : null
+    if (duplicate) return duplicate
+
     const entry = {
       id: `saved-${Date.now()}`,
-      name: name || (destination?.name ? `→ ${destination.name}` : '저장된 경로'),
+      name: name || (forceNoMovement
+        ? `${destination?.name ?? '주행'} · 이동 없음`
+        : (destination?.name ? `→ ${destination.name}` : '저장된 경로')),
       savedAt: new Date().toISOString(),
-      distance: routeSnapshot?.distance,
-      eta: routeSnapshot?.eta,
+      distance: forceNoMovement
+        ? 0
+        : hasActualDrive
+          ? getPolylineDistanceKm(recordedPolyline)
+          : routeSnapshot?.distance,
+      eta: forceNoMovement ? 0 : routeSnapshot?.eta,
       tollFee: routeSnapshot?.tollFee,
       highwayRatio: routeSnapshot?.highwayRatio,
       nationalRoadRatio: routeSnapshot?.nationalRoadRatio,
       localRoadRatio: routeSnapshot?.localRoadRatio,
       destination,
-      polyline: actualDrivePath.length > 1 ? actualDrivePath.slice(-1200) : routeSnapshot?.polyline?.slice(0, 300) ?? [],
+      polyline: source === 'recorded'
+        ? recordedPolyline
+        : source === 'no_movement'
+          ? []
+          : routeSnapshot?.polyline?.slice(0, 300) ?? [],
       originalRoutePolyline: routeSnapshot?.polyline?.slice(0, 300) ?? [],
-      source: actualDrivePath.length > 1 ? 'recorded' : (routeSnapshot?.source ?? 'live'),
+      source,
+      hasMovement: source === 'recorded',
       segmentStats: routeSnapshot?.segmentStats?.slice(0, 120) ?? [],
       nextSegments: routeSnapshot?.nextSegments?.slice(0, 32) ?? [],
       maneuvers: routeSnapshot?.maneuvers?.slice(0, 120) ?? [],
@@ -1002,6 +1057,7 @@ const useAppStore = create((set, get) => ({
     const next = [entry, ...get().savedRoutes].slice(0, 20)
     writeStorage(STORAGE_KEYS.savedRoutes, next)
     set({ savedRoutes: next })
+    return entry
   },
   resumeSavedRoute: (savedRoute) => {
     if (!savedRoute || !Array.isArray(savedRoute.polyline) || savedRoute.polyline.length < 2) return

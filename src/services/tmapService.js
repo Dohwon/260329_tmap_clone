@@ -871,6 +871,7 @@ function parseRouteResponse(json, option) {
           distanceFromStart: Math.round((props.totalDistance ?? accumulatedDist) / 100) / 10,
           afterRoadType,
           instructionText: props.description ?? '',
+          laneHint: props.guideLane ?? props.laneInfo ?? props.lane ?? props.guideInfo ?? '',
           nextRoadName: props.nextRoadName ?? '',
           afterRoadName: afterRoadName
             ? (afterRoadNo ? `${afterRoadName} (${afterRoadNo}호선)` : afterRoadName)

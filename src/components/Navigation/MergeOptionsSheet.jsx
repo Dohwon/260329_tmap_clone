@@ -24,7 +24,7 @@ export default function MergeOptionsSheet({ onClose }) {
         </div>
 
         <div className="px-5 pb-3 border-b border-gray-100">
-          <div className="text-base font-bold text-gray-900">🔀 분기점별 합류 옵션</div>
+          <div className="text-base font-bold text-gray-900">🔀 다음 분기점 연결 안내</div>
           <div className="flex items-center gap-2 mt-1">
             <span className="text-xs text-gray-400">현재 경로:</span>
             <span className="text-xs font-bold text-tmap-blue bg-blue-50 px-2 py-0.5 rounded-full">
@@ -54,7 +54,7 @@ export default function MergeOptionsSheet({ onClose }) {
                       </div>
                       {!opt.isCurrent && (
                         <div className={`text-xs mt-0.5 ${opt.isSelected ? 'text-white/70' : 'text-gray-400'}`}>
-                          현재 {currentRoadLabel} → {opt.afterRoadType === 'highway' ? '고속도로' : '국도'}로 전환
+                          현재 {currentRoadLabel}에서 빠지면 어디로 연결되는지 보여줍니다
                         </div>
                       )}
                     </div>
@@ -78,13 +78,13 @@ export default function MergeOptionsSheet({ onClose }) {
                     <div className="flex items-center gap-2 mb-1">
                       <span>{roadStyle.icon}</span>
                       <span className="text-xs font-bold" style={{ color: roadStyle.color }}>
-                        {roadStyle.label} 진입
+                        분기점 통과 후 연결
                       </span>
                       <span className="text-xs font-bold text-gray-700 ml-1">{opt.afterRoadName}</span>
                     </div>
                     <div className="text-xs text-gray-600 leading-relaxed">{opt.afterDescription}</div>
                     <div className="text-xs mt-1.5 font-medium" style={{ color: roadStyle.color }}>
-                      → {opt.afterNextJunction}
+                      → 연결 후 {opt.afterNextJunction}
                     </div>
                   </div>
 

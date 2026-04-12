@@ -41,7 +41,8 @@ function getHighwayTrafficRows(userLocation) {
 }
 
 function getDrivingHabitSummary(savedRoutes) {
-  const totalTrips = savedRoutes.length
+  const drivingRoutes = savedRoutes.filter((route) => route.source !== 'no_movement')
+  const totalTrips = drivingRoutes.length
   if (totalTrips === 0) {
     return {
       title: '저장된 주행이 아직 없습니다',
@@ -52,10 +53,10 @@ function getDrivingHabitSummary(savedRoutes) {
     }
   }
 
-  const totalDistance = savedRoutes.reduce((sum, route) => sum + (route.distance ?? 0), 0)
-  const avgHighway = Math.round(savedRoutes.reduce((sum, route) => sum + (route.highwayRatio ?? 0), 0) / totalTrips)
-  const avgToll = Math.round(savedRoutes.reduce((sum, route) => sum + (route.tollFee ?? 0), 0) / totalTrips)
-  const longTripCount = savedRoutes.filter((route) => (route.distance ?? 0) >= 80).length
+  const totalDistance = drivingRoutes.reduce((sum, route) => sum + (route.distance ?? 0), 0)
+  const avgHighway = Math.round(drivingRoutes.reduce((sum, route) => sum + (route.highwayRatio ?? 0), 0) / totalTrips)
+  const avgToll = Math.round(drivingRoutes.reduce((sum, route) => sum + (route.tollFee ?? 0), 0) / totalTrips)
+  const longTripCount = drivingRoutes.filter((route) => (route.distance ?? 0) >= 80).length
   const shortTripCount = totalTrips - longTripCount
 
   const styleLine = avgHighway >= 70
@@ -261,7 +262,9 @@ export default function MoreScreen() {
                     <div className="text-sm font-black text-gray-900 truncate">{route.name}</div>
                     <div className="text-xs text-gray-500 mt-1 truncate">{route.destination?.address ?? route.destination?.name ?? '목적지 정보 없음'}</div>
                     <div className="text-xs text-gray-500 mt-2">
-                      {route.distance?.toFixed?.(1) ?? route.distance}km · {route.eta ?? '--'}분 · 고속 {route.highwayRatio ?? '--'}%
+                      {route.source === 'no_movement'
+                        ? '실제 이동 없음'
+                        : `${route.distance?.toFixed?.(1) ?? route.distance}km · ${route.eta ?? '--'}분 · 고속 ${route.highwayRatio ?? '--'}%`}
                     </div>
                   </div>
                   <button

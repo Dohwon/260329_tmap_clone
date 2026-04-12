@@ -128,6 +128,30 @@ export function getGuidanceInstruction(guidance) {
   return getTurnInstruction(guidance?.turnType)
 }
 
+export function getLaneGuidance(guidance) {
+  const text = String(guidance?.laneHint ?? guidance?.instructionText ?? guidance?.description ?? '').trim()
+
+  const laneSnippet = text.match(/([좌우]측|왼쪽|오른쪽|가운데|중앙)[^.,]{0,14}차로/)
+  if (laneSnippet) {
+    return laneSnippet[0]
+      .replace('왼쪽', '좌측')
+      .replace('오른쪽', '우측')
+      .replace('중앙', '가운데')
+  }
+
+  const turnType = Number(guidance?.turnType)
+  if (turnType === 12) return '지금 좌측 차로로 이동 준비'
+  if (turnType === 13) return '지금 우측 차로로 이동 준비'
+  if (turnType === 16 || turnType === 18) return '좌측 차로 유지'
+  if (turnType === 17 || turnType === 19) return '우측 차로 유지'
+  if (turnType >= 125 && turnType <= 130) {
+    return guidance?.afterRoadType === 'highway'
+      ? '분기점 진입 차로 미리 준비'
+      : '연결 도로 진입 차로 미리 준비'
+  }
+  return null
+}
+
 export function getRemainingEta(route, remainingKm) {
   if (!route?.eta) return null
   const baseDistance = Math.max(route.distance ?? 0, 0.1)

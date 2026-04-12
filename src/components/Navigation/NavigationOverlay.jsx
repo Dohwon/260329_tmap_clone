@@ -9,16 +9,54 @@ import {
   analyzeRouteProgress,
   formatGuidanceDistance,
   getGuidanceInstruction,
+  getLaneGuidance,
   getRemainingEta,
   getUpcomingMergeOptions,
   getUpcomingJunction,
   haversineM,
 } from '../../utils/navigationLogic'
 
+function getPolylineDistanceKm(polyline = []) {
+  if (!Array.isArray(polyline) || polyline.length < 2) return 0
+  let totalKm = 0
+  for (let index = 0; index < polyline.length - 1; index += 1) {
+    totalKm += haversineM(polyline[index][0], polyline[index][1], polyline[index + 1][0], polyline[index + 1][1]) / 1000
+  }
+  return Number(totalKm.toFixed(2))
+}
+
+function samplePolyline(polyline = [], sampleSize = 12) {
+  if (!Array.isArray(polyline) || polyline.length === 0) return []
+  if (polyline.length <= sampleSize) return polyline
+  return Array.from({ length: sampleSize }, (_, index) => {
+    const ratio = index / Math.max(1, sampleSize - 1)
+    return polyline[Math.min(polyline.length - 1, Math.round((polyline.length - 1) * ratio))]
+  })
+}
+
+function areSimilarPolylines(a = [], b = []) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length < 2 || b.length < 2) return false
+  const aStart = a[0]
+  const bStart = b[0]
+  const aEnd = a[a.length - 1]
+  const bEnd = b[b.length - 1]
+  if (haversineM(aStart[0], aStart[1], bStart[0], bStart[1]) > 250) return false
+  if (haversineM(aEnd[0], aEnd[1], bEnd[0], bEnd[1]) > 250) return false
+
+  const aSample = samplePolyline(a)
+  const bSample = samplePolyline(b, aSample.length)
+  let diffSumKm = 0
+  for (let index = 0; index < Math.min(aSample.length, bSample.length); index += 1) {
+    diffSumKm += haversineM(aSample[index][0], aSample[index][1], bSample[index][0], bSample[index][1]) / 1000
+  }
+  const avgDiffKm = diffSumKm / Math.max(1, Math.min(aSample.length, bSample.length))
+  return avgDiffKm <= 0.12 && Math.abs(getPolylineDistanceKm(a) - getPolylineDistanceKm(b)) <= 1.5
+}
+
 export default function NavigationOverlay() {
   const {
     isNavigating, stopNavigation, destination, routes, selectedRouteId,
-    mergeOptions, userLocation, saveRoute, cameraReports, reportCamera,
+    mergeOptions, userLocation, saveRoute, savedRoutes, drivePathHistory, cameraReports, reportCamera,
     navAutoFollow, setNavAutoFollow, addWaypoint, searchRoute, waypoints,
     refreshNavigationRoute, navigationLastRefreshedAt, isRefreshingNavigation,
     settings, driverPreset, setDriverPreset, showRoutePanel, openSearchOverlay,
@@ -149,10 +187,13 @@ export default function NavigationOverlay() {
     ? '다음 안내'
     : '목적지 안내'
   const bannerTurnType = nextGuidance?.turnType ?? 11
+  const laneGuidance = getLaneGuidance(nextGuidance)
   const nearbyFuelSummary = nearbyCategory === '주유소' && nearbyPOIs.length > 0
     ? {
-        nearbyLowest: nearbyPOIs.reduce((min, poi) => Math.min(min, poi.fuelPrice ?? Infinity), Infinity),
-        routeLowest: nearbyPOIs.reduce((min, poi) => Math.min(min, poi.isRouteCorridor ? (poi.fuelPrice ?? Infinity) : Infinity), Infinity),
+        nearbyLowestPoi: [...nearbyPOIs].sort((a, b) => (a.fuelPrice ?? Infinity) - (b.fuelPrice ?? Infinity))[0] ?? null,
+        routeLowestPoi: nearbyPOIs
+          .filter((poi) => poi.isRouteCorridor)
+          .sort((a, b) => (a.fuelPrice ?? Infinity) - (b.fuelPrice ?? Infinity))[0] ?? null,
       }
     : null
 
@@ -211,7 +252,26 @@ export default function NavigationOverlay() {
   }
 
   const handleStop = () => {
+    const movedPolyline = Array.isArray(drivePathHistory) && drivePathHistory.length > 1 ? drivePathHistory : []
+    if (movedPolyline.length === 0) {
+      saveRoute({ route, destination, forceNoMovement: true })
+      stopNavigation()
+      return
+    }
+    const duplicateSavedRoute = savedRoutes.find((savedRoute) =>
+      savedRoute.source === 'recorded' && areSimilarPolylines(savedRoute.polyline, movedPolyline)
+    )
+    if (duplicateSavedRoute) {
+      stopNavigation()
+      return
+    }
     setShowSaveDialog(true)
+  }
+
+  async function addPoiAsWaypoint(poi) {
+    addWaypoint({ id: `wp-nav-${poi.lat}-${poi.lng}`, name: poi.name, lat: poi.lat, lng: poi.lng, address: poi.address })
+    if (destination) await searchRoute(destination)
+    setShowNearbyPanel(false)
   }
 
   return (
@@ -227,6 +287,11 @@ export default function NavigationOverlay() {
               <div className="text-white/70 text-sm mb-0.5">{bannerLabel}</div>
               <div className="text-white text-xl font-black truncate">{bannerTitle}</div>
               <div className="text-white/70 text-sm mt-0.5 truncate">{bannerSub}</div>
+              {laneGuidance && (
+                <div className="mt-2 inline-flex max-w-full items-center rounded-full bg-white/18 px-3 py-1 text-xs font-bold text-white">
+                  차로 안내 · {laneGuidance}
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               <button
@@ -417,6 +482,7 @@ export default function NavigationOverlay() {
         <SaveRouteDialog
           route={route}
           destination={destination}
+          actualDistanceKm={getPolylineDistanceKm(drivePathHistory)}
           onSave={(name) => {
             saveRoute({ route, destination, name })
             setShowSaveDialog(false)
@@ -464,18 +530,32 @@ export default function NavigationOverlay() {
               </div>
               {nearbyFuelSummary && (
                 <div className="mt-3 grid grid-cols-2 gap-2">
-                  <div className="rounded-xl bg-orange-50 px-3 py-2">
+                  <button
+                    onClick={() => nearbyFuelSummary.nearbyLowestPoi && addPoiAsWaypoint(nearbyFuelSummary.nearbyLowestPoi)}
+                    disabled={!nearbyFuelSummary.nearbyLowestPoi}
+                    className="rounded-xl bg-orange-50 px-3 py-2 text-left disabled:opacity-50"
+                  >
                     <div className="text-[11px] text-orange-500 font-bold">근방 최저</div>
                     <div className="text-sm font-black text-gray-900">
-                      {Number.isFinite(nearbyFuelSummary.nearbyLowest) ? `${nearbyFuelSummary.nearbyLowest.toLocaleString()}원/L` : '--'}
+                      {nearbyFuelSummary.nearbyLowestPoi?.fuelPrice != null ? `${nearbyFuelSummary.nearbyLowestPoi.fuelPrice.toLocaleString()}원/L` : '--'}
                     </div>
-                  </div>
-                  <div className="rounded-xl bg-blue-50 px-3 py-2">
+                    <div className="text-[11px] text-gray-500 mt-1 truncate">
+                      {nearbyFuelSummary.nearbyLowestPoi?.name ?? '선택 불가'}
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => nearbyFuelSummary.routeLowestPoi && addPoiAsWaypoint(nearbyFuelSummary.routeLowestPoi)}
+                    disabled={!nearbyFuelSummary.routeLowestPoi}
+                    className="rounded-xl bg-blue-50 px-3 py-2 text-left disabled:opacity-50"
+                  >
                     <div className="text-[11px] text-blue-500 font-bold">경로상 최저</div>
                     <div className="text-sm font-black text-gray-900">
-                      {Number.isFinite(nearbyFuelSummary.routeLowest) ? `${nearbyFuelSummary.routeLowest.toLocaleString()}원/L` : '--'}
+                      {nearbyFuelSummary.routeLowestPoi?.fuelPrice != null ? `${nearbyFuelSummary.routeLowestPoi.fuelPrice.toLocaleString()}원/L` : '--'}
                     </div>
-                  </div>
+                    <div className="text-[11px] text-gray-500 mt-1 truncate">
+                      {nearbyFuelSummary.routeLowestPoi?.name ?? '경로상 주유소 없음'}
+                    </div>
+                  </button>
                 </div>
               )}
             </div>
@@ -498,11 +578,7 @@ export default function NavigationOverlay() {
                     )}
                   </div>
                   <button
-                    onClick={async () => {
-                      addWaypoint({ id: `wp-nav-${poi.lat}-${poi.lng}`, name: poi.name, lat: poi.lat, lng: poi.lng, address: poi.address })
-                      if (destination) await searchRoute(destination)
-                      setShowNearbyPanel(false)
-                    }}
+                    onClick={() => addPoiAsWaypoint(poi)}
                     className="px-3 py-1.5 rounded-xl bg-tmap-blue text-white text-xs font-bold flex-shrink-0"
                   >
                     경유
@@ -548,7 +624,7 @@ function JunctionChip({ opt, onSelect }) {
   )
 }
 
-function SaveRouteDialog({ route, destination, onSave, onDiscard }) {
+function SaveRouteDialog({ route, destination, actualDistanceKm, onSave, onDiscard }) {
   const [name, setName] = useState(
     destination?.name ? `→ ${destination.name}` : `경로 ${new Date().toLocaleDateString('ko-KR')}`
   )
@@ -561,7 +637,7 @@ function SaveRouteDialog({ route, destination, onSave, onDiscard }) {
         </div>
         <div className="text-lg font-black text-gray-900 mb-1">이 경로를 저장할까요?</div>
         <div className="text-sm text-gray-500 mb-4">
-          {route?.distance != null ? Number(route.distance).toFixed(2) : '--'}km · {route?.eta ? formatEta(route.eta) : '--'} · 통행료 {route?.tollFee ? `${route.tollFee.toLocaleString()}원` : '없음'}
+          실제 {actualDistanceKm > 0 ? actualDistanceKm.toFixed(2) : (route?.distance != null ? Number(route.distance).toFixed(2) : '--')}km · {route?.eta ? formatEta(route.eta) : '--'} · 통행료 {route?.tollFee ? `${route.tollFee.toLocaleString()}원` : '없음'}
         </div>
         <input
           className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-4 outline-none focus:border-tmap-blue"
