@@ -89,7 +89,7 @@ export default function NavigationOverlay() {
 
   const route = routes.find(r => r.id === selectedRouteId)
   const routeProgress = analyzeRouteProgress(route, userLocation)
-  const { nextJunction: nextRealJunction } = getUpcomingJunction(route, userLocation)
+  const { nextJunction: nextRealJunction, nextManeuver } = getUpcomingJunction(route, userLocation)
   const liveMergeOptions = getUpcomingMergeOptions(mergeOptions, routeProgress.progressKm)
   const nextMergeOpt = liveMergeOptions.find((option) => option.remainingDistanceKm > 0.03) ?? liveMergeOptions[0]
   const remainingEta = getRemainingEta(route, routeProgress.remainingKm)
@@ -123,19 +123,20 @@ export default function NavigationOverlay() {
 
   if (!isNavigating) return null
 
-  // 상단 배너: 실제 분기점 우선, 없으면 목적지
-  const bannerTitle = nextRealJunction
-    ? `${formatGuidanceDistance(nextRealJunction.remainingDistanceKm)} 후 ${getTurnInstruction(nextRealJunction.turnType)}`
+  // 상단 배너: 일반 회전 안내 우선, 없으면 분기점, 없으면 목적지
+  const nextGuidance = nextManeuver ?? nextRealJunction
+  const bannerTitle = nextGuidance
+    ? `${formatGuidanceDistance(nextGuidance.remainingDistanceKm)} 후 ${getTurnInstruction(nextGuidance.turnType)}`
     : destination?.name ?? '목적지'
-  const bannerSub = nextRealJunction
-    ? (nextRealJunction.afterRoadName
-        ? `${nextRealJunction.afterRoadName} 진입`
-        : `${nextRealJunction.afterRoadType === 'highway' ? '고속도로' : '국도'} 진입`)
+  const bannerSub = nextGuidance
+    ? (nextGuidance.afterRoadName
+        ? `${nextGuidance.afterRoadName} 진입`
+        : `${nextGuidance.afterRoadType === 'highway' ? '고속도로' : '국도'} 진입`)
     : `${routeProgress.remainingKm != null ? Number(routeProgress.remainingKm).toFixed(2) : '--'}km · ${remainingEta ? formatEta(remainingEta) : '--'} 소요`
-  const bannerLabel = nextRealJunction
+  const bannerLabel = nextGuidance
     ? '다음 안내'
     : '목적지 안내'
-  const bannerTurnType = nextRealJunction?.turnType ?? 11
+  const bannerTurnType = nextGuidance?.turnType ?? 11
 
   async function searchNearby(category) {
     setNearbyCategory(category)
@@ -278,8 +279,8 @@ export default function NavigationOverlay() {
 
       {showMerge && <MergeOptionsSheet onClose={() => setShowMerge(false)} />}
 
-      {/* 주유소/휴게소 빠른 추가 — 안내판 아래, 지도 우상단 */}
-      <div className="absolute top-36 right-3 z-20 flex flex-col gap-1.5">
+      {/* 주유소/휴게소 빠른 추가 — 홈 화면 우측 플로팅 버튼 위치로 이동 */}
+      <div className="absolute right-4 z-20 flex flex-col gap-2" style={{ bottom: '380px' }}>
         <button
           onClick={() => { setShowNearbyPanel(true); searchNearby('주유소') }}
           className="w-11 h-11 rounded-full bg-orange-500 text-white shadow-lg flex items-center justify-center text-base active:scale-95 transition-all"

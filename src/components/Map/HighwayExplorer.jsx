@@ -17,13 +17,13 @@ export default function HighwayExplorer({ onClose }) {
 
   const goStart = () => {
     if (!selected) return
-    searchRoute({ name: selected.startName, address: `${selected.name} 시점`, lat: selected.startCoord[0], lng: selected.startCoord[1] })
+    searchRoute({ name: selected.startName, address: selected.startAddress ?? selected.startName, lat: selected.startCoord[0], lng: selected.startCoord[1] })
     onClose()
   }
 
   const goEnd = () => {
     if (!selected) return
-    searchRoute({ name: selected.endName, address: `${selected.name} 종점`, lat: selected.endCoord[0], lng: selected.endCoord[1] })
+    searchRoute({ name: selected.endName, address: selected.endAddress ?? selected.endName, lat: selected.endCoord[0], lng: selected.endCoord[1] })
     onClose()
   }
 

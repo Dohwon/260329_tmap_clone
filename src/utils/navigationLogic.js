@@ -116,6 +116,12 @@ export function getRemainingEta(route, remainingKm) {
 
 export function getUpcomingJunction(route, userLocation) {
   const progress = analyzeRouteProgress(route, userLocation)
+  const maneuvers = (route?.maneuvers ?? [])
+    .map((maneuver) => ({
+      ...maneuver,
+      remainingDistanceKm: Math.max(0, (maneuver.distanceFromStart ?? 0) - progress.progressKm),
+    }))
+    .filter((maneuver) => maneuver.remainingDistanceKm > 0.02)
   const junctions = (route?.junctions ?? [])
     .map((junction) => ({
       ...junction,
@@ -125,6 +131,7 @@ export function getUpcomingJunction(route, userLocation) {
 
   return {
     progress,
+    nextManeuver: maneuvers[0] ?? null,
     nextJunction: junctions[0] ?? null,
   }
 }

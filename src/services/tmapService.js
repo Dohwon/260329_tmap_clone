@@ -49,19 +49,21 @@ function buildRoadSearchPlaces() {
   return HIGHWAYS.flatMap((road) => [
     {
       id: `${road.id}-start`,
-      name: `${road.name} 시점`,
+      name: road.startName ?? `${road.name} 시점`,
       address: road.startAddress ?? road.startName,
       lat: road.startCoord[0],
       lng: road.startCoord[1],
       category: road.roadClass === 'national' ? '국도' : '고속도로',
+      aliases: [`${road.name} 시점`, `${road.shortName} 시점`, road.startName].filter(Boolean),
     },
     {
       id: `${road.id}-end`,
-      name: `${road.name} 종점`,
+      name: road.endName ?? `${road.name} 종점`,
       address: road.endAddress ?? road.endName,
       lat: road.endCoord[0],
       lng: road.endCoord[1],
       category: road.roadClass === 'national' ? '국도' : '고속도로',
+      aliases: [`${road.name} 종점`, `${road.shortName} 종점`, road.endName].filter(Boolean),
     },
     ...road.majorJunctions.map((junction) => ({
       id: `${road.id}-${junction.name}`,
@@ -70,6 +72,16 @@ function buildRoadSearchPlaces() {
       lat: junction.coord[0],
       lng: junction.coord[1],
       category: '분기점',
+      aliases: [junction.name, `${road.name} ${junction.name}`],
+    })),
+    ...road.restStops.map((stop) => ({
+      id: stop.id,
+      name: stop.name,
+      address: `${road.name} ${stop.name}`,
+      lat: stop.coord[0],
+      lng: stop.coord[1],
+      category: stop.type === 'service' ? '휴게소' : '졸음쉼터',
+      aliases: [stop.name, `${road.name} ${stop.name}`],
     })),
   ])
 }
@@ -89,6 +101,14 @@ function normalizePoi(poi) {
   }
 }
 
+function sanitizeRouteLabel(label, fallback) {
+  return String(label ?? fallback ?? '')
+    .replace(/[^\p{L}\p{N}\s()\-]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 40) || fallback
+}
+
 function searchFallbackPlaces(keyword, nearLat, nearLng) {
   const normalized = keyword.trim().toLowerCase()
   const compact = normalizeSearchText(normalized)
@@ -106,6 +126,14 @@ function searchFallbackPlaces(keyword, nearLat, nearLng) {
       return distanceA - distanceB
     })
     .slice(0, 15)
+}
+
+function isSyntheticAddress(address) {
+  return /(시점|종점|\d+km 지점|현재 위치 기준)/.test(String(address ?? ''))
+}
+
+function isSyntheticName(name) {
+  return /(시점|종점|선택한 위치|지도 선택|현재 위치)/.test(String(name ?? ''))
 }
 
 function buildNearbyFallback(category, lat, lng) {
@@ -320,18 +348,18 @@ export async function fetchRouteByWaypoints(start, destination, wayPoints = [], 
   const body = {
     reqCoordType: 'WGS84GEO',
     resCoordType: 'WGS84GEO',
-    startName: start.name ?? '출발',
+    startName: sanitizeRouteLabel(start.name, '출발'),
     startX: String(start.lng),
     startY: String(start.lat),
     startTime: new Date().toISOString().slice(0, 16).replace(/[-:T]/g, ''),
-    endName: destination.name ?? '도착',
+    endName: sanitizeRouteLabel(destination.name, '도착'),
     endX: String(destination.lng),
     endY: String(destination.lat),
     searchOption: normalizeSearchOption(option.searchOption ?? '00'),
     carType: '0',
     viaPoints: wayPoints.map((point, index) => ({
       viaPointId: point.id ?? `via-${index}`,
-      viaPointName: point.name ?? `경유지 ${index + 1}`,
+      viaPointName: sanitizeRouteLabel(point.name, `경유지 ${index + 1}`),
       viaX: String(point.lng),
       viaY: String(point.lat),
       viaTime: String(point.viaTime ?? 0),
@@ -441,7 +469,8 @@ async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
   throw new Error(lastMessage)
 }
 
-// TMAP turnType: 125=분기, 126=합류, 127=진입, 128=진출, 129=IC, 130=JC
+// TMAP turnType: 12=좌회전, 13=우회전, 16/17=합류, 18/19=분기, 125~130=IC/JC/진출입
+const GUIDANCE_TURN_TYPES = new Set([12, 13, 14, 16, 17, 18, 19, 125, 126, 127, 128, 129, 130])
 const JUNCTION_TURN_TYPES = new Set([125, 126, 127, 128, 129, 130])
 
 function parseRouteResponse(json, option) {
@@ -454,6 +483,7 @@ function parseRouteResponse(json, option) {
   let nationalDist = 0
   let mergeCount = 0
   const junctions = [] // 실제 IC/JC 분기점
+  const maneuvers = [] // 일반 좌회전/우회전 포함 실제 안내 포인트
   let accumulatedDist = 0
   let currentRoadName = ''  // 현재 통과 중인 도로명
   let currentRoadNo = ''    // 현재 도로번호
@@ -501,29 +531,38 @@ function parseRouteResponse(json, option) {
     } else if (feature.geometry?.type === 'Point') {
       // Point 피처(전환점) 에서 분기점 정보 보완
       const props = feature.properties ?? {}
-      if (JUNCTION_TURN_TYPES.has(Number(props.turnType)) && props.name) {
-        mergeCount += 1
+      if (GUIDANCE_TURN_TYPES.has(Number(props.turnType)) && (props.name || props.description)) {
         const [lng, lat] = feature.geometry.coordinates
         const nextFeature = features.slice(fi + 1).find(f => f.geometry?.type === 'LineString')
         const afterRoadName = nextFeature?.properties?.roadName ?? ''
         const afterRoadNo = nextFeature?.properties?.roadNo ?? ''
         const afterRoadType = [4, 5, 6].includes(nextFeature?.properties?.roadType)
           ? 'highway' : 'national'
-        // 이미 같은 위치에 추가된 분기점 중복 방지
-        const isDup = junctions.some(j => Math.abs(j.lat - lat) < 0.001 && Math.abs(j.lng - lng) < 0.001)
-        if (!isDup) {
-          junctions.push({
-            id: `jct-${junctions.length}`,
-            name: props.name ?? props.description ?? `분기점 ${junctions.length + 1}`,
-            lat,
-            lng,
-            turnType: Number(props.turnType),
-            distanceFromStart: Math.round((props.totalDistance ?? accumulatedDist) / 100) / 10,
-            afterRoadType,
-            afterRoadName: afterRoadName
-              ? (afterRoadNo ? `${afterRoadName} (${afterRoadNo}호선)` : afterRoadName)
-              : (afterRoadType === 'highway' ? '고속도로' : '국도'),
-          })
+        const maneuver = {
+          id: `man-${maneuvers.length}`,
+          name: props.name ?? props.description ?? `안내 ${maneuvers.length + 1}`,
+          lat,
+          lng,
+          turnType: Number(props.turnType),
+          distanceFromStart: Math.round((props.totalDistance ?? accumulatedDist) / 100) / 10,
+          afterRoadType,
+          afterRoadName: afterRoadName
+            ? (afterRoadNo ? `${afterRoadName} (${afterRoadNo}호선)` : afterRoadName)
+            : (afterRoadType === 'highway' ? '고속도로' : '국도'),
+        }
+        const isDupManeuver = maneuvers.some((item) => Math.abs(item.lat - lat) < 0.0002 && Math.abs(item.lng - lng) < 0.0002)
+        if (!isDupManeuver) {
+          maneuvers.push(maneuver)
+        }
+        if (JUNCTION_TURN_TYPES.has(Number(props.turnType))) {
+          const isDupJunction = junctions.some((item) => Math.abs(item.lat - lat) < 0.0002 && Math.abs(item.lng - lng) < 0.0002)
+          if (!isDupJunction) {
+            mergeCount += 1
+            junctions.push({
+              ...maneuver,
+              id: `jct-${junctions.length}`,
+            })
+          }
         }
       }
     }
@@ -537,6 +576,10 @@ function parseRouteResponse(json, option) {
   const highwayRatio = Math.round((highwayDist / totalDist) * 100) || 0
   const nationalRoadRatio = 100 - highwayRatio
   const congestionScore = trafficTime / Math.max(totalTime, 1) > 0.3 ? 3 : trafficTime / Math.max(totalTime, 1) > 0.1 ? 2 : 1
+  const averageSpeed = totalTime > 0
+    ? Math.max(25, Math.round((totalDistance / totalTime) * 3.6))
+    : (highwayRatio >= 70 ? 86 : highwayRatio >= 40 ? 68 : 52)
+  const dominantSpeedLimit = highwayRatio >= 75 ? 110 : highwayRatio >= 45 ? 100 : 80
 
   // TMAP safetyFacilityList에서 실제 카메라 위치 추출
   const safetyList = summary.safetyFacilityList ?? []
@@ -585,12 +628,15 @@ function parseRouteResponse(json, option) {
     highwayRatio,
     nationalRoadRatio,
     mergeCount,
+    maneuvers,
     congestionScore,
     congestionLabel: ['', '원활', '서행', '정체'][congestionScore],
     fixedCameraCount,
     sectionCameraCount,
     sectionEnforcementDistance: highwayRatio >= 60 ? 6 : 0,
-    dominantSpeedLimit: highwayRatio >= 60 ? 100 : 80,
+    dominantSpeedLimit,
+    maxSpeedLimit: dominantSpeedLimit,
+    averageSpeed,
     tollFee: totalFare,
     recommended: option.isBaseline === true || option.searchOption === '2',
     tag: option.tag,
@@ -649,4 +695,26 @@ export async function reverseGeocode(lat, lng) {
     )[0]
     return nearest?.name ?? nearest?.address ?? null
   }
+}
+
+export async function enrichDestinationTarget(target) {
+  if (!target || !Number.isFinite(target.lat) || !Number.isFinite(target.lng)) return target
+
+  const next = { ...target }
+  const shouldResolveAddress = !next.address || isSyntheticAddress(next.address)
+  if (shouldResolveAddress) {
+    const resolvedAddress = await reverseGeocode(next.lat, next.lng).catch(() => null)
+    if (resolvedAddress) {
+      next.address = resolvedAddress
+      if (!next.name || isSyntheticName(next.name)) {
+        next.name = resolvedAddress
+      }
+    }
+  }
+
+  if (!next.name) {
+    next.name = next.address || '선택한 위치'
+  }
+
+  return next
 }

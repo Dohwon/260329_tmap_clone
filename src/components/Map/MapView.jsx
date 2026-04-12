@@ -243,7 +243,7 @@ export default function MapView({ darkMode = false }) {
               <button
                 onClick={() => {
                   const [lat, lng] = selectedRoad.startCoord
-                  searchRoute({ name: `${selectedRoad.name} 시점`, lat, lng, address: selectedRoad.startAddress ?? '' })
+                  searchRoute({ name: selectedRoad.startName, lat, lng, address: selectedRoad.startAddress ?? selectedRoad.startName ?? '' })
                 }}
                 className="mt-2 w-full py-1.5 rounded-lg bg-tmap-blue text-white text-xs font-bold"
               >
@@ -259,6 +259,15 @@ export default function MapView({ darkMode = false }) {
               {selectedRoad.endAddress && (
                 <div className="text-xs text-gray-500 mt-0.5">{selectedRoad.endAddress}</div>
               )}
+              <button
+                onClick={() => {
+                  const [lat, lng] = selectedRoad.endCoord
+                  searchRoute({ name: selectedRoad.endName, lat, lng, address: selectedRoad.endAddress ?? selectedRoad.endName ?? '' })
+                }}
+                className="mt-2 w-full py-1.5 rounded-lg bg-tmap-blue text-white text-xs font-bold"
+              >
+                🚗 여기로 안내
+              </button>
             </Popup>
           </Marker>
 
@@ -324,7 +333,7 @@ export default function MapView({ darkMode = false }) {
                 <button
                   onClick={() => {
                     const [lat, lng] = stop.coord
-                    searchRoute({ name: stop.name, lat, lng, address: `${selectedRoad.name} ${stop.km}km 지점` })
+                    searchRoute({ name: stop.name, lat, lng, address: `${selectedRoad.name} ${stop.name}` })
                   }}
                   className="mt-2 w-full py-1.5 rounded-lg bg-tmap-blue text-white text-xs font-bold"
                 >

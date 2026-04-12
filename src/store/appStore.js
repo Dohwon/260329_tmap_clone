@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { HIGHWAYS } from '../data/highwayData'
 import { SCENIC_SEGMENTS_SORTED } from '../data/scenicRoads'
 import { PRESET_INFO, MOCK_RECENT_SEARCHES } from '../data/mockData'
-import { fetchDirectRoute, fetchRouteByWaypoints, fetchRoutes, fetchTmapStatus, searchNearbyPOIs, searchPOI } from '../services/tmapService'
+import { enrichDestinationTarget, fetchDirectRoute, fetchRouteByWaypoints, fetchRoutes, fetchTmapStatus, searchNearbyPOIs, searchPOI } from '../services/tmapService'
 import { ensureLiveRouteSource, isUsableLiveRoute } from '../utils/navigationLogic'
 
 const DEFAULT_CENTER = [37.5665, 126.978]
@@ -483,6 +483,7 @@ function buildPolyline(origin, destination, offsetLng = 0) {
 function buildSegmentStats(route) {
   const pl = route.polyline ?? []
   const n = pl.length
+  const baseAverageSpeed = route.averageSpeed ?? Math.max(35, route.dominantSpeedLimit - (route.congestionScore === 3 ? 28 : route.congestionScore === 2 ? 16 : 8))
   // 폴리라인 길이에 무관하게 균등 분포 (긴 TMAP 경로에서도 올바른 위치)
   const c0 = pl[Math.max(0, Math.floor(n * 0.15))]
   const c1 = pl[Math.max(0, Math.floor(n * 0.5))]
@@ -494,7 +495,7 @@ function buildSegmentStats(route) {
       positions: pl.slice(0, Math.ceil(n / 3)),
       roadType: route.highwayRatio >= 50 ? 'highway' : 'national',
       speedLimit: route.dominantSpeedLimit,
-      averageSpeed: Math.max(35, route.dominantSpeedLimit - (route.congestionScore === 3 ? 28 : route.congestionScore === 2 ? 16 : 8)),
+      averageSpeed: Math.min(route.dominantSpeedLimit, Math.max(35, baseAverageSpeed + (route.highwayRatio >= 60 ? 6 : 2))),
       congestionScore: route.congestionScore,
       center: c0,
     },
@@ -504,7 +505,7 @@ function buildSegmentStats(route) {
       positions: pl.slice(Math.ceil(n / 3), Math.ceil(n * 2 / 3)),
       roadType: route.highwayRatio >= 50 ? 'junction' : 'national',
       speedLimit: Math.max(70, route.dominantSpeedLimit - 10),
-      averageSpeed: Math.max(30, route.dominantSpeedLimit - 24),
+      averageSpeed: Math.max(30, Math.min(route.dominantSpeedLimit - 4, baseAverageSpeed - 8)),
       congestionScore: Math.min(3, route.congestionScore + 1),
       center: c1,
     },
@@ -514,7 +515,7 @@ function buildSegmentStats(route) {
       positions: pl.slice(Math.ceil(n * 2 / 3)),
       roadType: 'local',
       speedLimit: Math.max(50, route.dominantSpeedLimit - 30),
-      averageSpeed: Math.max(25, route.dominantSpeedLimit - 36),
+      averageSpeed: Math.max(25, Math.min(route.dominantSpeedLimit - 10, baseAverageSpeed - 15)),
       congestionScore: Math.min(3, route.congestionScore + 1),
       center: c2,
     },
@@ -538,6 +539,8 @@ function decorateRoute(route, index, context) {
   let highwayRatio = route.highwayRatio
   let nationalRoadRatio = route.nationalRoadRatio
   let dominantSpeedLimit = route.dominantSpeedLimit
+  let maxSpeedLimit = route.maxSpeedLimit ?? route.dominantSpeedLimit
+  let averageSpeed = route.averageSpeed
 
   // 초보: 시간 페널티 없음 — 단순히 합류 횟수를 줄여서 표시
   if (driverPreset === 'beginner') {
@@ -552,10 +555,14 @@ function decorateRoute(route, index, context) {
     highwayRatio = Math.max(85, highwayRatio)
     nationalRoadRatio = 100 - highwayRatio
     dominantSpeedLimit = Math.max(100, dominantSpeedLimit)
+    maxSpeedLimit = Math.max(110, maxSpeedLimit)
+    averageSpeed = Math.max(averageSpeed ?? 0, 82)
   } else if (routePreferences.roadType === 'national_road') {
     nationalRoadRatio = Math.max(58, nationalRoadRatio)
     highwayRatio = 100 - nationalRoadRatio
     dominantSpeedLimit = Math.min(80, dominantSpeedLimit)
+    maxSpeedLimit = Math.min(90, maxSpeedLimit)
+    averageSpeed = Math.min(averageSpeed ?? 68, 68)
     eta += 5
   }
 
@@ -566,14 +573,16 @@ function decorateRoute(route, index, context) {
     highwayRatio,
     nationalRoadRatio,
     dominantSpeedLimit,
+    maxSpeedLimit,
+    averageSpeed,
   }
 
   const difficultyScore = mergeCount + (nextRoute.congestionScore * 2)
   nextRoute.difficultyLabel = difficultyScore >= 12 ? '난이도 상' : difficultyScore >= 8 ? '난이도 중' : '난이도 하'
   nextRoute.difficultyColor = difficultyScore >= 12 ? 'red' : difficultyScore >= 8 ? 'orange' : 'green'
   nextRoute.segmentStats = buildSegmentStats(nextRoute)
-  nextRoute.averageSpeed = Math.round(nextRoute.segmentStats.reduce((sum, segment) => sum + segment.averageSpeed, 0) / nextRoute.segmentStats.length)
-  nextRoute.maxSpeedLimit = Math.max(...nextRoute.segmentStats.map((segment) => segment.speedLimit))
+  nextRoute.averageSpeed = averageSpeed ?? Math.round(nextRoute.segmentStats.reduce((sum, segment) => sum + segment.averageSpeed, 0) / nextRoute.segmentStats.length)
+  nextRoute.maxSpeedLimit = maxSpeedLimit ?? Math.max(...nextRoute.segmentStats.map((segment) => segment.speedLimit))
   nextRoute.nextSegments = buildNextSegments(nextRoute)
 
   // 도심 판단 밀도 (경로 카드·합류옵션 UI 표기용)
@@ -1073,11 +1082,12 @@ const useAppStore = create((set, get) => ({
   },
 
   searchRoute: async (destination) => {
+    const normalizedDestination = await enrichDestinationTarget(destination)
     const origin = await resolveRoutingOrigin(get().userLocation ?? DEFAULT_ORIGIN)
     const { routePreferences, driverPreset } = get()
     set({
       activeTab: 'home',
-      destination,
+      destination: normalizedDestination,
       showRoutePanel: true,
       routePanelMode: 'full',
       isLoadingRoutes: true,
@@ -1085,14 +1095,14 @@ const useAppStore = create((set, get) => ({
       selectedRouteId: null,
       selectedRoadId: null,
     })
-    get().addRecentSearch(destination)
+    get().addRecentSearch(normalizedDestination)
 
     const tmapStatus = await fetchTmapStatus()
     get().setTmapStatus({ ...tmapStatus, lastError: null })
 
     let liveRoutes = []
     try {
-      liveRoutes = await loadLiveRoutes(origin, destination, get().waypoints, routePreferences)
+      liveRoutes = await loadLiveRoutes(origin, normalizedDestination, get().waypoints, routePreferences)
       if (liveRoutes.length > 0) {
         get().setTmapStatus({ hasApiKey: true, mode: 'live', lastError: null })
       }
@@ -1104,27 +1114,31 @@ const useAppStore = create((set, get) => ({
       })
     }
 
-    const routes = liveRoutes
-      .map((route, index) => decorateRoute(route, index, { origin, destination, routePreferences, driverPreset }))
-
-    const selectedRouteId = routes[0]?.id ?? null
-    const selectedRoute = routes[0] ?? null
+    const decoratedRoutes = liveRoutes
+      .map((route, index) => decorateRoute(route, index, {
+        origin,
+        destination: normalizedDestination,
+        routePreferences,
+        driverPreset,
+      }))
+    const selectedRouteId = decoratedRoutes[0]?.id ?? null
+    const selectedRoute = decoratedRoutes[0] ?? null
 
     // 해안/산악도로 감지 — 타입별 독립 필터 (해안선호≠산악선호)
     const wantsCoastal = routePreferences.includeScenic || driverPreset === 'expert'
     const wantsMountain = routePreferences.includeMountain || driverPreset === 'expert'
     const scenicRoadSuggestions = (wantsCoastal || wantsMountain)
-      ? detectScenicRoads(origin, destination, selectedRoute?.polyline ?? [])
+      ? detectScenicRoads(origin, normalizedDestination, selectedRoute?.polyline ?? [])
           .filter(s => s.scenicType === 'coastal' ? wantsCoastal : wantsMountain)
       : []
 
     set({
-      routes,
+      routes: decoratedRoutes,
       selectedRouteId,
       isLoadingRoutes: false,
       selectedMergeOptionId: 'merge-current',
       mergeOptions: selectedRoute ? buildMergeOptions(selectedRoute, 'merge-current', driverPreset) : [],
-      mapCenter: selectedRoute?.polyline?.[Math.floor(selectedRoute.polyline.length / 2)] ?? [destination.lat, destination.lng],
+      mapCenter: selectedRoute?.polyline?.[Math.floor(selectedRoute.polyline.length / 2)] ?? [normalizedDestination.lat, normalizedDestination.lng],
       mapZoom: selectedRoute ? 8 : 14,
       scenicRoadSuggestions,
     })
