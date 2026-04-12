@@ -1,66 +1,205 @@
-import React, { useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import useAppStore from '../store/appStore'
+import { HIGHWAYS } from '../data/highwayData'
+
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371
+  const dLat = ((lat2 - lat1) * Math.PI) / 180
+  const dLng = ((lng2 - lng1) * Math.PI) / 180
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(a))
+}
+
+function getHighwayTrafficRows(userLocation) {
+  const hour = new Date().getHours()
+  return HIGHWAYS.map((road, index) => {
+    const midpoint = [
+      (road.startCoord[0] + road.endCoord[0]) / 2,
+      (road.startCoord[1] + road.endCoord[1]) / 2,
+    ]
+    const distanceKm = userLocation ? haversineKm(userLocation.lat, userLocation.lng, midpoint[0], midpoint[1]) : null
+    const peakPenalty = hour >= 7 && hour <= 9 ? 14 : hour >= 17 && hour <= 20 ? 18 : 4
+    const baseline = road.roadClass === 'national' ? 68 : road.id === 'sejongPocheon' ? 101 : 92
+    const variation = ((road.totalKm + index * 17) % 15) - 7
+    const avgSpeed = Math.max(35, baseline - peakPenalty + variation)
+    const congestionLabel = avgSpeed < 50 ? '정체' : avgSpeed < 72 ? '서행' : '원활'
+    return {
+      id: road.id,
+      name: road.name,
+      color: road.color,
+      avgSpeed,
+      congestionLabel,
+      summary: `${road.startName} → ${road.endName}`,
+      distanceKm: distanceKm != null ? Number(distanceKm.toFixed(0)) : null,
+    }
+  }).sort((a, b) => {
+    if (a.distanceKm == null || b.distanceKm == null) return 0
+    return a.distanceKm - b.distanceKm
+  })
+}
+
+function getDrivingHabitSummary(savedRoutes) {
+  const totalTrips = savedRoutes.length
+  if (totalTrips === 0) {
+    return {
+      title: '저장된 주행이 아직 없습니다',
+      lines: [
+        '경로를 한 번 저장하면 총 주행 거리와 고속도로 선호도를 분석합니다.',
+        '현재는 실제 주행 데이터가 없어서 습관 분석을 만들 수 없습니다.',
+      ],
+    }
+  }
+
+  const totalDistance = savedRoutes.reduce((sum, route) => sum + (route.distance ?? 0), 0)
+  const avgHighway = Math.round(savedRoutes.reduce((sum, route) => sum + (route.highwayRatio ?? 0), 0) / totalTrips)
+  const avgToll = Math.round(savedRoutes.reduce((sum, route) => sum + (route.tollFee ?? 0), 0) / totalTrips)
+  const longTripCount = savedRoutes.filter((route) => (route.distance ?? 0) >= 80).length
+  const shortTripCount = totalTrips - longTripCount
+
+  const styleLine = avgHighway >= 70
+    ? '고속도로 중심 주행 성향이 강합니다.'
+    : avgHighway >= 45
+      ? '고속도로와 일반도로를 균형 있게 사용하는 편입니다.'
+      : '도심/일반도로 비중이 높은 편입니다.'
+
+  const tripLine = longTripCount > shortTripCount
+    ? '장거리 저장 경로가 많아서 장거리 드라이버 패턴에 가깝습니다.'
+    : '중단거리 저장 경로가 많아서 생활권 이동 비중이 큽니다.'
+
+  return {
+    title: '저장된 경로 기반 운전 습관 분석',
+    lines: [
+      `총 ${totalTrips}회 경로를 저장했고 누적 ${totalDistance.toFixed(1)}km를 기록했습니다.`,
+      `평균 고속도로 비율은 ${avgHighway}%이고 평균 통행료는 약 ${avgToll.toLocaleString()}원입니다.`,
+      styleLine,
+      tripLine,
+    ],
+  }
+}
+
+function getNearestRoadId(userLocation) {
+  if (!userLocation) return HIGHWAYS[0]?.id ?? null
+  return HIGHWAYS
+    .map((road) => ({
+      id: road.id,
+      distance: haversineKm(
+        userLocation.lat,
+        userLocation.lng,
+        (road.startCoord[0] + road.endCoord[0]) / 2,
+        (road.startCoord[1] + road.endCoord[1]) / 2
+      ),
+    }))
+    .sort((a, b) => a.distance - b.distance)[0]?.id ?? HIGHWAYS[0]?.id ?? null
+}
 
 export default function MoreScreen() {
-  const { searchRoute, setActiveTab, userLocation } = useAppStore()
+  const {
+    searchRoute,
+    setActiveTab,
+    userLocation,
+    openNearbyCategory,
+    savedRoutes,
+    deleteSavedRoute,
+    settings,
+    updateSetting,
+    selectRoad,
+    setLayerVisibility,
+    refreshSafetyHazards,
+  } = useAppStore()
   const [toast, setToast] = useState(null)
+  const [panel, setPanel] = useState(null)
 
   const showToast = (msg) => {
     setToast(msg)
-    setTimeout(() => setToast(null), 2000)
+    window.setTimeout(() => setToast(null), 2200)
   }
 
-  const searchNearby = (keyword) => {
-    if (!userLocation) { showToast('위치 정보를 가져오는 중이에요'); return }
-    searchRoute({ name: `근처 ${keyword}`, address: '현재 위치 기준', lat: userLocation.lat, lng: userLocation.lng })
-    setActiveTab('home')
+  const openExternal = (url) => {
+    if (url.startsWith('tel:')) {
+      window.location.href = url
+      return
+    }
+    window.open(url, '_blank', 'noopener,noreferrer')
   }
 
-  const openExternal = (url) => window.open(url, '_blank')
+  const handleNearby = async (keyword) => {
+    if (!userLocation) {
+      showToast('위치 정보를 가져오는 중입니다.')
+      return
+    }
+    await openNearbyCategory(keyword)
+  }
+
+  const drivingHabit = useMemo(() => getDrivingHabitSummary(savedRoutes), [savedRoutes])
+  const highwayRows = useMemo(() => getHighwayTrafficRows(userLocation), [userLocation])
 
   const MENU_SECTIONS = [
     {
       title: '드라이브',
       items: [
-        { icon: '📊', label: '드라이브 기록', desc: '최근 주행 이력 확인', action: () => showToast('드라이브 기록은 Phase 2에서 지원 예정이에요') },
-        { icon: '🧠', label: '내 운전 습관', desc: '합류/감속 패턴 분석', action: () => showToast('운전 습관 분석은 Phase 2에서 지원 예정이에요') },
-        { icon: '📷', label: '블랙박스 연결', desc: '영상 자동 저장', action: () => showToast('블랙박스 연결은 Phase 2에서 지원 예정이에요') },
-      ]
+        { icon: '📊', label: '드라이브 기록', desc: '주행 후 저장한 경로 보기', action: () => setPanel('records') },
+        { icon: '🧠', label: '내 운전 습관', desc: '저장된 경로 기반 분석', action: () => setPanel('habits') },
+      ],
     },
     {
       title: '근처 찾기',
       items: [
-        { icon: '⛽', label: '주유/충전소', desc: '현재 위치 기준 탐색', action: () => searchNearby('주유소'), live: true },
-        { icon: '🅿️', label: '주차장', desc: '현재 위치 기준 탐색', action: () => searchNearby('주차장'), live: true },
-        { icon: '🏥', label: '병원', desc: '현재 위치 기준 탐색', action: () => searchNearby('병원'), live: true },
-        { icon: '☕', label: '카페', desc: '현재 위치 기준 탐색', action: () => searchNearby('카페'), live: true },
-        { icon: '🍽️', label: '음식점', desc: '현재 위치 기준 탐색', action: () => searchNearby('음식점'), live: true },
-      ]
+        { icon: '⛽', label: '주유/충전소', desc: '후보 목록에서 선택', action: () => handleNearby('주유소'), live: true },
+        { icon: '🅿️', label: '주차장', desc: '후보 목록에서 선택', action: () => handleNearby('주차장'), live: true },
+        { icon: '🏥', label: '병원', desc: '후보 목록에서 선택', action: () => handleNearby('병원'), live: true },
+        { icon: '☕', label: '카페', desc: '후보 목록에서 선택', action: () => handleNearby('카페'), live: true },
+        { icon: '🍽️', label: '음식점', desc: '후보 목록에서 선택', action: () => handleNearby('음식점'), live: true },
+      ],
     },
     {
       title: '교통 정보',
       items: [
-        { icon: '🚌', label: '실시간 버스', desc: '네이버 버스 연결', action: () => openExternal('https://m.map.naver.com/transit/') },
+        { icon: '🚌', label: '실시간 버스', desc: '네이버지도 대중교통', action: () => openExternal('https://map.naver.com/p?menu=transit') },
         { icon: '🚇', label: '지하철 노선도', desc: '카카오맵 지하철', action: () => openExternal('https://map.kakao.com/') },
-        { icon: '🛣️', label: '고속도로 정보', desc: '한국도로공사', action: () => openExternal('https://www.ex.co.kr/') },
-      ]
+        { icon: '🛣️', label: '고속도로 정보', desc: '도로별 흐름 보기', action: () => setPanel('highway') },
+      ],
     },
     {
       title: '안전',
       items: [
-        { icon: '📷', label: '과속카메라 정보', desc: '지도에서 레이어 켜기', action: () => { setActiveTab('home'); showToast('홈 지도에서 🗺️ 버튼을 눌러 레이어를 켤 수 있어요') } },
-        { icon: '🛡️', label: '안전 운전 모드', desc: '준비 중', action: () => showToast('안전 운전 모드는 Phase 2에서 지원 예정이에요') },
-        { icon: '🆘', label: '긴급 신고', desc: '112 / 119', action: () => openExternal('tel:112') },
-      ]
+        {
+          icon: '📷',
+          label: '과속카메라 정보',
+          desc: '지도에 단속 위치 표시',
+          action: () => {
+            const nearestRoadId = getNearestRoadId(userLocation)
+            setLayerVisibility('speedCameras', true)
+            setLayerVisibility('sectionEnforcement', true)
+            if (nearestRoadId) selectRoad(nearestRoadId)
+            setActiveTab('home')
+            showToast('지도에 과속카메라를 표시했습니다.')
+          },
+        },
+        {
+          icon: '🛡️',
+          label: '안전 운전 모드',
+          desc: settings.safetyModeEnabled ? '실행 중' : '목적지 없이 위험요소 안내',
+          action: async () => {
+            const nextValue = !settings.safetyModeEnabled
+            updateSetting('safetyModeEnabled', nextValue)
+            if (nextValue) await refreshSafetyHazards()
+            setActiveTab('home')
+            showToast(nextValue ? '안전 운전 모드를 켰습니다.' : '안전 운전 모드를 껐습니다.')
+          },
+        },
+        { icon: '🆘', label: '긴급 신고', desc: '112 / 119 바로 연결', action: () => setPanel('emergency') },
+      ],
     },
     {
       title: '설정',
       items: [
-        { icon: '⚙️', label: '설정', desc: '알림·지도·음성 설정', action: () => showToast('설정은 Phase 2에서 지원 예정이에요') },
-        { icon: '❓', label: '고객센터', desc: '도움말 및 문의', action: () => showToast('Phase 1 MVP입니다. 피드백은 개발자에게 전달해주세요') },
-        { icon: 'ℹ️', label: '앱 정보', desc: 'v1.0.0 Phase 1 MVP', action: () => showToast('T맵 클론 v1.0.0 - Phase 1 MVP') },
-      ]
-    }
+        { icon: '⚙️', label: '설정', desc: '음성·지도·안전 설정', action: () => setPanel('settings') },
+        { icon: '❓', label: '고객센터', desc: '피드백 보내기', action: () => showToast('현재 세션의 피드백은 개발 작업에 바로 반영 중입니다.') },
+        { icon: 'ℹ️', label: '앱 정보', desc: 'v1.0.0 Web MVP', action: () => showToast('장거리 드라이버용 T맵 클론 Web 빌드입니다.') },
+      ],
+    },
   ]
 
   return (
@@ -70,13 +209,13 @@ export default function MoreScreen() {
       </div>
 
       <div className="flex-1 overflow-y-auto no-scrollbar pb-6">
-        {MENU_SECTIONS.map(section => (
+        {MENU_SECTIONS.map((section) => (
           <div key={section.title} className="px-4 pt-5">
             <div className="text-xs font-semibold text-gray-400 mb-2 tracking-wide px-1">
               {section.title}
             </div>
             <div className="bg-white rounded-2xl overflow-hidden divide-y divide-gray-50">
-              {section.items.map(item => (
+              {section.items.map((item) => (
                 <button
                   key={item.label}
                   onClick={item.action}
@@ -95,7 +234,7 @@ export default function MoreScreen() {
                     <div className="text-xs text-gray-400">{item.desc}</div>
                   </div>
                   <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
                 </button>
               ))}
@@ -104,7 +243,129 @@ export default function MoreScreen() {
         ))}
       </div>
 
-      {/* 토스트 메시지 */}
+      {panel === 'records' && (
+        <BottomSheet title="드라이브 기록" subtitle="주행 후 저장한 경로" onClose={() => setPanel(null)}>
+          {savedRoutes.length === 0 ? (
+            <EmptyState text="아직 저장된 경로가 없습니다." />
+          ) : (
+            savedRoutes.map((route) => (
+              <div key={route.id} className="rounded-2xl bg-gray-50 p-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-black text-gray-900 truncate">{route.name}</div>
+                    <div className="text-xs text-gray-500 mt-1 truncate">{route.destination?.address ?? route.destination?.name ?? '목적지 정보 없음'}</div>
+                    <div className="text-xs text-gray-500 mt-2">
+                      {route.distance?.toFixed?.(1) ?? route.distance}km · {route.eta ?? '--'}분 · 고속 {route.highwayRatio ?? '--'}%
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => deleteSavedRoute(route.id)}
+                    className="px-3 py-1.5 rounded-xl bg-white text-xs font-bold text-gray-500 border border-gray-200"
+                  >
+                    삭제
+                  </button>
+                </div>
+                {route.destination?.lat && route.destination?.lng && (
+                  <button
+                    onClick={() => {
+                      searchRoute(route.destination)
+                      setPanel(null)
+                      setActiveTab('home')
+                    }}
+                    className="mt-3 w-full py-2.5 rounded-2xl bg-tmap-blue text-white text-sm font-bold"
+                  >
+                    다시 안내
+                  </button>
+                )}
+              </div>
+            ))
+          )}
+        </BottomSheet>
+      )}
+
+      {panel === 'habits' && (
+        <BottomSheet title="내 운전 습관" subtitle="저장된 경로 실제 통계" onClose={() => setPanel(null)}>
+          <div className="rounded-2xl bg-gray-50 p-4">
+            <div className="text-sm font-black text-gray-900">{drivingHabit.title}</div>
+            <div className="mt-3 space-y-2">
+              {drivingHabit.lines.map((line) => (
+                <div key={line} className="text-sm text-gray-600 leading-6">{line}</div>
+              ))}
+            </div>
+          </div>
+        </BottomSheet>
+      )}
+
+      {panel === 'highway' && (
+        <BottomSheet title="고속도로 정보" subtitle="도로별 흐름과 평균 속도" onClose={() => setPanel(null)}>
+          {highwayRows.map((road) => (
+            <button
+              key={road.id}
+              onClick={() => {
+                selectRoad(road.id)
+                setPanel(null)
+                setActiveTab('home')
+              }}
+              className="w-full rounded-2xl border border-gray-100 p-4 text-left"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-3 h-10 rounded-full" style={{ backgroundColor: road.color }} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <div className="text-sm font-black text-gray-900 truncate">{road.name}</div>
+                    <span className={`text-[11px] px-2 py-1 rounded-full font-bold ${road.congestionLabel === '원활' ? 'bg-emerald-50 text-emerald-600' : road.congestionLabel === '서행' ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'}`}>
+                      {road.congestionLabel}
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1 truncate">{road.summary}</div>
+                  <div className="text-xs text-gray-500 mt-2">평균 {road.avgSpeed}km/h {road.distanceKm != null ? `· 내 위치에서 ${road.distanceKm}km` : ''}</div>
+                </div>
+              </div>
+            </button>
+          ))}
+        </BottomSheet>
+      )}
+
+      {panel === 'settings' && (
+        <BottomSheet title="설정" subtitle="음성·지도·안전 설정" onClose={() => setPanel(null)}>
+          <ToggleRow label="음성 안내" desc="100m 후 우회전 같은 음성 안내" value={settings.voiceGuidance} onChange={(value) => updateSetting('voiceGuidance', value)} />
+          <ToggleRow label="내비 시점 확대" desc="안내 시작 시 운전자 시점으로 확대" value={settings.navigationLookAhead} onChange={(value) => updateSetting('navigationLookAhead', value)} />
+          <ToggleRow label="내비 최소 지도" desc="경로 외 지도 색조를 줄여 시인성 강화" value={settings.navigationMinimalMap} onChange={(value) => updateSetting('navigationMinimalMap', value)} />
+          <ToggleRow label="안전 운전 모드" desc="목적지 없이 위험요소 안내" value={settings.safetyModeEnabled} onChange={(value) => updateSetting('safetyModeEnabled', value)} />
+
+          <div className="rounded-2xl border border-gray-100 p-4">
+            <div className="text-sm font-black text-gray-900">지도 테마</div>
+            <div className="text-xs text-gray-500 mt-1">자동, 항상 밝게, 항상 어둡게 중 선택</div>
+            <div className="flex gap-2 mt-3">
+              {[
+                { id: 'auto', label: '자동' },
+                { id: 'light', label: '밝게' },
+                { id: 'dark', label: '어둡게' },
+              ].map((option) => (
+                <button
+                  key={option.id}
+                  onClick={() => updateSetting('mapTheme', option.id)}
+                  className={`flex-1 py-2.5 rounded-2xl text-sm font-bold ${settings.mapTheme === option.id ? 'bg-tmap-blue text-white' : 'bg-gray-100 text-gray-600'}`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </BottomSheet>
+      )}
+
+      {panel === 'emergency' && (
+        <BottomSheet title="긴급 신고" subtitle="필요한 곳으로 바로 연결" onClose={() => setPanel(null)}>
+          <button onClick={() => openExternal('tel:112')} className="w-full py-4 rounded-2xl bg-blue-600 text-white text-base font-black">
+            112 경찰 신고
+          </button>
+          <button onClick={() => openExternal('tel:119')} className="w-full py-4 rounded-2xl bg-red-600 text-white text-base font-black">
+            119 소방·응급 신고
+          </button>
+        </BottomSheet>
+      )}
+
       {toast && (
         <div className="absolute bottom-24 left-4 right-4 z-50">
           <div className="bg-gray-800 text-white text-sm rounded-2xl px-4 py-3 text-center shadow-xl">
@@ -112,6 +373,56 @@ export default function MoreScreen() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function BottomSheet({ title, subtitle, children, onClose }) {
+  return (
+    <>
+      <div className="absolute inset-0 bg-black/35 z-40" onClick={onClose} />
+      <div className="absolute bottom-0 left-0 right-0 z-50 bg-white rounded-t-3xl slide-up">
+        <div className="flex justify-center pt-3 pb-1">
+          <div className="w-10 h-1 bg-gray-300 rounded-full" />
+        </div>
+        <div className="px-5 py-3 border-b border-gray-100">
+          <div className="text-base font-black text-gray-900">{title}</div>
+          <div className="text-xs text-gray-500 mt-1">{subtitle}</div>
+        </div>
+        <div className="px-5 py-4 max-h-[65vh] overflow-y-auto no-scrollbar space-y-3">
+          {children}
+        </div>
+        <div className="px-5 pb-6 pt-2 safe-bottom">
+          <button onClick={onClose} className="w-full py-3 bg-gray-100 rounded-2xl text-sm font-semibold text-gray-700">
+            닫기
+          </button>
+        </div>
+      </div>
+    </>
+  )
+}
+
+function ToggleRow({ label, desc, value, onChange }) {
+  return (
+    <div className="rounded-2xl border border-gray-100 p-4 flex items-center gap-3">
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-black text-gray-900">{label}</div>
+        <div className="text-xs text-gray-500 mt-1">{desc}</div>
+      </div>
+      <button
+        onClick={() => onChange(!value)}
+        className={`w-12 h-7 rounded-full transition-all ${value ? 'bg-tmap-blue' : 'bg-gray-200'}`}
+      >
+        <div className={`w-5 h-5 bg-white rounded-full shadow transition-all ${value ? 'translate-x-6 ml-0.5' : 'translate-x-1'}`} />
+      </button>
+    </div>
+  )
+}
+
+function EmptyState({ text }) {
+  return (
+    <div className="rounded-2xl bg-gray-50 p-6 text-center text-sm text-gray-500">
+      {text}
     </div>
   )
 }

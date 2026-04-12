@@ -2,6 +2,7 @@ import React, { useEffect, useMemo } from 'react'
 import { CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import useAppStore from '../../store/appStore'
+import { HIGHWAYS } from '../../data/highwayData'
 import { shouldUseRawRoutePolyline } from '../../utils/navigationLogic'
 
 delete L.Icon.Default.prototype._getIconUrl
@@ -57,12 +58,23 @@ const drowsyIcon = makeBadgeIcon({ text: '쉼', background: COLORS.restStop, siz
 const startIcon = makeBadgeIcon({ text: '시', background: '#111827' })
 const endIcon = makeBadgeIcon({ text: '종', background: '#2563EB' })
 const junctionIcon = makeBadgeIcon({ text: '분', background: '#FF6B00', size: 26 })
+const schoolZoneIcon = makeBadgeIcon({ text: '30', background: '#F59E0B', size: 30 })
+const speedBumpIcon = makeBadgeIcon({ text: '턱', background: '#0EA5E9', size: 30 })
 
-function MapController({ center, zoom }) {
+function getLookAheadCenter(map, location, zoom = 17, enabled = true) {
+  if (!location) return null
+  const latLng = L.latLng(location.lat, location.lng)
+  if (!enabled) return latLng
+  const projected = map.project(latLng, zoom)
+  return map.unproject(projected.add([0, -160]), zoom)
+}
+
+function MapController({ center, zoom, darkMode, minimalMap }) {
   const isNavigating = useAppStore((s) => s.isNavigating)
   const navAutoFollow = useAppStore((s) => s.navAutoFollow)
   const setNavAutoFollow = useAppStore((s) => s.setNavAutoFollow)
   const userLocation = useAppStore((s) => s.userLocation)
+  const settings = useAppStore((s) => s.settings)
 
   // 드래그만 auto-follow 해제 (zoomstart는 setView/panTo 프로그래밍 호출도 발생시키므로 제외)
   const map = useMapEvents({
@@ -74,24 +86,41 @@ function MapController({ center, zoom }) {
     if (!isNavigating) return
     const freshLoc = useAppStore.getState().userLocation
     const target = freshLoc
-      ? [freshLoc.lat, freshLoc.lng]
+      ? getLookAheadCenter(map, freshLoc, 17, settings.navigationLookAhead)
       : (Array.isArray(center) ? center : null)
-    if (target) map.setView(target, 16, { animate: true, duration: 0.5 })
+    if (target) map.setView(target, 17, { animate: true, duration: 0.5 })
     // 시작 시 자동추적 활성화
     useAppStore.getState().setNavAutoFollow(true)
-  }, [isNavigating]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isNavigating, settings.navigationLookAhead]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 연속 auto-follow: 내비 시작 직후에는 확대 수준을 유지하고, 이후에는 부드럽게 중심만 이동
   useEffect(() => {
     if (!isNavigating || !navAutoFollow || !userLocation) return
-    const target = L.latLng(userLocation.lat, userLocation.lng)
+    const target = getLookAheadCenter(map, userLocation, 17, settings.navigationLookAhead) ?? L.latLng(userLocation.lat, userLocation.lng)
     const centerDistance = map.distance(map.getCenter(), target)
-    if (map.getZoom() < 16 || centerDistance > 120) {
-      map.setView(target, Math.max(16, map.getZoom()), { animate: true, duration: 0.35 })
+    if (map.getZoom() < 17 || centerDistance > 80) {
+      map.setView(target, Math.max(17, map.getZoom()), { animate: true, duration: 0.35 })
       return
     }
     map.panTo(target, { animate: true, duration: 0.3 })
-  }, [userLocation, navAutoFollow, isNavigating]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [userLocation, navAutoFollow, isNavigating, settings.navigationLookAhead]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const tilePane = map.getPane('tilePane')
+    if (!tilePane) return
+    if (darkMode) {
+      tilePane.style.filter = 'grayscale(0.35) saturate(0.55) brightness(0.48) contrast(1.08)'
+      tilePane.style.opacity = '0.96'
+      return
+    }
+    if (isNavigating && minimalMap) {
+      tilePane.style.filter = 'grayscale(0.72) saturate(0.45) brightness(0.88)'
+      tilePane.style.opacity = '0.78'
+      return
+    }
+    tilePane.style.filter = 'none'
+    tilePane.style.opacity = '1'
+  }, [darkMode, isNavigating, map, minimalMap])
 
   // 일반 지도 이동 (안내 중에는 무시)
   useEffect(() => {
@@ -102,6 +131,40 @@ function MapController({ center, zoom }) {
   }, [center, zoom]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return null
+}
+
+function haversineM(lat1, lng1, lat2, lng2) {
+  const R = 6371000
+  const dLat = ((lat2 - lat1) * Math.PI) / 180
+  const dLng = ((lng2 - lng1) * Math.PI) / 180
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(a))
+}
+
+function buildNearbyRoadCameras(userLocation) {
+  if (!userLocation) return []
+
+  return HIGHWAYS.flatMap((road) => {
+    const points = [road.startCoord, ...road.majorJunctions.map((junction) => junction.coord), road.endCoord]
+    return points.slice(1).map((coord, index) => {
+      const previous = points[index]
+      const mid = [(previous[0] + coord[0]) / 2, (previous[1] + coord[1]) / 2]
+      const speedLimit = road.id === 'sejongPocheon' ? 110 : 100
+      return {
+        id: `${road.id}-nearby-cam-${index}`,
+        coord: mid,
+        type: 'fixed',
+        label: `${road.shortName} 지점단속`,
+        speedLimit,
+        distanceM: haversineM(userLocation.lat, userLocation.lng, mid[0], mid[1]),
+      }
+    })
+  })
+    .filter((camera) => camera.distanceM <= 8000)
+    .sort((a, b) => a.distanceM - b.distanceM)
+    .slice(0, 10)
 }
 
 function smoothPath(positions, curvature = 0.18) {
@@ -171,6 +234,9 @@ export default function MapView({ darkMode = false }) {
     getSelectedRoadDetail,
     cameraReports,
     searchRoute,
+    isNavigating,
+    settings,
+    safetyHazards,
   } = useAppStore()
 
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
@@ -185,6 +251,11 @@ export default function MapView({ darkMode = false }) {
     () => (selectedRoad ? buildSpeedMarkers(selectedRoad.congestionSegments ?? []) : []),
     [selectedRoad]
   )
+  const nearbyRoadCameras = useMemo(
+    () => buildNearbyRoadCameras(userLocation),
+    [userLocation]
+  )
+  const showMinimalNavigationMap = isNavigating && settings.navigationMinimalMap
 
   // OSM Korea HOT 타일은 현재 유효한 한국어 라벨 베이스맵을 제공한다.
   const tileUrl = 'https://tiles.osm.kr/hot/{z}/{x}/{y}.png'
@@ -209,7 +280,7 @@ export default function MapView({ darkMode = false }) {
           pane="overlayPane"
         />
       )}
-      <MapController center={mapCenter} zoom={mapZoom} />
+      <MapController center={mapCenter} zoom={mapZoom} darkMode={darkMode} minimalMap={showMinimalNavigationMap} />
 
       {locationHistory.length > 1 && (
         <Polyline
@@ -218,7 +289,7 @@ export default function MapView({ darkMode = false }) {
         />
       )}
 
-      {selectedRoad && (
+      {selectedRoad && !showMinimalNavigationMap && (
         <>
           <Polyline
             positions={smoothPath(selectedRoad.path, 0.22)}
@@ -353,11 +424,11 @@ export default function MapView({ darkMode = false }) {
         </>
       )}
 
-      {otherRoutes.map((route) => (
+      {!showMinimalNavigationMap && otherRoutes.map((route) => (
         <Polyline
           key={route.id}
           positions={getRoutePath(route, 0.1)}
-          pathOptions={{ color: route.routeColor ?? COLORS.secondaryRoute, weight: 5, opacity: 0.6 }}
+          pathOptions={{ color: route.routeColor ?? COLORS.secondaryRoute, weight: 4, opacity: 0.28 }}
         />
       ))}
 
@@ -365,10 +436,10 @@ export default function MapView({ darkMode = false }) {
         <>
           <Polyline
             positions={getRoutePath(selectedRoute, 0.1)}
-            pathOptions={{ color: COLORS.selectedRoute, weight: 7, opacity: 0.94 }}
+            pathOptions={{ color: COLORS.selectedRoute, weight: showMinimalNavigationMap ? 8 : 7, opacity: 0.98 }}
           />
 
-          {visibleLayers.congestion && (selectedRoute.segmentStats ?? []).map((segment) => (
+          {visibleLayers.congestion && !showMinimalNavigationMap && (selectedRoute.segmentStats ?? []).map((segment) => (
             <Polyline
               key={segment.id}
               positions={smoothPath(segment.positions, 0.03)}
@@ -376,7 +447,7 @@ export default function MapView({ darkMode = false }) {
             />
           ))}
 
-          {visibleLayers.speedLimits && routeSpeedMarkers.map((marker) => (
+          {visibleLayers.speedLimits && !showMinimalNavigationMap && routeSpeedMarkers.map((marker) => (
             <Marker
               key={marker.id}
               position={marker.center}
@@ -385,7 +456,7 @@ export default function MapView({ darkMode = false }) {
           ))}
 
           {/* 실제 IC/JC 분기점 마커 */}
-          {visibleLayers.mergePoints && (selectedRoute.junctions ?? []).map((jct) => (
+          {visibleLayers.mergePoints && !showMinimalNavigationMap && (selectedRoute.junctions ?? []).map((jct) => (
             <Marker key={jct.id} position={[jct.lat, jct.lng]} icon={junctionIcon}>
               <Popup>
                 <div className="text-sm font-bold">{jct.name}</div>
@@ -416,6 +487,30 @@ export default function MapView({ darkMode = false }) {
           })}
         </>
       )}
+
+      {!selectedRoute && !selectedRoad && visibleLayers.speedCameras && nearbyRoadCameras.map((camera) => (
+        <Marker key={`nearby-cam-${camera.id}`} position={camera.coord} icon={fixedCameraIcon}>
+          <Popup>
+            <div className="text-sm font-bold">{camera.label}</div>
+            <div className="text-xs text-gray-500">제한 {camera.speedLimit}km/h</div>
+            <div className="text-xs text-gray-500">{Math.round(camera.distanceM)}m 거리</div>
+          </Popup>
+        </Marker>
+      ))}
+
+      {settings.safetyModeEnabled && (safetyHazards ?? []).slice(0, 12).map((hazard) => (
+        <Marker
+          key={`hazard-${hazard.id}`}
+          position={[hazard.lat, hazard.lng]}
+          icon={hazard.type === 'school_zone' ? schoolZoneIcon : speedBumpIcon}
+        >
+          <Popup>
+            <div className="text-sm font-bold">{hazard.type === 'school_zone' ? '어린이보호구역' : '방지턱 주의'}</div>
+            <div className="text-xs text-gray-500">{hazard.name}</div>
+            {hazard.address && <div className="text-xs text-gray-400 mt-0.5">{hazard.address}</div>}
+          </Popup>
+        </Marker>
+      ))}
 
       {/* 신고된 카메라 (전체 지도에 표시) */}
       {cameraReports.map((report) => (

@@ -267,6 +267,48 @@ export async function searchNearbyPOIs(category, lat, lng) {
   return buildNearbyFallback(category, lat, lng)
 }
 
+export async function searchSafetyHazards(lat, lng) {
+  const [schools, kindergartens, bumps] = await Promise.all([
+    fetchPoiSearch('초등학교', lat, lng, 'A').catch(() => []),
+    fetchPoiSearch('유치원', lat, lng, 'A').catch(() => []),
+    fetchPoiSearch('방지턱', lat, lng, 'A').catch(() => []),
+  ])
+
+  const schoolHazards = [...schools, ...kindergartens]
+    .slice(0, 8)
+    .map((poi) => ({
+      id: `school-${poi.id}`,
+      name: poi.name,
+      address: poi.address,
+      lat: poi.lat,
+      lng: poi.lng,
+      type: 'school_zone',
+      distanceKm: Number(haversineKm(lat, lng, poi.lat, poi.lng).toFixed(1)),
+      speedLimit: 30,
+      alertText: `${poi.name} 인근 어린이보호구역 주의`,
+    }))
+
+  const bumpHazards = bumps
+    .slice(0, 6)
+    .map((poi) => ({
+      id: `bump-${poi.id}`,
+      name: poi.name,
+      address: poi.address,
+      lat: poi.lat,
+      lng: poi.lng,
+      type: 'speed_bump',
+      distanceKm: Number(haversineKm(lat, lng, poi.lat, poi.lng).toFixed(1)),
+      speedLimit: null,
+      alertText: `${poi.name || '방지턱'} 인근 감속`,
+    }))
+
+  return [...schoolHazards, ...bumpHazards]
+    .filter((item, index, all) =>
+      all.findIndex((other) => other.type === item.type && Math.abs(other.lat - item.lat) < 0.00015 && Math.abs(other.lng - item.lng) < 0.00015) === index
+    )
+    .sort((a, b) => a.distanceKm - b.distanceKm)
+}
+
 export async function fetchRoutes(startLat, startLng, endLat, endLng, preferences = {}) {
   const start = { lat: startLat, lng: startLng, name: '출발' }
   const dest = { lat: endLat, lng: endLng, name: '도착' }

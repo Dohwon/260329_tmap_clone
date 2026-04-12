@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { HIGHWAYS } from '../data/highwayData'
 import { SCENIC_SEGMENTS_SORTED } from '../data/scenicRoads'
 import { PRESET_INFO, MOCK_RECENT_SEARCHES } from '../data/mockData'
-import { enrichDestinationTarget, fetchDirectRoute, fetchRouteByWaypoints, fetchRoutes, fetchTmapStatus, searchNearbyPOIs, searchPOI } from '../services/tmapService'
+import { enrichDestinationTarget, fetchDirectRoute, fetchRouteByWaypoints, fetchRoutes, fetchTmapStatus, searchNearbyPOIs, searchPOI, searchSafetyHazards } from '../services/tmapService'
 import { ensureLiveRouteSource, isUsableLiveRoute } from '../utils/navigationLogic'
 
 const DEFAULT_CENTER = [37.5665, 126.978]
@@ -12,12 +12,22 @@ const STORAGE_KEYS = {
   recents: 'tmap_recent_searches_v3',
   savedRoutes: 'tmap_saved_routes_v1',
   cameraReports: 'tmap_camera_reports_v1',
+  settings: 'tmap_settings_v1',
 }
 
 const DEFAULT_FAVORITES = [
   { id: 'home', name: '집', icon: '🏠', address: '', lat: null, lng: null },
   { id: 'work', name: '회사', icon: '🏢', address: '', lat: null, lng: null },
 ]
+
+const DEFAULT_SETTINGS = {
+  voiceGuidance: true,
+  navigationLookAhead: true,
+  navigationMinimalMap: true,
+  mapTheme: 'auto',
+  showTrafficOnMap: false,
+  safetyModeEnabled: false,
+}
 
 const LEGACY_FAVORITE_ADDRESSES = new Set(['서울시 강남구 테헤란로', '서울시 중구 을지로'])
 
@@ -44,6 +54,13 @@ function sanitizeFavorites(favorites) {
       ? { ...favorite, address: '', lat: null, lng: null }
       : favorite
   ))
+}
+
+function sanitizeSettings(settings) {
+  return {
+    ...DEFAULT_SETTINGS,
+    ...(settings ?? {}),
+  }
 }
 
 function haversineKm(lat1, lng1, lat2, lng2) {
@@ -731,6 +748,13 @@ const useAppStore = create((set, get) => ({
     })),
   setUserAddress: (userAddress) => set({ userAddress }),
 
+  settings: sanitizeSettings(readStorage(STORAGE_KEYS.settings, DEFAULT_SETTINGS)),
+  updateSetting: (key, value) => set((state) => {
+    const next = sanitizeSettings({ ...state.settings, [key]: value })
+    writeStorage(STORAGE_KEYS.settings, next)
+    return { settings: next }
+  }),
+
   destination: null,
   setDestination: (destination) => set({ destination }),
 
@@ -797,7 +821,7 @@ const useAppStore = create((set, get) => ({
       return false
     }
 
-    set({ isNavigating: true, navAutoFollow: true, showRoutePanel: false, routePanelMode: 'full', mapCenter: center, mapZoom: 15 })
+    set({ isNavigating: true, navAutoFollow: true, showRoutePanel: false, routePanelMode: 'full', mapCenter: center, mapZoom: 17 })
     return true
   },
   stopNavigation: () => set({
@@ -977,6 +1001,7 @@ const useAppStore = create((set, get) => ({
     congestion: true,
   },
   toggleLayer: (key) => set((state) => ({ visibleLayers: { ...state.visibleLayers, [key]: !state.visibleLayers[key] } })),
+  setLayerVisibility: (key, value) => set((state) => ({ visibleLayers: { ...state.visibleLayers, [key]: value } })),
 
   favorites: sanitizeFavorites(readStorage(STORAGE_KEYS.favorites, DEFAULT_FAVORITES)),
   saveFavorites: (favorites) => {
@@ -1035,6 +1060,21 @@ const useAppStore = create((set, get) => ({
       set({ nearbyPlaces, isLoadingNearby: false })
     } catch {
       set({ nearbyPlaces: [], isLoadingNearby: false })
+    }
+  },
+
+  safetyHazards: [],
+  safetyLastLoadedAt: 0,
+  refreshSafetyHazards: async () => {
+    const state = get()
+    const origin = state.userLocation ?? DEFAULT_ORIGIN
+    try {
+      const hazards = await searchSafetyHazards(origin.lat, origin.lng)
+      set({ safetyHazards: hazards, safetyLastLoadedAt: Date.now() })
+      return hazards
+    } catch {
+      set({ safetyHazards: [], safetyLastLoadedAt: Date.now() })
+      return []
     }
   },
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import MapView from '../components/Map/MapView'
 import HomeBottomPanel from '../components/Common/HomeBottomPanel'
 import RoutePreviewPanel from '../components/Route/RoutePreviewPanel'
@@ -9,10 +9,22 @@ import useAppStore from '../store/appStore'
 import SearchSheet from '../components/Search/SearchSheet'
 
 export default function HomeScreen() {
-  const { isNavigating, showRoutePanel, setShowRoutePanel, toggleLayer, visibleLayers, userLocation, selectedRoadId, scenicRoadSuggestions } = useAppStore()
+  const {
+    isNavigating,
+    showRoutePanel,
+    toggleLayer,
+    visibleLayers,
+    userLocation,
+    selectedRoadId,
+    scenicRoadSuggestions,
+    settings,
+    safetyHazards,
+    refreshSafetyHazards,
+  } = useAppStore()
   const [showSearch, setShowSearch] = useState(false)
   const [showLayerMenu, setShowLayerMenu] = useState(false)
   const [showHighwayExplorer, setShowHighwayExplorer] = useState(false)
+  const safetySpeechRef = useRef('')
 
   // 팝업 상호 배타적 열기
   const openSearch = () => { setShowSearch(true); setShowLayerMenu(false); setShowHighwayExplorer(false) }
@@ -21,7 +33,41 @@ export default function HomeScreen() {
   const hour = new Date().getHours()
   const isNight = hour >= 19 || hour < 6
   const looksLikeTunnel = (userLocation?.speedKmh ?? 0) > 35 && (userLocation?.accuracy ?? 0) > 60
-  const darkMode = isNight || looksLikeTunnel
+  const darkMode = settings.mapTheme === 'dark'
+    ? true
+    : settings.mapTheme === 'light'
+      ? false
+      : (isNight || looksLikeTunnel)
+
+  useEffect(() => {
+    if (!settings.safetyModeEnabled || !userLocation) return
+    refreshSafetyHazards()
+    const timer = window.setInterval(() => {
+      refreshSafetyHazards()
+    }, 90000)
+    return () => window.clearInterval(timer)
+  }, [refreshSafetyHazards, settings.safetyModeEnabled, userLocation])
+
+  useEffect(() => {
+    if (isNavigating || !settings.safetyModeEnabled || !settings.voiceGuidance || !userLocation) return
+    const nearestHazard = (safetyHazards ?? []).find((hazard) => hazard.distanceKm != null && hazard.distanceKm <= 0.6)
+    if (!nearestHazard || !window.speechSynthesis) return
+
+    const threshold = nearestHazard.distanceKm <= 0.12 ? '100m' : '600m'
+    const key = `${nearestHazard.id}:${threshold}`
+    if (safetySpeechRef.current === key) return
+    safetySpeechRef.current = key
+
+    const utterance = new SpeechSynthesisUtterance(
+      threshold === '100m'
+        ? `100미터 앞, ${nearestHazard.type === 'school_zone' ? '어린이 보호구역' : '방지턱'}입니다.`
+        : `${Math.round(nearestHazard.distanceKm * 1000)}미터 앞, ${nearestHazard.type === 'school_zone' ? '어린이 보호구역' : '방지턱'} 주의하세요.`
+    )
+    utterance.lang = 'ko-KR'
+    utterance.rate = 1
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.speak(utterance)
+  }, [isNavigating, safetyHazards, settings.safetyModeEnabled, settings.voiceGuidance, userLocation])
 
   return (
     <div className="relative w-full h-full overflow-hidden">
@@ -106,6 +152,7 @@ export default function HomeScreen() {
       )}
 
       <NavigationOverlay />
+      {settings.safetyModeEnabled && !isNavigating && <SafetyModeBanner safetyHazards={safetyHazards} />}
       <RoutePreviewPanel />
       {!showSearch && !showRoutePanel && !isNavigating && <HomeBottomPanel />}
 
@@ -128,5 +175,39 @@ function FloatButton({ children, onClick }) {
     >
       {children}
     </button>
+  )
+}
+
+function SafetyModeBanner({ safetyHazards }) {
+  const nextHazard = (safetyHazards ?? []).find((hazard) => hazard.distanceKm != null && hazard.distanceKm <= 1.2) ?? safetyHazards?.[0]
+
+  if (!nextHazard) {
+    return (
+      <div className="absolute top-28 left-4 right-4 z-20">
+        <div className="rounded-2xl bg-white/92 backdrop-blur-md shadow-lg px-4 py-3 border border-emerald-100">
+          <div className="text-[11px] font-bold text-emerald-600">안전 운전 모드</div>
+          <div className="text-sm font-semibold text-gray-900 mt-0.5">주변 위험요소를 확인하는 중입니다</div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="absolute top-28 left-4 right-4 z-20">
+      <div className="rounded-2xl bg-white/92 backdrop-blur-md shadow-lg px-4 py-3 border border-emerald-100">
+        <div className="flex items-center gap-3">
+          <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-lg ${nextHazard.type === 'school_zone' ? 'bg-amber-100' : 'bg-sky-100'}`}>
+            {nextHazard.type === 'school_zone' ? '🚸' : '턱'}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] font-bold text-emerald-600">안전 운전 모드</div>
+            <div className="text-sm font-semibold text-gray-900 truncate">
+              {Math.max(50, Math.round((nextHazard.distanceKm ?? 0) * 1000))}m 앞 {nextHazard.type === 'school_zone' ? '어린이보호구역' : '방지턱'}
+            </div>
+            <div className="text-xs text-gray-500 truncate">{nextHazard.name}</div>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }

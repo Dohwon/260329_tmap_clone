@@ -19,6 +19,7 @@ export default function NavigationOverlay() {
     mergeOptions, userLocation, saveRoute, cameraReports, reportCamera,
     navAutoFollow, setNavAutoFollow, addWaypoint, searchRoute, waypoints,
     refreshNavigationRoute, navigationLastRefreshedAt, isRefreshingNavigation,
+    settings,
   } = useAppStore()
   const [showMerge, setShowMerge] = useState(false)
   const [showSaveDialog, setShowSaveDialog] = useState(false)
@@ -32,6 +33,8 @@ export default function NavigationOverlay() {
   const wakeLockRef = useRef(null)
   const nearCameraNotifiedRef = useRef(new Set()) // 이미 알린 카메라 id
   const notifiedScenicRef = useRef(new Set()) // 이미 알린 scenic segment id
+  const spokenGuidanceRef = useRef(new Set())
+  const startedVoiceRef = useRef(false)
 
   // 화면 꺼짐 방지
   useEffect(() => {
@@ -103,6 +106,12 @@ export default function NavigationOverlay() {
   }, [isNavigating, refreshNavigationRoute])
 
   useEffect(() => {
+    if (isNavigating) return
+    startedVoiceRef.current = false
+    spokenGuidanceRef.current.clear()
+  }, [isNavigating])
+
+  useEffect(() => {
     if (!isNavigating || !route || !userLocation || isRefreshingNavigation) return
     const cooldownPassed = Date.now() - navigationLastRefreshedAt > 15000
     const shouldRefreshForFallback = route.source !== 'live' && cooldownPassed
@@ -140,6 +149,38 @@ export default function NavigationOverlay() {
     ? '다음 안내'
     : '목적지 안내'
   const bannerTurnType = nextGuidance?.turnType ?? 11
+
+  useEffect(() => {
+    if (!isNavigating || !settings.voiceGuidance || startedVoiceRef.current || !window.speechSynthesis) return
+    startedVoiceRef.current = true
+    const utterance = new SpeechSynthesisUtterance('안내를 시작합니다.')
+    utterance.lang = 'ko-KR'
+    utterance.rate = 1
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.speak(utterance)
+  }, [isNavigating, settings.voiceGuidance])
+
+  useEffect(() => {
+    if (!isNavigating || !settings.voiceGuidance || !nextGuidance || !window.speechSynthesis) return
+    const remainingM = Math.round((nextGuidance.remainingDistanceKm ?? 0) * 1000)
+    const threshold = remainingM <= 120 ? '100m' : remainingM <= 350 ? '300m' : null
+    if (!threshold) return
+
+    const key = `${nextGuidance.id}:${threshold}`
+    if (spokenGuidanceRef.current.has(key)) return
+    spokenGuidanceRef.current.add(key)
+
+    const guidanceText = getGuidanceInstruction(nextGuidance)
+    const speech = threshold === '100m'
+      ? `100미터 후 ${guidanceText}입니다.`
+      : `${Math.max(100, remainingM)}미터 후 ${guidanceText}입니다.`
+
+    const utterance = new SpeechSynthesisUtterance(speech)
+    utterance.lang = 'ko-KR'
+    utterance.rate = 1
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.speak(utterance)
+  }, [isNavigating, nextGuidance, settings.voiceGuidance])
 
   async function searchNearby(category) {
     setNearbyCategory(category)
