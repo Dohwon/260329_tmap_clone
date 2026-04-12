@@ -171,6 +171,10 @@ app.use('/api/tmap', express.json({ limit: '2mb' }), async (req, res) => {
 
 app.use(express.static(join(__dirname, 'dist')))
 
+app.get(['/sw.js', '/registerSW.js', '/workbox-:hash.js'], (_, res) => {
+  res.status(404).type('text/plain').send('Not found')
+})
+
 app.use((_, res) => {
   res.sendFile(join(__dirname, 'dist', 'index.html'))
 })
