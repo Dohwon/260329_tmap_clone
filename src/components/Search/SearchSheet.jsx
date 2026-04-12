@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import useAppStore from '../../store/appStore'
-import { searchPOI } from '../../services/tmapService'
+import { searchInstantPlaceCandidates, searchPOI } from '../../services/tmapService'
 
 const QUICK_CATEGORIES = [
   { icon: '⛽', label: '주유소' },
@@ -15,12 +15,18 @@ export default function SearchSheet({ onClose, embedded = false }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
   const [isLoading, setIsLoading] = useState(false)
+  const [pendingSelection, setPendingSelection] = useState(null)
   const debounceRef = useRef(null)
   const isComposingRef = useRef(false)
+  const requestIdRef = useRef(0)
 
   const {
     searchRoute,
     userLocation,
+    destination,
+    isNavigating,
+    addWaypoint,
+    clearWaypoints,
     favorites,
     recentSearches,
     removeRecentSearch,
@@ -33,29 +39,55 @@ export default function SearchSheet({ onClose, embedded = false }) {
     setActiveTab,
   } = useAppStore()
 
-  const handleSelect = (destination) => {
-    searchRoute(destination)
+  const closeSheet = () => {
+    setPendingSelection(null)
     if (onClose) onClose()
     else setActiveTab('home')
   }
 
-  useEffect(() => {
-    if (!query.trim() || isComposingRef.current) {
-      setResults([])
+  const handleSelect = (nextDestination) => {
+    if (isNavigating) {
+      setPendingSelection(nextDestination)
       return
     }
+    searchRoute(nextDestination)
+    closeSheet()
+  }
+
+  useEffect(() => {
+    if (!query.trim() || isComposingRef.current) {
+      requestIdRef.current += 1
+      setResults([])
+      setIsLoading(false)
+      return
+    }
+    if (query.trim().length < 2) {
+      requestIdRef.current += 1
+      setResults([])
+      setIsLoading(false)
+      return
+    }
+    const instantResults = searchInstantPlaceCandidates(query, userLocation?.lat, userLocation?.lng)
+    if (instantResults.length > 0) {
+      setResults(instantResults)
+      setIsLoading(false)
+    }
     clearTimeout(debounceRef.current)
+    const requestId = requestIdRef.current + 1
+    requestIdRef.current = requestId
     debounceRef.current = setTimeout(async () => {
       setIsLoading(true)
       try {
         const pois = await searchPOI(query, userLocation?.lat, userLocation?.lng)
+        if (requestIdRef.current !== requestId) return
         setResults(pois)
       } catch {
+        if (requestIdRef.current !== requestId) return
         setResults([])
       } finally {
-        setIsLoading(false)
+        if (requestIdRef.current === requestId) setIsLoading(false)
       }
-    }, 180)
+    }, 120)
 
     return () => clearTimeout(debounceRef.current)
   }, [query, userLocation?.lat, userLocation?.lng])
@@ -70,7 +102,7 @@ export default function SearchSheet({ onClose, embedded = false }) {
     <div className={containerClass}>
       <div className="bg-white px-4 pt-14 pb-3 border-b border-gray-100 flex-shrink-0">
         <div className="flex items-center gap-3">
-          <button onClick={() => (onClose ? onClose() : setActiveTab('home'))} className="p-2 -ml-2">
+          <button onClick={closeSheet} className="p-2 -ml-2">
             <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
@@ -108,6 +140,8 @@ export default function SearchSheet({ onClose, embedded = false }) {
           <div>
             {isLoading ? (
               <div className="px-4 py-3 text-xs text-gray-400">입력 중인 주소와 관련된 장소를 찾는 중이에요</div>
+            ) : query.trim().length < 2 ? (
+              <div className="px-4 py-3 text-xs text-gray-400">두 글자 이상 입력하면 빠르게 후보를 보여줍니다.</div>
             ) : results.length > 0 ? (
               results.map((destination) => (
                 <SearchResultRow key={destination.id} destination={destination} onSelect={handleSelect} />
@@ -228,6 +262,52 @@ export default function SearchSheet({ onClose, embedded = false }) {
           </div>
         )}
       </div>
+
+      {pendingSelection && (
+        <>
+          <div className="absolute inset-0 z-40 bg-black/35" onClick={() => setPendingSelection(null)} />
+          <div className="absolute left-4 right-4 bottom-6 z-50 rounded-3xl bg-white shadow-2xl border border-gray-100 p-5">
+            <div className="text-sm font-black text-gray-900">"{pendingSelection.name}" 검색 결과</div>
+            <div className="text-xs text-gray-500 mt-1 truncate">{pendingSelection.address}</div>
+            <div className="grid grid-cols-2 gap-3 mt-4">
+              <button
+                onClick={async () => {
+                  addWaypoint({
+                    id: `wp-nav-search-${pendingSelection.lat}-${pendingSelection.lng}`,
+                    name: pendingSelection.name,
+                    lat: pendingSelection.lat,
+                    lng: pendingSelection.lng,
+                    address: pendingSelection.address,
+                  })
+                  if (destination) await searchRoute(destination)
+                  setPendingSelection(null)
+                  closeSheet()
+                }}
+                className="rounded-2xl bg-tmap-blue text-white py-3 text-sm font-bold"
+              >
+                경유지 추가
+              </button>
+              <button
+                onClick={async () => {
+                  clearWaypoints()
+                  await searchRoute(pendingSelection)
+                  setPendingSelection(null)
+                  closeSheet()
+                }}
+                className="rounded-2xl bg-gray-900 text-white py-3 text-sm font-bold"
+              >
+                목적지 변경
+              </button>
+            </div>
+            <button
+              onClick={() => setPendingSelection(null)}
+              className="w-full mt-3 rounded-2xl bg-gray-100 text-gray-600 py-3 text-sm font-semibold"
+            >
+              취소
+            </button>
+          </div>
+        </>
+      )}
     </div>
   )
 }

@@ -1,10 +1,59 @@
-import { HIGHWAYS } from '../data/highwayData'
-import { ensureLiveRouteSource, normalizeSearchOption } from '../utils/navigationLogic'
+import { HIGHWAYS } from '../data/highwayData.js'
+import { ensureLiveRouteSource, normalizeSearchOption } from '../utils/navigationLogic.js'
 
 const BASE = '/api/tmap'
 const ROAD_KEYWORD_PATTERN = /(고속|국도|jc|ic|분기|인터체인지|나들목|휴게소|톨게이트)/i
 // 도로명 주소 패턴: "효행로 250", "강남대로 123번길 45" 등
 const ROAD_ADDRESS_PATTERN = /[가-힣]+(?:로|길|대로|avenue)\s*\d+/i
+const SEARCH_CACHE = new Map()
+const SEARCH_CACHE_TTL = 1000 * 60 * 5
+const FAST_SEARCH_PLACES = [
+  {
+    id: 'fast-gangnam-station',
+    name: '강남역',
+    address: '서울특별시 강남구 강남대로 지하396',
+    lat: 37.4979,
+    lng: 127.0276,
+    category: '지하철역',
+    aliases: ['강남역', '강남', '2호선 강남역', '신분당선 강남역'],
+  },
+  {
+    id: 'fast-yanghwa-bridge',
+    name: '양화대교',
+    address: '서울특별시 영등포구 양화동',
+    lat: 37.5435,
+    lng: 126.9016,
+    category: '교량',
+    aliases: ['양화대교', '양화'],
+  },
+  {
+    id: 'fast-olympic-daero',
+    name: '올림픽대로',
+    address: '서울특별시 강동구 암사동 일대',
+    lat: 37.5306,
+    lng: 127.1212,
+    category: '도시고속화도로',
+    aliases: ['올림픽대로', '올림픽'],
+  },
+  {
+    id: 'fast-gangbyeon',
+    name: '강변북로',
+    address: '서울특별시 마포구 상암동 일대',
+    lat: 37.5697,
+    lng: 126.8784,
+    category: '도시고속화도로',
+    aliases: ['강변북로', '강변'],
+  },
+  {
+    id: 'fast-nambu-terminal',
+    name: '남부터미널역',
+    address: '서울특별시 서초구 효령로 지하289',
+    lat: 37.4849,
+    lng: 127.0164,
+    category: '지하철역',
+    aliases: ['남부터미널', '남부터미널역'],
+  },
+]
 
 const FALLBACK_SEARCH_PLACES = [
   { id: 'place-seoul', name: '서울역', address: '서울특별시 용산구 한강대로 405', lat: 37.5547, lng: 126.9706, category: '교통' },
@@ -24,6 +73,7 @@ const FALLBACK_SEARCH_PLACES = [
 
 const CATEGORY_META = {
   주유소: { key: 'fuel', seeds: ['GS칼텍스', 'SK에너지', 'S-OIL', '현대오일뱅크'] },
+  휴게소: { key: 'rest', seeds: ['덕평휴게소', '문막휴게소', '여주휴게소', '안성휴게소'] },
   주차장: { key: 'parking', seeds: ['공영주차장', '환승주차장', '타워주차장', '민영주차장'] },
   카페: { key: 'cafe', seeds: ['스타벅스', '메가커피', '투썸플레이스', '로컬 카페'] },
   음식점: { key: 'restaurant', seeds: ['한식당', '국밥집', '맛집', '기사식당'] },
@@ -65,7 +115,7 @@ function buildRoadSearchPlaces() {
       category: road.roadClass === 'national' ? '국도' : '고속도로',
       aliases: [`${road.name} 종점`, `${road.shortName} 종점`, road.endName].filter(Boolean),
     },
-    ...road.majorJunctions.map((junction) => ({
+    ...(road.majorJunctions ?? []).map((junction) => ({
       id: `${road.id}-${junction.name}`,
       name: junction.name,
       address: `${road.name} ${junction.name}`,
@@ -74,7 +124,7 @@ function buildRoadSearchPlaces() {
       category: '분기점',
       aliases: [junction.name, `${road.name} ${junction.name}`],
     })),
-    ...road.restStops.map((stop) => ({
+    ...(road.restStops ?? []).map((stop) => ({
       id: stop.id,
       name: stop.name,
       address: `${road.name} ${stop.name}`,
@@ -113,7 +163,8 @@ function searchFallbackPlaces(keyword, nearLat, nearLng) {
   const normalized = keyword.trim().toLowerCase()
   const compact = normalizeSearchText(normalized)
   const roadPlaces = buildRoadSearchPlaces()
-  const basePool = ROAD_KEYWORD_PATTERN.test(keyword) ? [...FALLBACK_SEARCH_PLACES, ...roadPlaces] : FALLBACK_SEARCH_PLACES
+  const fastPool = [...FAST_SEARCH_PLACES, ...FALLBACK_SEARCH_PLACES]
+  const basePool = ROAD_KEYWORD_PATTERN.test(keyword) ? [...fastPool, ...roadPlaces] : fastPool
 
   return basePool
     .filter((place) => {
@@ -126,6 +177,44 @@ function searchFallbackPlaces(keyword, nearLat, nearLng) {
       return distanceA - distanceB
     })
     .slice(0, 15)
+}
+
+export function searchInstantPlaceCandidates(keyword, nearLat, nearLng) {
+  const trimmedKeyword = String(keyword ?? '').trim()
+  if (trimmedKeyword.length < 2) return []
+  return searchFallbackPlaces(trimmedKeyword, nearLat, nearLng).slice(0, 10)
+}
+
+function getCachedSearch(keyword, nearLat, nearLng) {
+  const key = `${normalizeSearchText(keyword)}:${nearLat ?? ''}:${nearLng ?? ''}`
+  const cached = SEARCH_CACHE.get(key)
+  if (!cached) return null
+  if (Date.now() - cached.savedAt > SEARCH_CACHE_TTL) {
+    SEARCH_CACHE.delete(key)
+    return null
+  }
+  return cached.results
+}
+
+function setCachedSearch(keyword, nearLat, nearLng, results) {
+  const key = `${normalizeSearchText(keyword)}:${nearLat ?? ''}:${nearLng ?? ''}`
+  SEARCH_CACHE.set(key, { savedAt: Date.now(), results })
+}
+
+function mapRoadType(props = {}) {
+  if ([4, 5, 6].includes(Number(props.roadType))) return 'highway'
+  if (Number(props.roadType) === 7) return 'local'
+  if (JUNCTION_TURN_TYPES.has(Number(props.turnType))) return 'junction'
+  return 'national'
+}
+
+function estimateSegmentSpeedLimit(props = {}, roadType) {
+  const raw = Number(props.speed ?? props.speedLimit ?? props.limitSpeed ?? 0)
+  if (Number.isFinite(raw) && raw > 0) return raw
+  if (roadType === 'highway') return 100
+  if (roadType === 'local') return 50
+  if (roadType === 'junction') return 80
+  return 70
 }
 
 function isSyntheticAddress(address) {
@@ -157,6 +246,36 @@ function buildNearbyFallback(category, lat, lng) {
   }))
 }
 
+function buildNearbyRestStopFallback(lat, lng, routePolyline = []) {
+  return HIGHWAYS.flatMap((road) =>
+    (road.restStops ?? []).map((stop) => {
+      const routeDistanceKm = distanceKmToPolyline(stop.coord[0], stop.coord[1], routePolyline)
+      const distanceKm = Number(haversineKm(lat, lng, stop.coord[0], stop.coord[1]).toFixed(1))
+      return {
+        id: stop.id,
+        name: stop.name,
+        address: `${road.name} · ${stop.type === 'service' ? '휴게소' : '졸음쉼터'}`,
+        lat: stop.coord[0],
+        lng: stop.coord[1],
+        category: stop.type === 'service' ? '휴게소' : '졸음쉼터',
+        roadName: road.name,
+        kmMarker: stop.km ?? null,
+        distanceKm,
+        routeDistanceKm,
+        isRouteCorridor: routeDistanceKm != null ? routeDistanceKm <= 2.2 : false,
+      }
+    })
+  )
+    .sort((a, b) => {
+      if (a.isRouteCorridor !== b.isRouteCorridor) return a.isRouteCorridor ? -1 : 1
+      if ((a.routeDistanceKm ?? Infinity) !== (b.routeDistanceKm ?? Infinity)) {
+        return (a.routeDistanceKm ?? Infinity) - (b.routeDistanceKm ?? Infinity)
+      }
+      return a.distanceKm - b.distanceKm
+    })
+    .slice(0, 8)
+}
+
 function estimateFuelPrice(poi, index = 0) {
   const name = String(poi?.name ?? '')
   const base = name.includes('S-OIL') ? 1648
@@ -168,13 +287,32 @@ function estimateFuelPrice(poi, index = 0) {
   return Math.max(1595, base + variation)
 }
 
-function enrichFuelStops(results) {
-  const sorted = results.map((result, index) => ({
-    ...result,
-    fuelPrice: estimateFuelPrice(result, index),
-    fuelLabel: '휘발유',
-    isRouteCorridor: index % 3 === 0,
-  }))
+function distanceKmToPolyline(lat, lng, polyline = []) {
+  if (!Array.isArray(polyline) || polyline.length === 0) return null
+  let best = Infinity
+  for (let index = 0; index < polyline.length; index += 1) {
+    const point = polyline[index]
+    const distance = haversineKm(lat, lng, point[0], point[1])
+    if (distance < best) best = distance
+  }
+  return Number.isFinite(best) ? Number(best.toFixed(1)) : null
+}
+
+function enrichFuelStops(results, routePolyline = []) {
+  const sorted = results.map((result, index) => {
+    const fuelPrice = Number.isFinite(result.fuelPrice) && result.fuelPrice > 0
+      ? result.fuelPrice
+      : estimateFuelPrice(result, index)
+    const routeDistanceKm = distanceKmToPolyline(result.lat, result.lng, routePolyline)
+    return {
+      ...result,
+      fuelPrice,
+      fuelLabel: result.fuelLabel ?? '휘발유',
+      priceSource: result.priceSource ?? (Number.isFinite(result.fuelPrice) && result.fuelPrice > 0 ? 'opinet' : 'estimated'),
+      routeDistanceKm,
+      isRouteCorridor: routeDistanceKm != null ? routeDistanceKm <= 1.5 : false,
+    }
+  })
   const routeLowest = sorted.filter((item) => item.isRouteCorridor).sort((a, b) => a.fuelPrice - b.fuelPrice)[0] ?? null
   const nearbyLowest = [...sorted].sort((a, b) => a.fuelPrice - b.fuelPrice)[0] ?? null
   return sorted.map((item) => ({
@@ -182,6 +320,28 @@ function enrichFuelStops(results) {
     nearbyLowestFuelPrice: nearbyLowest?.fuelPrice ?? null,
     routeLowestFuelPrice: routeLowest?.fuelPrice ?? nearbyLowest?.fuelPrice ?? null,
   }))
+}
+
+async function fetchNearbyFuelFromApi(lat, lng, routePolyline = []) {
+  const params = new URLSearchParams({
+    lat: String(lat),
+    lng: String(lng),
+    radius: '6000',
+    productCode: 'B027',
+    limit: '8',
+  })
+  const res = await fetch(`/api/fuel/nearby?${params}`, { headers: { Accept: 'application/json' } })
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => ({}))
+    throw new Error(errorBody?.error?.message ?? errorBody?.error?.code ?? `HTTP ${res.status}`)
+  }
+  const json = await res.json()
+  return enrichFuelStops(json.items ?? [], routePolyline)
+}
+
+function buildSearchOptionAttempts(option) {
+  const raw = String(option ?? '00').trim()
+  return [...new Set([raw, normalizeSearchOption(raw)].filter(Boolean))]
 }
 
 export async function fetchTmapStatus() {
@@ -245,24 +405,53 @@ async function fetchFullAddrGeo(keyword) {
 }
 
 export async function searchPOI(keyword, nearLat, nearLng) {
-  const isRoadAddress = ROAD_ADDRESS_PATTERN.test(keyword)
+  const trimmedKeyword = String(keyword ?? '').trim()
+  if (trimmedKeyword.length < 2) return []
+
+  const cached = getCachedSearch(trimmedKeyword, nearLat, nearLng)
+  if (cached) return cached
+
+  const localFastResults = searchFallbackPlaces(trimmedKeyword, nearLat, nearLng)
+  const compactKeyword = normalizeSearchText(trimmedKeyword)
+  const exactLocalResults = localFastResults.filter((item) => {
+    const fields = [item.name, item.address, ...(item.aliases ?? [])]
+      .map((value) => normalizeSearchText(value))
+      .filter(Boolean)
+    return fields.some((value) => value === compactKeyword || value.startsWith(compactKeyword))
+  })
+
+  const hasExactLocalMatch = exactLocalResults.some((item) => {
+    const fields = [item.name, ...(item.aliases ?? [])]
+      .map((value) => normalizeSearchText(value))
+      .filter(Boolean)
+    return fields.some((value) => value === compactKeyword)
+  })
+
+  if (exactLocalResults.length >= 3 || hasExactLocalMatch || (exactLocalResults.length > 0 && trimmedKeyword.length <= 6)) {
+    const fastResults = exactLocalResults.slice(0, 10)
+    setCachedSearch(trimmedKeyword, nearLat, nearLng, fastResults)
+    return fastResults
+  }
+
+  const isRoadAddress = ROAD_ADDRESS_PATTERN.test(trimmedKeyword)
+  let results = []
 
   if (isRoadAddress) {
     // 도로명/지번 주소: fullAddrGeo 우선, POI 병렬 시도
     const [addrResults, poiResults] = await Promise.all([
-      fetchFullAddrGeo(keyword).catch(() => []),
-      fetchPoiSearch(keyword, nearLat, nearLng).catch(() => []),
+      fetchFullAddrGeo(trimmedKeyword).catch(() => []),
+      fetchPoiSearch(trimmedKeyword, nearLat, nearLng).catch(() => []),
     ])
     const combined = [...addrResults, ...poiResults]
     const unique = combined.filter((item, index, all) =>
       all.findIndex((other) => Math.abs(other.lat - item.lat) < 0.0001 && Math.abs(other.lng - item.lng) < 0.0001) === index
     )
-    if (unique.length > 0) return unique
+    if (unique.length > 0) results = unique
   } else {
     // 건물명/업체명: POI 검색 (전체 + 업종 병렬)
     const [poiAll, poiBiz] = await Promise.all([
-      fetchPoiSearch(keyword, nearLat, nearLng, 'A').catch(() => []),
-      fetchPoiSearch(keyword, nearLat, nearLng, 'B').catch(() => []),
+      fetchPoiSearch(trimmedKeyword, nearLat, nearLng, 'A').catch(() => []),
+      fetchPoiSearch(trimmedKeyword, nearLat, nearLng, 'B').catch(() => []),
     ])
     // 중복 제거 (id 기준)
     const seen = new Set()
@@ -271,17 +460,45 @@ export async function searchPOI(keyword, nearLat, nearLng) {
       seen.add(item.id)
       return true
     })
-    if (combined.length > 0) return combined
-
-    // POI 결과 없으면 fullAddrGeo도 시도
-    const addrResults = await fetchFullAddrGeo(keyword).catch(() => [])
-    if (addrResults.length > 0) return addrResults
+    if (combined.length > 0) {
+      results = combined
+    } else {
+      // POI 결과 없으면 fullAddrGeo도 시도
+      const addrResults = await fetchFullAddrGeo(trimmedKeyword).catch(() => [])
+      if (addrResults.length > 0) results = addrResults
+    }
   }
 
-  return searchFallbackPlaces(keyword, nearLat, nearLng)
+  if (results.length === 0) {
+    results = localFastResults
+  } else if (localFastResults.length > 0) {
+    const merged = [...localFastResults, ...results]
+    results = merged.filter((item, index, all) =>
+      all.findIndex((other) => Math.abs(other.lat - item.lat) < 0.0001 && Math.abs(other.lng - item.lng) < 0.0001) === index
+    )
+  }
+
+  const finalResults = results.slice(0, 15)
+  setCachedSearch(trimmedKeyword, nearLat, nearLng, finalResults)
+  return finalResults
 }
 
-export async function searchNearbyPOIs(category, lat, lng) {
+export async function searchNearbyPOIs(category, lat, lng, options = {}) {
+  const routePolyline = options.routePolyline ?? []
+  if (category === '주유소') {
+    try {
+      const liveFuel = await fetchNearbyFuelFromApi(lat, lng, routePolyline)
+      if (liveFuel.length > 0) return liveFuel
+    } catch {
+      // 오피넷 미설정/실패 시 TMAP+추정가 폴백
+    }
+  }
+
+  if (category === '휴게소') {
+    const restStops = buildNearbyRestStopFallback(lat, lng, routePolyline)
+    if (restStops.length > 0) return restStops
+  }
+
   const results = await searchPOI(category, lat, lng)
   if (results.length > 0) {
     const enriched = results
@@ -290,10 +507,10 @@ export async function searchNearbyPOIs(category, lat, lng) {
         distanceKm: Number(haversineKm(lat, lng, result.lat, result.lng).toFixed(1)),
       }))
       .sort((a, b) => a.distanceKm - b.distanceKm)
-    return category === '주유소' ? enrichFuelStops(enriched) : enriched
+    return category === '주유소' ? enrichFuelStops(enriched, routePolyline) : enriched
   }
   const fallback = buildNearbyFallback(category, lat, lng)
-  return category === '주유소' ? enrichFuelStops(fallback) : fallback
+  return category === '주유소' ? enrichFuelStops(fallback, routePolyline) : fallback
 }
 
 export async function searchSafetyHazards(lat, lng) {
@@ -416,49 +633,54 @@ export async function fetchRoutes(startLat, startLng, endLat, endLng, preference
 }
 
 export async function fetchRouteByWaypoints(start, destination, wayPoints = [], option = {}) {
-  const body = {
-    reqCoordType: 'WGS84GEO',
-    resCoordType: 'WGS84GEO',
-    startName: sanitizeRouteLabel(start.name, '출발'),
-    startX: String(start.lng),
-    startY: String(start.lat),
-    startTime: new Date().toISOString().slice(0, 16).replace(/[-:T]/g, ''),
-    endName: sanitizeRouteLabel(destination.name, '도착'),
-    endX: String(destination.lng),
-    endY: String(destination.lat),
-    searchOption: normalizeSearchOption(option.searchOption ?? '00'),
-    carType: '0',
-    viaPoints: wayPoints.map((point, index) => ({
-      viaPointId: point.id ?? `via-${index}`,
-      viaPointName: sanitizeRouteLabel(point.name, `경유지 ${index + 1}`),
-      viaX: String(point.lng),
-      viaY: String(point.lat),
-      viaTime: String(point.viaTime ?? 0),
-    })),
-  }
+  const startTime = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')
+  let lastMessage = 'TMAP 경유 경로 응답 실패'
 
-  const res = await fetch(`${BASE}/routes/routeSequential30?version=1`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: JSON.stringify(body),
-  })
+  for (const searchOption of buildSearchOptionAttempts(option.searchOption ?? '00')) {
+    const body = {
+      reqCoordType: 'WGS84GEO',
+      resCoordType: 'WGS84GEO',
+      startName: sanitizeRouteLabel(start.name, '출발'),
+      startX: String(start.lng),
+      startY: String(start.lat),
+      startTime,
+      endName: sanitizeRouteLabel(destination.name, '도착'),
+      endX: String(destination.lng),
+      endY: String(destination.lat),
+      searchOption,
+      carType: '0',
+      viaPoints: wayPoints.map((point, index) => ({
+        viaPointId: point.id ?? `via-${index}`,
+        viaPointName: sanitizeRouteLabel(point.name, `경유지 ${index + 1}`),
+        viaX: String(point.lng),
+        viaY: String(point.lat),
+        viaTime: String(point.viaTime ?? 0),
+      })),
+    }
 
-  if (!res.ok) {
-    let message = `TMAP HTTP ${res.status}`
+    const res = await fetch(`${BASE}/routes/routeSequential30?version=1`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
+
+    if (res.ok) {
+      const json = await res.json()
+      return parseRouteResponse(json, { ...option, searchOption })
+    }
+
     try {
       const json = await res.json()
-      message = json?.error?.code || json?.error?.message || message
+      lastMessage = json?.error?.errorMessage ?? json?.error?.code ?? json?.error?.message ?? `TMAP HTTP ${res.status}`
     } catch {
-      // noop
+      lastMessage = `TMAP HTTP ${res.status}`
     }
-    throw new Error(message)
   }
 
-  const json = await res.json()
-  return parseRouteResponse(json, option)
+  throw new Error(lastMessage)
 }
 
 export async function fetchDirectRoute(startLat, startLng, endLat, endLng, option = {}) {
@@ -486,54 +708,55 @@ export async function snapToNearestRoad(lat, lng) {
 }
 
 async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
-  const normalizedSearchOption = normalizeSearchOption(option.searchOption)
-  const bodies = [
-    {
-      startX: String(startLng),
-      startY: String(startLat),
-      endX: String(endLng),
-      endY: String(endLat),
-      reqCoordType: 'WGS84GEO',
-      resCoordType: 'WGS84GEO',
-      searchOption: normalizedSearchOption,
-    },
-    {
-      startX: String(startLng),
-      startY: String(startLat),
-      endX: String(endLng),
-      endY: String(endLat),
-      endRpFlag: 'G',
-      carType: 0,
-      detailPosFlag: '2',
-      reqCoordType: 'WGS84GEO',
-      resCoordType: 'WGS84GEO',
-      searchOption: normalizedSearchOption,
-      sort: 'index',
-      trafficInfo: 'Y',
-    },
-  ]
-
   let lastMessage = 'TMAP 경로 응답 실패'
-  for (const body of bodies) {
-    const res = await fetch(`${BASE}/routes?version=1`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
+  for (const searchOption of buildSearchOptionAttempts(option.searchOption)) {
+    const bodies = [
+      {
+        startX: String(startLng),
+        startY: String(startLat),
+        endX: String(endLng),
+        endY: String(endLat),
+        endRpFlag: 'G',
+        carType: 0,
+        detailPosFlag: '2',
+        reqCoordType: 'WGS84GEO',
+        resCoordType: 'WGS84GEO',
+        searchOption,
+        sort: 'index',
+        trafficInfo: 'Y',
       },
-      body: JSON.stringify(body),
-    })
+      {
+        startX: String(startLng),
+        startY: String(startLat),
+        endX: String(endLng),
+        endY: String(endLat),
+        reqCoordType: 'WGS84GEO',
+        resCoordType: 'WGS84GEO',
+        searchOption,
+      },
+    ]
 
-    if (res.ok) {
-      const json = await res.json()
-      return parseRouteResponse(json, option)
-    }
+    for (const body of bodies) {
+      const res = await fetch(`${BASE}/routes?version=1`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(body),
+      })
 
-    try {
-      const json = await res.json()
-      lastMessage = json?.error?.errorMessage ?? json?.error?.code ?? json?.error?.message ?? `TMAP HTTP ${res.status}`
-    } catch {
-      lastMessage = `TMAP HTTP ${res.status}`
+      if (res.ok) {
+        const json = await res.json()
+        return parseRouteResponse(json, { ...option, searchOption })
+      }
+
+      try {
+        const json = await res.json()
+        lastMessage = json?.error?.errorMessage ?? json?.error?.code ?? json?.error?.message ?? `TMAP HTTP ${res.status}`
+      } catch {
+        lastMessage = `TMAP HTTP ${res.status}`
+      }
     }
   }
 
@@ -555,6 +778,7 @@ function parseRouteResponse(json, option) {
   let mergeCount = 0
   const junctions = [] // 실제 IC/JC 분기점
   const maneuvers = [] // 일반 좌회전/우회전 포함 실제 안내 포인트
+  const liveSegmentStats = []
   let accumulatedDist = 0
   let currentRoadName = ''  // 현재 통과 중인 도로명
   let currentRoadNo = ''    // 현재 도로번호
@@ -570,6 +794,32 @@ function parseRouteResponse(json, option) {
       // 도로명 업데이트 (있으면)
       if (props.roadName) currentRoadName = props.roadName
       if (props.roadNo) currentRoadNo = props.roadNo
+
+      const positions = feature.geometry.coordinates.map((coord) => [coord[1], coord[0]])
+      const roadType = mapRoadType(props)
+      const speedLimit = estimateSegmentSpeedLimit(props, roadType)
+      const averageSpeed = Math.max(
+        roadType === 'local' ? 25 : 35,
+        Math.round((Number(props.speed) || speedLimit) * (props.traffic === '0' ? 0.95 : props.traffic === '1' ? 0.82 : props.traffic === '2' ? 0.66 : 0.55))
+      )
+
+      if (positions.length > 1) {
+        const startPoint = positions[0]
+        const endPoint = positions[positions.length - 1]
+        liveSegmentStats.push({
+          id: `live-segment-${liveSegmentStats.length}`,
+          name: currentRoadName || props.description || (roadType === 'highway' ? '고속도로 본선' : roadType === 'local' ? '일반도로' : '국도 구간'),
+          positions,
+          roadType,
+          speedLimit,
+          averageSpeed,
+          congestionScore: averageSpeed < speedLimit * 0.6 ? 3 : averageSpeed < speedLimit * 0.8 ? 2 : 1,
+          center: [
+            (startPoint[0] + endPoint[0]) / 2,
+            (startPoint[1] + endPoint[1]) / 2,
+          ],
+        })
+      }
 
       if ([4, 5, 6].includes(props.roadType)) highwayDist += dist
       else if (props.roadType === 7) localDist += dist
@@ -696,6 +946,10 @@ function parseRouteResponse(json, option) {
   const sectionCameraCount = cameras.filter(c => c.type === 'section_start').length
     || (highwayRatio >= 40 ? Math.max(1, Math.round(hwKm / 25)) : 0)
 
+  const segmentStats = liveSegmentStats.length > 0
+    ? liveSegmentStats
+    : []
+
   return ensureLiveRouteSource({
     id: option.id ?? `route-${option.searchOption}`,
     title: option.title,
@@ -722,6 +976,7 @@ function parseRouteResponse(json, option) {
     routeColor: option.isBaseline === true ? '#0064FF' : '#8E8E93',
     isBaseline: option.isBaseline === true,
     polyline,
+    segmentStats,
     junctions, // 실제 IC/JC 분기점 목록
     cameras,   // 실제 과속카메라 위치 (TMAP safetyFacilityList 기반)
   })

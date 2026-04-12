@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/appStore'
-import { searchPOI } from '../services/tmapService'
+import { searchInstantPlaceCandidates, searchPOI } from '../services/tmapService'
 
 const ICONS = ['⭐', '🏪', '🍽️', '☕', '🏋️', '🏫', '🏥', '💼', '🎯', '🏖️']
 
@@ -163,6 +163,16 @@ function EditSheet({ favorite, onSave, onClose }) {
     if (!query.trim() || isComposingRef.current) {
       setResults([])
       return
+    }
+    if (query.trim().length < 2) {
+      setResults([])
+      setIsLoading(false)
+      return
+    }
+    const instantResults = searchInstantPlaceCandidates(query, userLocation?.lat, userLocation?.lng)
+    if (instantResults.length > 0) {
+      setResults(instantResults)
+      setIsLoading(false)
     }
     const timer = setTimeout(async () => {
       setIsLoading(true)

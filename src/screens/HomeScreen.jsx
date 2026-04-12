@@ -20,14 +20,16 @@ export default function HomeScreen() {
     settings,
     safetyHazards,
     refreshSafetyHazards,
+    isSearchOverlayOpen,
+    openSearchOverlay,
+    closeSearchOverlay,
   } = useAppStore()
-  const [showSearch, setShowSearch] = useState(false)
   const [showLayerMenu, setShowLayerMenu] = useState(false)
   const [showHighwayExplorer, setShowHighwayExplorer] = useState(false)
   const safetySpeechRef = useRef('')
 
   // 팝업 상호 배타적 열기
-  const openSearch = () => { setShowSearch(true); setShowLayerMenu(false); setShowHighwayExplorer(false) }
+  const openSearch = () => { openSearchOverlay(); setShowLayerMenu(false); setShowHighwayExplorer(false) }
   const openLayerMenu = () => { setShowLayerMenu((v) => !v); setShowHighwayExplorer(false) }
   const openHighwayExplorer = () => { setShowHighwayExplorer(true); setShowLayerMenu(false) }
   const hour = new Date().getHours()
@@ -154,12 +156,12 @@ export default function HomeScreen() {
       <NavigationOverlay />
       {settings.safetyModeEnabled && !isNavigating && <SafetyModeBanner safetyHazards={safetyHazards} />}
       <RoutePreviewPanel />
-      {!showSearch && !showRoutePanel && !isNavigating && <HomeBottomPanel />}
+      {!isSearchOverlayOpen && !showRoutePanel && !isNavigating && <HomeBottomPanel />}
 
       {/* 해안/산악도로 경유 제안 다이얼로그 (경로 패널 위에 표시) */}
       {scenicRoadSuggestions.length > 0 && showRoutePanel && !isNavigating && <ScenicRoadDialog />}
 
-      {showSearch && <SearchSheet onClose={() => setShowSearch(false)} />}
+      {isSearchOverlayOpen && <SearchSheet onClose={closeSearchOverlay} />}
       {showHighwayExplorer && <HighwayExplorer onClose={() => setShowHighwayExplorer(false)} />}
       {/* RoutePanel 열릴 때 레이어메뉴/탐색기 닫기 */}
       {showRoutePanel && showLayerMenu && setShowLayerMenu(false)}

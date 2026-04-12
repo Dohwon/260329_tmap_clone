@@ -1,6 +1,7 @@
 import express from 'express'
 import https from 'https'
 import fs from 'fs'
+import proj4 from 'proj4'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 
@@ -28,6 +29,15 @@ const localEnv = {
 }
 
 const TMAP_KEY = process.env.TMAP_API_KEY || process.env.VITE_TMAP_API_KEY || localEnv.TMAP_API_KEY || localEnv.VITE_TMAP_API_KEY || ''
+const OPINET_KEY = process.env.OPINET_API_KEY || process.env.VITE_OPINET_API_KEY || localEnv.OPINET_API_KEY || localEnv.VITE_OPINET_API_KEY || ''
+
+const WGS84 = 'EPSG:4326'
+const KATEC = 'KATEC'
+
+proj4.defs(
+  KATEC,
+  '+proj=tmerc +lat_0=38 +lon_0=128 +k=0.9999 +x_0=400000 +y_0=600000 +ellps=bessel +towgs84=-115.80,474.99,674.11,1.16,-2.31,-1.63,6.43 +units=m +no_defs'
+)
 
 // Node.js https로 TMAP에 직접 요청 (http-proxy-middleware 없이)
 function tmapFetch(tmapSubPath, method, extraHeaders, body) {
@@ -56,6 +66,133 @@ function tmapFetch(tmapSubPath, method, extraHeaders, body) {
     req.end()
   })
 }
+
+function opinetFetch(opinetSubPath, query = {}) {
+  return new Promise((resolve, reject) => {
+    const path = `/api/${opinetSubPath}?${new URLSearchParams({
+      out: 'json',
+      code: OPINET_KEY,
+      ...query,
+    }).toString()}`
+
+    const req = https.request(
+      { hostname: 'www.opinet.co.kr', path, method: 'GET', headers: { Accept: 'application/json' } },
+      (res) => {
+        const chunks = []
+        res.on('data', (chunk) => chunks.push(chunk))
+        res.on('end', () => resolve({ status: res.statusCode, rawHeaders: res.headers, body: Buffer.concat(chunks) }))
+      }
+    )
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+function parseJsonBuffer(buffer) {
+  try {
+    return JSON.parse(buffer.toString())
+  } catch {
+    return null
+  }
+}
+
+function wgs84ToKatec(lat, lng) {
+  const [x, y] = proj4(WGS84, KATEC, [Number(lng), Number(lat)])
+  return { x, y }
+}
+
+function katecToWgs84(x, y) {
+  const [lng, lat] = proj4(KATEC, WGS84, [Number(x), Number(y)])
+  return { lat, lng }
+}
+
+function mapBrand(brandCode) {
+  const brandMap = {
+    SKE: 'SK에너지',
+    GSC: 'GS칼텍스',
+    SOL: 'S-OIL',
+    HDO: 'HD현대오일뱅크',
+    RTO: '알뜰주유소',
+    RTX: '고속도로 알뜰주유소',
+    NHO: '농협 알뜰주유소',
+    ETC: '자가상표',
+    E1G: 'E1',
+    SKG: 'SK가스',
+  }
+  return brandMap[String(brandCode ?? '').toUpperCase()] ?? brandCode ?? ''
+}
+
+function normalizeOpinetStation(row) {
+  if (!row) return null
+  const x = row.GIS_X_COOR ?? row.GIS_X
+  const y = row.GIS_Y_COOR ?? row.GIS_Y
+  if (!x || !y) return null
+
+  const { lat, lng } = katecToWgs84(x, y)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+
+  const price = Number(row.PRICE ?? row.price ?? 0)
+  return {
+    id: row.UNI_ID ?? row.ID ?? `fuel-${lat}-${lng}`,
+    name: row.OS_NM ?? row.name ?? '주유소',
+    brand: mapBrand(row.POLL_DIV_CO),
+    address: row.VAN_ADR ?? row.NEW_ADR ?? row.address ?? '',
+    lat,
+    lng,
+    fuelPrice: Number.isFinite(price) && price > 0 ? price : null,
+    fuelLabel: '휘발유',
+    priceSource: Number.isFinite(price) && price > 0 ? 'opinet' : 'estimated',
+    distanceKm: row.DISTANCE != null ? Number((Number(row.DISTANCE) / 1000).toFixed(1)) : null,
+  }
+}
+
+app.get('/api/fuel/nearby', async (req, res) => {
+  if (!OPINET_KEY) {
+    return res.status(503).json({ error: { code: 'NO_OPINET_KEY', message: 'OPINET_API_KEY 환경변수 미설정' } })
+  }
+
+  const lat = Number(req.query.lat)
+  const lng = Number(req.query.lng)
+  const radius = Math.max(1000, Math.min(20000, Number(req.query.radius ?? 6000)))
+  const productCode = String(req.query.productCode ?? 'B027')
+  const limit = Math.max(1, Math.min(12, Number(req.query.limit ?? 8)))
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: { code: 'INVALID_COORD', message: 'lat/lng가 필요합니다.' } })
+  }
+
+  try {
+    const { x, y } = wgs84ToKatec(lat, lng)
+    const result = await opinetFetch('aroundAll.do', {
+      x: String(Math.round(x)),
+      y: String(Math.round(y)),
+      radius: String(radius),
+      prodcd: productCode,
+      sort: '1',
+    })
+
+    const parsed = parseJsonBuffer(result.body)
+    if (result.status !== 200 || !parsed?.RESULT) {
+      return res.status(result.status ?? 502).json(parsed ?? {
+        error: { code: 'OPINET_ERROR', message: '오피넷 응답을 처리하지 못했습니다.' },
+      })
+    }
+
+    const stations = (parsed.RESULT?.OIL ?? [])
+      .map(normalizeOpinetStation)
+      .filter(Boolean)
+      .slice(0, limit)
+
+    return res.json({
+      source: 'opinet',
+      productCode,
+      radius,
+      items: stations,
+    })
+  } catch (error) {
+    return res.status(502).json({ error: { code: 'OPINET_PROXY_ERROR', message: error.message } })
+  }
+})
 
 // TMAP API 상태 + 빠른 진단
 app.get('/api/meta/tmap-status', async (req, res) => {

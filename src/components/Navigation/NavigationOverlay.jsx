@@ -3,6 +3,8 @@ import useAppStore from '../../store/appStore'
 import MergeOptionsSheet from './MergeOptionsSheet'
 import { formatEta } from '../Route/RouteCard'
 import { SCENIC_SEGMENTS } from '../../data/scenicRoads'
+import { PRESET_INFO } from '../../data/mockData'
+import { searchNearbyPOIs } from '../../services/tmapService'
 import {
   analyzeRouteProgress,
   formatGuidanceDistance,
@@ -19,7 +21,7 @@ export default function NavigationOverlay() {
     mergeOptions, userLocation, saveRoute, cameraReports, reportCamera,
     navAutoFollow, setNavAutoFollow, addWaypoint, searchRoute, waypoints,
     refreshNavigationRoute, navigationLastRefreshedAt, isRefreshingNavigation,
-    settings,
+    settings, driverPreset, setDriverPreset, showRoutePanel, openSearchOverlay,
   } = useAppStore()
   const [showMerge, setShowMerge] = useState(false)
   const [showSaveDialog, setShowSaveDialog] = useState(false)
@@ -98,12 +100,12 @@ export default function NavigationOverlay() {
   const remainingEta = getRemainingEta(route, routeProgress.remainingKm)
 
   useEffect(() => {
-    if (!isNavigating) return
+    if (!isNavigating || route?.source !== 'live') return
     const timer = window.setInterval(() => {
       refreshNavigationRoute('traffic-refresh')
     }, 120000)
     return () => window.clearInterval(timer)
-  }, [isNavigating, refreshNavigationRoute])
+  }, [isNavigating, refreshNavigationRoute, route?.source])
 
   useEffect(() => {
     if (isNavigating) return
@@ -112,7 +114,7 @@ export default function NavigationOverlay() {
   }, [isNavigating])
 
   useEffect(() => {
-    if (!isNavigating || !route || !userLocation || isRefreshingNavigation) return
+    if (!isNavigating || !route || !userLocation || isRefreshingNavigation || route.source === 'recorded') return
     const cooldownPassed = Date.now() - navigationLastRefreshedAt > 15000
     const shouldRefreshForFallback = route.source !== 'live' && cooldownPassed
     const shouldRefreshForOffRoute = routeProgress.distanceToRouteM != null && routeProgress.distanceToRouteM > 180 && cooldownPassed
@@ -129,8 +131,6 @@ export default function NavigationOverlay() {
     routeProgress.distanceToRouteM,
     userLocation,
   ])
-
-  if (!isNavigating) return null
 
   // 상단 배너: 일반 회전 안내 우선, 없으면 분기점, 없으면 목적지
   const nextGuidance = nextManeuver ?? nextRealJunction
@@ -188,14 +188,17 @@ export default function NavigationOverlay() {
     window.speechSynthesis.speak(utterance)
   }, [isNavigating, nextGuidance, settings.voiceGuidance])
 
+  if (!isNavigating || showRoutePanel) return null
+
   async function searchNearby(category) {
     setNearbyCategory(category)
     setNearbyLoading(true)
     try {
-      const { searchNearbyPOIs } = await import('../../services/tmapService')
       const lat = userLocation?.lat ?? 37.5665
       const lng = userLocation?.lng ?? 126.978
-      const pois = await searchNearbyPOIs(category, lat, lng)
+      const pois = await searchNearbyPOIs(category, lat, lng, {
+        routePolyline: route?.polyline ?? [],
+      })
       setNearbyPOIs(pois.slice(0, 6))
     } catch {
       setNearbyPOIs([])
@@ -225,14 +228,25 @@ export default function NavigationOverlay() {
               <div className="text-white text-xl font-black truncate">{bannerTitle}</div>
               <div className="text-white/70 text-sm mt-0.5 truncate">{bannerSub}</div>
             </div>
-            <button
-              onClick={handleStop}
-              className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center flex-shrink-0"
-            >
-              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/>
-              </svg>
-            </button>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={openSearchOverlay}
+                className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center"
+                aria-label="안내 중 경로 검색"
+              >
+                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </button>
+              <button
+                onClick={handleStop}
+                className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center"
+              >
+                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -271,6 +285,25 @@ export default function NavigationOverlay() {
       {/* 하단 분기점 바 */}
       <div className="absolute bottom-20 left-0 right-0 z-20 px-4">
         <div className="bg-white rounded-2xl shadow-lg overflow-hidden">
+          <div className="px-4 pt-3 pb-2 border-b border-gray-100">
+            <div className="text-[11px] font-bold text-gray-400 mb-2">현재 경로 기준</div>
+            <div className="flex gap-2">
+              {Object.entries(PRESET_INFO).map(([key, info]) => {
+                const active = driverPreset === key
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setDriverPreset(key)}
+                    className={`flex-1 rounded-xl px-2 py-2 text-xs font-bold transition-all ${
+                      active ? 'bg-tmap-blue text-white shadow-sm' : 'bg-gray-100 text-gray-500'
+                    }`}
+                  >
+                    {info.icon} {info.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
           <button
             className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 active:bg-gray-100"
             onClick={() => setShowMerge(true)}
@@ -460,7 +493,7 @@ export default function NavigationOverlay() {
                       <div className="text-[11px] mt-1 flex items-center gap-2">
                         <span className="font-bold text-orange-600">{poi.fuelLabel ?? '휘발유'} {poi.fuelPrice.toLocaleString()}원/L</span>
                         {poi.isRouteCorridor && <span className="px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-bold">경로상</span>}
-                        <span className="text-gray-400">표시용 추정가</span>
+                        <span className="text-gray-400">{poi.priceSource === 'opinet' ? '오피넷 실유가' : '표시용 추정가'}</span>
                       </div>
                     )}
                   </div>

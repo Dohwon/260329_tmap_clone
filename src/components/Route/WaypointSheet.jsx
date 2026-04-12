@@ -1,24 +1,49 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import useAppStore from '../../store/appStore'
+import { searchInstantPlaceCandidates, searchPOI } from '../../services/tmapService'
 
 export default function WaypointSheet({ onClose }) {
-  const { waypoints, addWaypoint, removeWaypoint, searchRoute, destination } = useAppStore()
+  const { waypoints, addWaypoint, removeWaypoint, searchRoute, destination, userLocation } = useAppStore()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
   const [isSearching, setIsSearching] = useState(false)
+  const debounceRef = useRef(null)
+  const isComposingRef = useRef(false)
 
-  async function handleSearch() {
-    if (!query.trim()) return
-    setIsSearching(true)
-    try {
-      const { searchPOI } = await import('../../services/tmapService')
-      const pois = await searchPOI(query, destination?.lat, destination?.lng)
-      setResults(pois.slice(0, 5))
-    } catch {
+  useEffect(() => {
+    const trimmed = query.trim()
+    if (!trimmed || isComposingRef.current) {
       setResults([])
+      setIsSearching(false)
+      return
     }
-    setIsSearching(false)
-  }
+    if (trimmed.length < 2) {
+      setResults([])
+      setIsSearching(false)
+      return
+    }
+
+    const instantResults = searchInstantPlaceCandidates(trimmed, userLocation?.lat ?? destination?.lat, userLocation?.lng ?? destination?.lng)
+    if (instantResults.length > 0) {
+      setResults(instantResults.slice(0, 5))
+      setIsSearching(false)
+    }
+
+    clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(async () => {
+      setIsSearching(true)
+      try {
+        const pois = await searchPOI(trimmed, userLocation?.lat ?? destination?.lat, userLocation?.lng ?? destination?.lng)
+        setResults(pois.slice(0, 5))
+      } catch {
+        setResults([])
+      } finally {
+        setIsSearching(false)
+      }
+    }, 120)
+
+    return () => clearTimeout(debounceRef.current)
+  }, [query, userLocation?.lat, userLocation?.lng, destination?.lat, destination?.lng])
 
   function handleAdd(poi) {
     addWaypoint({ id: `wp-${poi.lat}-${poi.lng}`, name: poi.name, lat: poi.lat, lng: poi.lng, address: poi.address })
@@ -50,17 +75,17 @@ export default function WaypointSheet({ onClose }) {
             placeholder="장소 검색 (예: 죽전휴게소)"
             value={query}
             onChange={e => setQuery(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleSearch()}
+            onCompositionStart={() => { isComposingRef.current = true }}
+            onCompositionEnd={(event) => {
+              isComposingRef.current = false
+              setQuery(event.currentTarget.value)
+            }}
           />
-          <button
-            onClick={handleSearch}
-            className="px-4 py-2 rounded-xl bg-tmap-blue text-white text-sm font-bold"
-          >
-            검색
-          </button>
+          <div className="px-3 py-2 rounded-xl bg-gray-100 text-xs font-bold text-gray-500 flex items-center">자동</div>
         </div>
 
         {/* 검색 결과 */}
+        {query.trim().length > 0 && query.trim().length < 2 && <div className="text-center text-sm text-gray-400 py-3">두 글자 이상 입력하세요.</div>}
         {isSearching && <div className="text-center text-sm text-gray-400 py-3">검색 중...</div>}
         {results.length > 0 && (
           <div className="px-5 space-y-1 max-h-40 overflow-y-auto">

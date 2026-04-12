@@ -4,11 +4,11 @@ export function ensureLiveRouteSource(route) {
 }
 
 export function shouldUseRawRoutePolyline(route) {
-  return route?.source === 'live'
+  return route?.source === 'live' || route?.source === 'recorded'
 }
 
 export function isUsableLiveRoute(route) {
-  return route?.source === 'live' && Array.isArray(route?.polyline) && route.polyline.length > 1
+  return (route?.source === 'live' || route?.source === 'recorded') && Array.isArray(route?.polyline) && route.polyline.length > 1
 }
 
 export function normalizeSearchOption(option) {

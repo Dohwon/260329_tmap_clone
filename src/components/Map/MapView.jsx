@@ -16,6 +16,10 @@ const COLORS = {
   selectedRoute: '#0064FF',
   navigationGuide: '#FF4FD8',
   secondaryRoute: '#AEB7C6',
+  routeHighway: '#2563EB',
+  routeNational: '#16A34A',
+  routeLocal: '#F97316',
+  routeJunction: '#F59E0B',
   fixedCamera: '#FF3B30',
   sectionCamera: '#FF3B30',
   restStop: '#008800',
@@ -50,7 +54,27 @@ function makeBadgeIcon({ text, background, size = 28, color = '#fff', border = '
   })
 }
 
-const currentLocationIcon = makeBadgeIcon({ text: '●', background: '#0064FF', size: 22 })
+function makeCurrentLocationIcon(heading = 0) {
+  const rotation = Number.isFinite(heading) ? heading : 0
+  return L.divIcon({
+    className: '',
+    html: `<div style="position:relative;width:28px;height:28px;display:flex;align-items:center;justify-content:center;">
+      <div style="
+        position:absolute;width:28px;height:28px;border-radius:999px;background:rgba(0,100,255,0.14);
+        border:2px solid rgba(255,255,255,0.7);
+      "></div>
+      <div style="
+        width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-bottom:18px solid #0064FF;
+        transform:rotate(${rotation}deg);transform-origin:50% 75%;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.28));
+      "></div>
+      <div style="
+        position:absolute;width:8px;height:8px;border-radius:999px;background:#fff;border:2px solid #0064FF;
+      "></div>
+    </div>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+  })
+}
 const fixedCameraIcon = makeBadgeIcon({ text: '단', background: COLORS.fixedCamera })
 const sectionStartIcon = makeBadgeIcon({ text: '구', background: COLORS.sectionCamera })
 const sectionEndIcon = makeBadgeIcon({ text: '끝', background: COLORS.sectionCamera, size: 30 })
@@ -62,12 +86,12 @@ const junctionIcon = makeBadgeIcon({ text: '분', background: '#FF6B00', size: 2
 const schoolZoneIcon = makeBadgeIcon({ text: '30', background: '#F59E0B', size: 30 })
 const speedBumpIcon = makeBadgeIcon({ text: '턱', background: '#0EA5E9', size: 30 })
 
-function getLookAheadCenter(map, location, zoom = 18, enabled = true) {
+function getLookAheadCenter(map, location, zoom = 19, enabled = true) {
   if (!location) return null
   const latLng = L.latLng(location.lat, location.lng)
   if (!enabled) return latLng
   const projected = map.project(latLng, zoom)
-  return map.unproject(projected.add([0, -220]), zoom)
+  return map.unproject(projected.add([0, -300]), zoom)
 }
 
 function MapController({ center, zoom, darkMode, minimalMap }) {
@@ -87,9 +111,9 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
     if (!isNavigating) return
     const freshLoc = useAppStore.getState().userLocation
     const target = freshLoc
-      ? getLookAheadCenter(map, freshLoc, 18, settings.navigationLookAhead)
+      ? getLookAheadCenter(map, freshLoc, 19, settings.navigationLookAhead)
       : (Array.isArray(center) ? center : null)
-    if (target) map.setView(target, 18, { animate: true, duration: 0.5 })
+    if (target) map.setView(target, 19, { animate: true, duration: 0.45 })
     // 시작 시 자동추적 활성화
     useAppStore.getState().setNavAutoFollow(true)
   }, [isNavigating, settings.navigationLookAhead]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -97,13 +121,13 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
   // 연속 auto-follow: 내비 시작 직후에는 확대 수준을 유지하고, 이후에는 부드럽게 중심만 이동
   useEffect(() => {
     if (!isNavigating || !navAutoFollow || !userLocation) return
-    const target = getLookAheadCenter(map, userLocation, 18, settings.navigationLookAhead) ?? L.latLng(userLocation.lat, userLocation.lng)
+    const target = getLookAheadCenter(map, userLocation, 19, settings.navigationLookAhead) ?? L.latLng(userLocation.lat, userLocation.lng)
     const centerDistance = map.distance(map.getCenter(), target)
-    if (map.getZoom() < 18 || centerDistance > 60) {
-      map.setView(target, Math.max(18, map.getZoom()), { animate: true, duration: 0.35 })
+    if (map.getZoom() < 19 || centerDistance > 35) {
+      map.setView(target, Math.max(19, map.getZoom()), { animate: true, duration: 0.28 })
       return
     }
-    map.panTo(target, { animate: true, duration: 0.3 })
+    map.panTo(target, { animate: true, duration: 0.22 })
   }, [userLocation, navAutoFollow, isNavigating, settings.navigationLookAhead]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -212,6 +236,14 @@ function getCongestionColor(score) {
   return COLORS.congestion1
 }
 
+function getRouteSegmentColor(roadType) {
+  if (roadType === 'highway') return COLORS.routeHighway
+  if (roadType === 'national') return COLORS.routeNational
+  if (roadType === 'local') return COLORS.routeLocal
+  if (roadType === 'junction') return COLORS.routeJunction
+  return COLORS.selectedRoute
+}
+
 function getRoutePath(route, curvature = 0.1) {
   if (!route?.polyline) return []
   return shouldUseRawRoutePolyline(route) ? route.polyline : smoothPath(route.polyline, curvature)
@@ -255,6 +287,10 @@ export default function MapView({ darkMode = false }) {
   const nearbyRoadCameras = useMemo(
     () => buildNearbyRoadCameras(userLocation),
     [userLocation]
+  )
+  const currentLocationIcon = useMemo(
+    () => makeCurrentLocationIcon(userLocation?.heading ?? 0),
+    [userLocation?.heading]
   )
   const showMinimalNavigationMap = isNavigating && settings.navigationMinimalMap
 
@@ -435,10 +471,26 @@ export default function MapView({ darkMode = false }) {
 
       {selectedRoute && (
         <>
-          <Polyline
-            positions={getRoutePath(selectedRoute, 0.1)}
-            pathOptions={{ color: isNavigating ? COLORS.navigationGuide : COLORS.selectedRoute, weight: showMinimalNavigationMap ? 9 : 7, opacity: 0.98 }}
-          />
+          {(selectedRoute.segmentStats ?? [])
+            .filter((segment) => Array.isArray(segment.positions) && segment.positions.length > 1)
+            .map((segment) => (
+              <Polyline
+                key={`route-segment-${segment.id}`}
+                positions={smoothPath(segment.positions, 0.03)}
+                pathOptions={{
+                  color: getRouteSegmentColor(segment.roadType),
+                  weight: showMinimalNavigationMap ? 10 : 8,
+                  opacity: isNavigating ? 0.92 : 0.9,
+                }}
+              />
+            ))}
+
+          {isNavigating && (
+            <Polyline
+              positions={getRoutePath(selectedRoute, 0.1)}
+              pathOptions={{ color: COLORS.navigationGuide, weight: showMinimalNavigationMap ? 6 : 5, opacity: 0.98 }}
+            />
+          )}
 
           {visibleLayers.congestion && !showMinimalNavigationMap && (selectedRoute.segmentStats ?? []).map((segment) => (
             <Polyline
@@ -448,7 +500,7 @@ export default function MapView({ darkMode = false }) {
             />
           ))}
 
-          {visibleLayers.speedLimits && !showMinimalNavigationMap && routeSpeedMarkers.map((marker) => (
+          {visibleLayers.speedLimits && routeSpeedMarkers.map((marker) => (
             <Marker
               key={marker.id}
               position={marker.center}

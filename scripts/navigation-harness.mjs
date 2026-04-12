@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { searchInstantPlaceCandidates } from '../src/services/tmapService.js'
 import {
   analyzeRouteProgress,
   ensureLiveRouteSource,
@@ -101,6 +102,16 @@ run('TMAP searchOption is normalized to the numeric string format the API accept
   assert.equal(normalizeSearchOption('00'), '0')
   assert.equal(normalizeSearchOption('04'), '4')
   assert.equal(normalizeSearchOption('10'), '10')
+})
+
+run('instant search does not crash on roads without rest stop arrays', () => {
+  const results = searchInstantPlaceCandidates('국도', 37.5, 127.0)
+  assert.ok(Array.isArray(results), 'expected array results')
+})
+
+run('instant search returns fast candidates for known places', () => {
+  const results = searchInstantPlaceCandidates('양화대교', 37.54, 126.9)
+  assert.ok(results.some((item) => item.name === '양화대교'), 'expected 양화대교 in results')
 })
 
 if (process.exitCode) {

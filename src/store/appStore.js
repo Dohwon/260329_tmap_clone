@@ -590,20 +590,22 @@ function decorateRoute(route, index, context) {
   let maxSpeedLimit = route.maxSpeedLimit ?? route.dominantSpeedLimit
   let averageSpeed = route.averageSpeed
   const routeDistance = route.distance ?? 0
-  const routeComplexity = route.mergeCount + calcUrbanDensityPenalty(route) * 0.6
+  const urbanDensityPenalty = calcUrbanDensityPenalty(route)
+  const urbanCongestionPressure = ((route.congestionScore ?? 1) * 4) + (urbanDensityPenalty * 0.9) + (localRoadRatio * 0.22)
+  const routeComplexity = route.mergeCount + urbanDensityPenalty * 0.6
   const longTripFactor = routeDistance > 120 ? 1 : routeDistance > 60 ? 0.65 : routeDistance > 30 ? 0.35 : 0.1
 
-  // 초보/중수/고수는 장거리일수록 ETA 차이를 더 벌린다.
+  // 초보/중수/고수는 장거리뿐 아니라 도심 혼잡도에서도 차이가 난다.
   if (driverPreset === 'beginner') {
-    eta += Math.round((routeComplexity * longTripFactor) / 2.2)
+    eta += Math.round((routeComplexity * longTripFactor) / 2.2) + Math.max(1, Math.round(urbanCongestionPressure / 5))
     mergeCount = Math.max(1, mergeCount - 2)
-    averageSpeed = Math.max(40, Math.round((averageSpeed ?? 70) - (6 * longTripFactor)))
+    averageSpeed = Math.max(34, Math.round((averageSpeed ?? 70) - (6 * longTripFactor) - (urbanCongestionPressure / 9)))
   } else if (driverPreset === 'intermediate') {
-    eta += Math.round((routeComplexity * longTripFactor) / 6)
+    eta += Math.round((routeComplexity * longTripFactor) / 6) + Math.round(urbanCongestionPressure / 14)
   } else if (driverPreset === 'expert') {
-    eta = Math.max(eta - Math.max(2, Math.round(3 * longTripFactor)), 1)
+    eta = Math.max(eta - Math.max(2, Math.round(3 * longTripFactor) + Math.round(urbanCongestionPressure / 10)), 1)
     mergeCount += 1
-    averageSpeed = Math.min(maxSpeedLimit ?? 110, Math.round((averageSpeed ?? 75) + 3 * longTripFactor))
+    averageSpeed = Math.min(maxSpeedLimit ?? 110, Math.round((averageSpeed ?? 75) + 3 * longTripFactor + (urbanCongestionPressure / 18)))
   }
 
   // 고속도로만 = 빠른 경로와 동일한 수준 (시간 유지, 고속비율만 표시 조정)
@@ -639,7 +641,9 @@ function decorateRoute(route, index, context) {
   const difficultyScore = mergeCount + (nextRoute.congestionScore * 2)
   nextRoute.difficultyLabel = difficultyScore >= 12 ? '난이도 상' : difficultyScore >= 8 ? '난이도 중' : '난이도 하'
   nextRoute.difficultyColor = difficultyScore >= 12 ? 'red' : difficultyScore >= 8 ? 'orange' : 'green'
-  nextRoute.segmentStats = buildSegmentStats(nextRoute)
+  nextRoute.segmentStats = Array.isArray(route.segmentStats) && route.segmentStats.length > 0
+    ? route.segmentStats
+    : buildSegmentStats(nextRoute)
   nextRoute.averageSpeed = averageSpeed ?? Math.round(nextRoute.segmentStats.reduce((sum, segment) => sum + segment.averageSpeed, 0) / nextRoute.segmentStats.length)
   nextRoute.maxSpeedLimit = maxSpeedLimit ?? Math.max(...nextRoute.segmentStats.map((segment) => segment.speedLimit))
   nextRoute.nextSegments = buildNextSegments(nextRoute)
@@ -662,6 +666,48 @@ function decorateRoute(route, index, context) {
     ...(urbanNote ? [urbanNote] : []),
   ].filter(Boolean).join(' · ')
   return nextRoute
+}
+
+function getRoutePreferenceScore(route, driverPreset) {
+  const urbanDensityScore = route.urbanDensityScore ?? calcUrbanDensityPenalty(route)
+  const congestionPenalty = (route.congestionScore ?? 1) * 5
+  const localRoadPressure = (route.localRoadRatio ?? 0) * 0.18
+
+  if (driverPreset === 'beginner') {
+    return (
+      (route.distance ?? 0) * 0.55 +
+      (route.eta ?? 0) * 1.2 +
+      (route.mergeCount ?? 0) * 3.6 +
+      urbanDensityScore * 2.8 +
+      congestionPenalty * 1.6 +
+      localRoadPressure
+    )
+  }
+
+  if (driverPreset === 'expert') {
+    return (
+      (route.eta ?? 0) * 2.8 +
+      (route.distance ?? 0) * 0.15 +
+      (route.mergeCount ?? 0) * 0.35 +
+      urbanDensityScore * 0.35
+    )
+  }
+
+  return (
+    (route.eta ?? 0) * 2 +
+    (route.distance ?? 0) * 0.25 +
+    (route.mergeCount ?? 0) * 1.5 +
+    urbanDensityScore * 1.1 +
+    congestionPenalty * 0.8
+  )
+}
+
+function rankRoutesByDriverPreset(routes, driverPreset) {
+  return [...routes].sort((a, b) => {
+    const scoreDiff = getRoutePreferenceScore(a, driverPreset) - getRoutePreferenceScore(b, driverPreset)
+    if (scoreDiff !== 0) return scoreDiff
+    return (a.eta ?? Infinity) - (b.eta ?? Infinity)
+  })
 }
 
 function buildFallbackRoutes(origin, destination, routePreferences, driverPreset) {
@@ -776,6 +822,15 @@ const useAppStore = create((set, get) => ({
   activeTab: 'home',
   setActiveTab: (tab) => set({ activeTab: tab }),
   openSearchHome: () => set({ activeTab: 'search', searchMode: 'default', selectedNearbyCategory: null, nearbyPlaces: [] }),
+  isSearchOverlayOpen: false,
+  openSearchOverlay: () => set({
+    activeTab: 'home',
+    isSearchOverlayOpen: true,
+    searchMode: 'default',
+    selectedNearbyCategory: null,
+    nearbyPlaces: [],
+  }),
+  closeSearchOverlay: () => set({ isSearchOverlayOpen: false }),
 
   mapCenter: DEFAULT_CENTER,
   mapZoom: 13,
@@ -784,11 +839,23 @@ const useAppStore = create((set, get) => ({
   userLocation: null,
   userAddress: '',
   locationHistory: [],
+  drivePathHistory: [],
+  driveRouteSnapshot: null,
   setUserLocation: (location) =>
-    set((state) => ({
-      userLocation: location,
-      locationHistory: [...state.locationHistory.slice(-19), [location.lat, location.lng]],
-    })),
+    set((state) => {
+      const nextPoint = [location.lat, location.lng]
+      const latestDrivePoint = state.drivePathHistory[state.drivePathHistory.length - 1]
+      const shouldAppendDrivePoint = !latestDrivePoint
+        || haversineKm(latestDrivePoint[0], latestDrivePoint[1], location.lat, location.lng) >= 0.015
+
+      return {
+        userLocation: location,
+        locationHistory: [...state.locationHistory.slice(-19), nextPoint],
+        drivePathHistory: state.isNavigating && shouldAppendDrivePoint
+          ? [...state.drivePathHistory.slice(-1999), nextPoint]
+          : state.drivePathHistory,
+      }
+    }),
   setUserAddress: (userAddress) => set({ userAddress }),
 
   settings: sanitizeSettings(readStorage(STORAGE_KEYS.settings, DEFAULT_SETTINGS)),
@@ -844,7 +911,7 @@ const useAppStore = create((set, get) => ({
     let selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? routes[0] ?? null
     const routeStart = selectedRoute?.polyline?.[0]
     const shouldRefreshLiveRoute =
-      Boolean(destination && userLocation) && (
+      selectedRoute?.source !== 'recorded' && Boolean(destination && userLocation) && (
         !isUsableLiveRoute(selectedRoute)
         || !Array.isArray(routeStart)
         || haversineKm(userLocation.lat, userLocation.lng, routeStart[0], routeStart[1]) > 1.2
@@ -864,37 +931,127 @@ const useAppStore = create((set, get) => ({
       return false
     }
 
-    set({ isNavigating: true, navAutoFollow: true, showRoutePanel: false, routePanelMode: 'full', mapCenter: center, mapZoom: 18 })
+    set({
+      isNavigating: true,
+      navAutoFollow: true,
+      isSearchOverlayOpen: false,
+      showRoutePanel: false,
+      routePanelMode: 'full',
+      mapCenter: center,
+      mapZoom: 18,
+      drivePathHistory: userLocation ? [[userLocation.lat, userLocation.lng]] : [],
+      driveRouteSnapshot: selectedRoute ? {
+        ...selectedRoute,
+        polyline: [...(selectedRoute.polyline ?? [])],
+        segmentStats: [...(selectedRoute.segmentStats ?? [])],
+        nextSegments: [...(selectedRoute.nextSegments ?? [])],
+        maneuvers: [...(selectedRoute.maneuvers ?? [])],
+        junctions: [...(selectedRoute.junctions ?? [])],
+        cameras: [...(selectedRoute.cameras ?? [])],
+      } : null,
+    })
     return true
   },
   stopNavigation: () => set({
     isNavigating: false,
     navAutoFollow: false,
+    isSearchOverlayOpen: false,
     destination: null,
     routes: [],
     selectedRouteId: null,
     routePanelMode: 'full',
     isRefreshingNavigation: false,
     navigationLastRefreshedAt: 0,
+    drivePathHistory: [],
+    driveRouteSnapshot: null,
   }),
 
   // ── 경로 저장 ──────────────────────────────────────
   savedRoutes: readStorage(STORAGE_KEYS.savedRoutes, []),
   saveRoute: ({ route, destination, name }) => {
+    const actualDrivePath = get().drivePathHistory
+    const routeSnapshot = get().driveRouteSnapshot ?? route
     const entry = {
       id: `saved-${Date.now()}`,
       name: name || (destination?.name ? `→ ${destination.name}` : '저장된 경로'),
       savedAt: new Date().toISOString(),
-      distance: route?.distance,
-      eta: route?.eta,
-      tollFee: route?.tollFee,
-      highwayRatio: route?.highwayRatio,
+      distance: routeSnapshot?.distance,
+      eta: routeSnapshot?.eta,
+      tollFee: routeSnapshot?.tollFee,
+      highwayRatio: routeSnapshot?.highwayRatio,
+      nationalRoadRatio: routeSnapshot?.nationalRoadRatio,
+      localRoadRatio: routeSnapshot?.localRoadRatio,
       destination,
-      polyline: route?.polyline?.slice(0, 50) ?? [], // 용량 절약을 위해 50점만
+      polyline: actualDrivePath.length > 1 ? actualDrivePath.slice(-1200) : routeSnapshot?.polyline?.slice(0, 300) ?? [],
+      originalRoutePolyline: routeSnapshot?.polyline?.slice(0, 300) ?? [],
+      source: actualDrivePath.length > 1 ? 'recorded' : (routeSnapshot?.source ?? 'live'),
+      segmentStats: routeSnapshot?.segmentStats?.slice(0, 120) ?? [],
+      nextSegments: routeSnapshot?.nextSegments?.slice(0, 32) ?? [],
+      maneuvers: routeSnapshot?.maneuvers?.slice(0, 120) ?? [],
+      junctions: routeSnapshot?.junctions?.slice(0, 80) ?? [],
+      cameras: routeSnapshot?.cameras?.slice(0, 80) ?? [],
+      dominantSpeedLimit: routeSnapshot?.dominantSpeedLimit,
+      maxSpeedLimit: routeSnapshot?.maxSpeedLimit,
+      averageSpeed: routeSnapshot?.averageSpeed,
+      mergeCount: routeSnapshot?.mergeCount,
+      congestionScore: routeSnapshot?.congestionScore,
+      congestionLabel: routeSnapshot?.congestionLabel,
+      fixedCameraCount: routeSnapshot?.fixedCameraCount,
+      sectionCameraCount: routeSnapshot?.sectionCameraCount,
     }
     const next = [entry, ...get().savedRoutes].slice(0, 20)
     writeStorage(STORAGE_KEYS.savedRoutes, next)
     set({ savedRoutes: next })
+  },
+  resumeSavedRoute: (savedRoute) => {
+    if (!savedRoute || !Array.isArray(savedRoute.polyline) || savedRoute.polyline.length < 2) return
+    const restoredRoute = decorateRoute({
+      id: savedRoute.id,
+      title: savedRoute.name,
+      explanation: '실제 주행 저장 경로',
+      eta: savedRoute.eta ?? 1,
+      distance: savedRoute.distance ?? 0,
+      highwayRatio: savedRoute.highwayRatio ?? 0,
+      nationalRoadRatio: savedRoute.nationalRoadRatio ?? 0,
+      localRoadRatio: savedRoute.localRoadRatio ?? 0,
+      mergeCount: savedRoute.mergeCount ?? 0,
+      congestionScore: savedRoute.congestionScore ?? 1,
+      congestionLabel: savedRoute.congestionLabel ?? '원활',
+      fixedCameraCount: savedRoute.fixedCameraCount ?? 0,
+      sectionCameraCount: savedRoute.sectionCameraCount ?? 0,
+      dominantSpeedLimit: savedRoute.dominantSpeedLimit ?? 80,
+      maxSpeedLimit: savedRoute.maxSpeedLimit ?? savedRoute.dominantSpeedLimit ?? 80,
+      averageSpeed: savedRoute.averageSpeed ?? 60,
+      tollFee: savedRoute.tollFee ?? 0,
+      routeColor: '#14B8A6',
+      source: 'recorded',
+      isBaseline: true,
+      polyline: savedRoute.polyline,
+      segmentStats: savedRoute.segmentStats ?? [],
+      nextSegments: savedRoute.nextSegments ?? [],
+      maneuvers: savedRoute.maneuvers ?? [],
+      junctions: savedRoute.junctions ?? [],
+      cameras: savedRoute.cameras ?? [],
+    }, 0, {
+      origin: get().userLocation ?? DEFAULT_ORIGIN,
+      destination: savedRoute.destination ?? { name: savedRoute.name, lat: savedRoute.polyline.at(-1)?.[0], lng: savedRoute.polyline.at(-1)?.[1] },
+      routePreferences: get().routePreferences,
+      driverPreset: get().driverPreset,
+    })
+
+    set({
+      activeTab: 'home',
+      destination: savedRoute.destination ?? get().destination,
+      routes: [restoredRoute],
+      selectedRouteId: restoredRoute.id,
+      showRoutePanel: false,
+      routePanelMode: 'peek',
+      mergeOptions: buildMergeOptions(restoredRoute, 'merge-current', get().driverPreset),
+      mapCenter: restoredRoute.polyline[Math.floor(restoredRoute.polyline.length / 2)],
+      mapZoom: 11,
+      selectedRoadId: null,
+      waypoints: [],
+    })
   },
   deleteSavedRoute: (id) => {
     const next = get().savedRoutes.filter((r) => r.id !== id)
@@ -1017,7 +1174,18 @@ const useAppStore = create((set, get) => ({
   driverPreset: 'intermediate',
   setDriverPreset: (driverPreset) => {
     set({ driverPreset })
-    const { destination } = get()
+    const { destination, isNavigating, routes, selectedRouteId } = get()
+    if (isNavigating) {
+      const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? routes[0]
+      if (selectedRoute?.source === 'recorded') {
+        set({
+          mergeOptions: selectedRoute ? buildMergeOptions(selectedRoute, 'merge-current', driverPreset) : [],
+        })
+        return
+      }
+      if (destination) get().refreshNavigationRoute('preset-change')
+      return
+    }
     if (destination) get().searchRoute(destination)
   },
 
@@ -1091,15 +1259,19 @@ const useAppStore = create((set, get) => ({
   showRecentSearches: () => set({ activeTab: 'search', searchMode: 'recent' }),
   openNearbyCategory: async (category) => {
     const origin = get().userLocation ?? DEFAULT_ORIGIN
+    const selectedRoute = get().routes.find((route) => route.id === get().selectedRouteId) ?? null
     set({
       activeTab: 'search',
+      isSearchOverlayOpen: false,
       searchMode: 'nearby',
       selectedNearbyCategory: category,
       nearbyPlaces: [],
       isLoadingNearby: true,
     })
     try {
-      const nearbyPlaces = await searchNearbyPOIs(category, origin.lat, origin.lng)
+      const nearbyPlaces = await searchNearbyPOIs(category, origin.lat, origin.lng, {
+        routePolyline: selectedRoute?.polyline ?? [],
+      })
       set({ nearbyPlaces, isLoadingNearby: false })
     } catch {
       set({ nearbyPlaces: [], isLoadingNearby: false })
@@ -1173,6 +1345,7 @@ const useAppStore = create((set, get) => ({
       destination: normalizedDestination,
       showRoutePanel: true,
       routePanelMode: 'full',
+      isSearchOverlayOpen: false,
       isLoadingRoutes: true,
       routes: [],
       selectedRouteId: null,
@@ -1197,13 +1370,13 @@ const useAppStore = create((set, get) => ({
       })
     }
 
-    const decoratedRoutes = liveRoutes
+    const decoratedRoutes = rankRoutesByDriverPreset(liveRoutes
       .map((route, index) => decorateRoute(route, index, {
         origin,
         destination: normalizedDestination,
         routePreferences,
         driverPreset,
-      }))
+      })), driverPreset)
     const selectedRouteId = decoratedRoutes[0]?.id ?? null
     const selectedRoute = decoratedRoutes[0] ?? null
 
@@ -1238,12 +1411,12 @@ const useAppStore = create((set, get) => ({
       const liveRoutes = await loadLiveRoutes(origin, state.destination, state.waypoints, state.routePreferences)
       if (liveRoutes.length === 0) throw new Error('TMAP 경로 응답 없음')
 
-      const routes = liveRoutes.map((route, index) => decorateRoute(route, index, {
+      const routes = rankRoutesByDriverPreset(liveRoutes.map((route, index) => decorateRoute(route, index, {
         origin,
         destination: state.destination,
         routePreferences: state.routePreferences,
         driverPreset: state.driverPreset,
-      }))
+      })), state.driverPreset)
       const selectedRoute = routes.find((route) => route.id === state.selectedRouteId) ?? routes[0] ?? null
 
       set({

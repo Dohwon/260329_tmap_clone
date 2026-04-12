@@ -94,14 +94,20 @@ function getNearestRoadId(userLocation) {
     .sort((a, b) => a.distance - b.distance)[0]?.id ?? HIGHWAYS[0]?.id ?? null
 }
 
+function getRoadClassLabel(roadId) {
+  const road = HIGHWAYS.find((item) => item.id === roadId)
+  return road?.roadClass === 'national' ? '국도' : '고속도로'
+}
+
 export default function MoreScreen() {
   const {
-    searchRoute,
+    startNavigation,
     setActiveTab,
     userLocation,
     openNearbyCategory,
     savedRoutes,
     deleteSavedRoute,
+    resumeSavedRoute,
     settings,
     updateSetting,
     selectRoad,
@@ -157,8 +163,8 @@ export default function MoreScreen() {
       title: '교통 정보',
       items: [
         { icon: '🚌', label: '실시간 버스', desc: '네이버지도 대중교통', action: () => openExternal('https://map.naver.com/p?menu=transit') },
-        { icon: '🚇', label: '지하철 노선도', desc: '카카오맵 지하철', action: () => openExternal('https://map.kakao.com/') },
-        { icon: '🛣️', label: '고속도로 정보', desc: '도로별 흐름 보기', action: () => setPanel('highway') },
+        { icon: '🚇', label: '지하철 노선도', desc: '실제 지하철 노선도 열기', action: () => openExternal('https://map.naver.com/p?menu=subway') },
+        { icon: '🛣️', label: '도로 정보', desc: '가까운 고속도로·국도 흐름', action: () => setPanel('highway') },
       ],
     },
     {
@@ -265,16 +271,17 @@ export default function MoreScreen() {
                     삭제
                   </button>
                 </div>
-                {route.destination?.lat && route.destination?.lng && (
+                {Array.isArray(route.polyline) && route.polyline.length > 1 && (
                   <button
-                    onClick={() => {
-                      searchRoute(route.destination)
+                    onClick={async () => {
+                      resumeSavedRoute(route)
+                      await startNavigation()
                       setPanel(null)
                       setActiveTab('home')
                     }}
                     className="mt-3 w-full py-2.5 rounded-2xl bg-tmap-blue text-white text-sm font-bold"
                   >
-                    다시 안내
+                    실제 주행 경로 다시 안내
                   </button>
                 )}
               </div>
@@ -297,7 +304,7 @@ export default function MoreScreen() {
       )}
 
       {panel === 'highway' && (
-        <BottomSheet title="고속도로 정보" subtitle="도로별 흐름과 평균 속도" onClose={() => setPanel(null)}>
+        <BottomSheet title="도로 정보" subtitle="내 위치에서 가까운 고속도로·국도 순" onClose={() => setPanel(null)}>
           {highwayRows.map((road) => (
             <button
               key={road.id}
@@ -313,6 +320,9 @@ export default function MoreScreen() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <div className="text-sm font-black text-gray-900 truncate">{road.name}</div>
+                    <span className={`text-[11px] px-2 py-1 rounded-full font-bold ${getRoadClassLabel(road.id) === '국도' ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
+                      {getRoadClassLabel(road.id)}
+                    </span>
                     <span className={`text-[11px] px-2 py-1 rounded-full font-bold ${road.congestionLabel === '원활' ? 'bg-emerald-50 text-emerald-600' : road.congestionLabel === '서행' ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'}`}>
                       {road.congestionLabel}
                     </span>
