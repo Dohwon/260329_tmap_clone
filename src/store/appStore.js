@@ -1485,6 +1485,8 @@ const useAppStore = create((set, get) => ({
   selectedNearbyCategory: null,
   nearbyPlaces: [],
   isLoadingNearby: false,
+  homeRestaurantPins: [],
+  homeRestaurantPinsLoadedAt: 0,
   showRecentSearches: () => set({ activeTab: 'search', searchMode: 'recent' }),
   openNearbyCategory: async (category) => {
     const origin = get().userLocation ?? DEFAULT_ORIGIN
@@ -1505,6 +1507,20 @@ const useAppStore = create((set, get) => ({
       set({ nearbyPlaces, isLoadingNearby: false })
     } catch {
       set({ nearbyPlaces: [], isLoadingNearby: false })
+    }
+  },
+  refreshHomeRestaurantPins: async () => {
+    const origin = get().userLocation ?? DEFAULT_ORIGIN
+    try {
+      const pins = await searchNearbyPOIs('음식점', origin.lat, origin.lng, {
+        fuelSettings: get().settings,
+      })
+      set({
+        homeRestaurantPins: (pins ?? []).filter((item) => (item.distanceKm ?? Infinity) <= 10).slice(0, 8),
+        homeRestaurantPinsLoadedAt: Date.now(),
+      })
+    } catch {
+      set({ homeRestaurantPins: [], homeRestaurantPinsLoadedAt: Date.now() })
     }
   },
   searchRouteAlongRoad: async ({ road, viaPoint = null, direction = 'forward' }) => {

@@ -23,6 +23,7 @@ const COLORS = {
   fixedCamera: '#FF3B30',
   sectionCamera: '#FF3B30',
   restStop: '#008800',
+  restaurant: '#EC4899',
   congestion1: '#00A84F',
   congestion2: '#FF9500',
   congestion3: '#FF3B30',
@@ -85,6 +86,7 @@ const endIcon = makeBadgeIcon({ text: '종', background: '#2563EB' })
 const junctionIcon = makeBadgeIcon({ text: '분', background: '#FF6B00', size: 26 })
 const schoolZoneIcon = makeBadgeIcon({ text: '30', background: '#F59E0B', size: 30 })
 const speedBumpIcon = makeBadgeIcon({ text: '턱', background: '#0EA5E9', size: 30 })
+const restaurantIcon = makeBadgeIcon({ text: '맛', background: COLORS.restaurant, size: 30 })
 
 function getBearingDeg(fromLat, fromLng, toLat, toLng) {
   const fromLatRad = (fromLat * Math.PI) / 180
@@ -455,6 +457,13 @@ function formatSpeedLimitLabel(speedLimit) {
     : '제한속도 정보 없음'
 }
 
+function formatRestaurantPopupMeta(restaurant = {}) {
+  const rating = Number(restaurant?.googleRating)
+  if (!Number.isFinite(rating) || rating <= 0) return '별점 정보 없음'
+  const reviewCount = Number(restaurant?.googleUserRatingCount)
+  return `Google ${rating.toFixed(1)}${Number.isFinite(reviewCount) && reviewCount > 0 ? ` · 리뷰 ${reviewCount.toLocaleString()}` : ''}`
+}
+
 function getRoutePath(route, curvature = 0.1) {
   if (!route?.polyline) return []
   return shouldUseRawRoutePolyline(route) ? route.polyline : smoothPath(route.polyline, curvature)
@@ -479,10 +488,13 @@ export default function MapView({ darkMode = false }) {
     cameraReports,
     searchRoute,
     searchRouteAlongRoad,
+    addWaypoint,
     navAutoFollow,
     isNavigating,
     settings,
     safetyHazards,
+    homeRestaurantPins,
+    showRoutePanel,
   } = useAppStore()
 
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
@@ -860,6 +872,57 @@ export default function MapView({ darkMode = false }) {
             <div className="text-sm font-bold">{camera.label}</div>
             <div className="text-xs text-gray-500">{formatSpeedLimitLabel(camera.speedLimit)}</div>
             <div className="text-xs text-gray-500">{Math.round(camera.distanceM)}m 거리</div>
+          </Popup>
+        </Marker>
+      ))}
+
+      {!isNavigating && !showRoutePanel && !selectedRoad && (homeRestaurantPins ?? []).map((restaurant) => (
+        <Marker
+          key={`restaurant-pin-${restaurant.id}`}
+          position={[restaurant.lat, restaurant.lng]}
+          icon={restaurantIcon}
+        >
+          <Popup>
+            <div className="text-sm font-bold">{restaurant.name}</div>
+            <div className="text-xs text-gray-500 mt-0.5">{formatRestaurantPopupMeta(restaurant)}</div>
+            <div className="text-xs text-gray-400 mt-0.5">
+              {restaurant.distanceKm != null ? `${restaurant.distanceKm.toFixed(1)}km` : '현재 위치 기준'}
+              {typeof restaurant.googleOpenNow === 'boolean' ? ` · ${restaurant.googleOpenNow ? '영업중' : '영업종료'}` : ''}
+            </div>
+            {restaurant.address ? (
+              <div className="text-xs text-gray-400 mt-0.5">{restaurant.address}</div>
+            ) : null}
+            <button
+              onClick={async () => {
+                if (!destination) return
+                addWaypoint({
+                  id: `wp-restaurant-map-${restaurant.id}`,
+                  name: restaurant.name,
+                  lat: restaurant.lat,
+                  lng: restaurant.lng,
+                  address: restaurant.address ?? '',
+                })
+                await searchRoute(destination)
+              }}
+              disabled={!destination}
+              className="mt-2 w-full py-1.5 rounded-lg bg-tmap-blue text-white text-xs font-bold disabled:opacity-40"
+            >
+              경로 추가하기
+            </button>
+            <button
+              onClick={() => {
+                searchRoute({
+                  id: restaurant.id,
+                  name: restaurant.name,
+                  lat: restaurant.lat,
+                  lng: restaurant.lng,
+                  address: restaurant.address ?? '',
+                })
+              }}
+              className="mt-2 w-full py-1.5 rounded-lg bg-gray-900 text-white text-xs font-bold"
+            >
+              목적지 변경하기
+            </button>
           </Popup>
         </Marker>
       ))}

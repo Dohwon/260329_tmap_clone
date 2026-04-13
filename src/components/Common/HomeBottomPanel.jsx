@@ -1,7 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useRef } from 'react'
 import useAppStore from '../../store/appStore'
 import { HIGHWAYS } from '../../data/highwayData'
-import { searchNearbyPOIs } from '../../services/tmapService'
 
 export default function HomeBottomPanel() {
   const {
@@ -15,44 +14,14 @@ export default function HomeBottomPanel() {
     openNearbyCategory,
     selectRoad,
     setActiveTab,
-    settings,
   } = useAppStore()
   const quickChipRef = useRef(null)
   const roadRef = useRef(null)
-  const [nearbyRestaurants, setNearbyRestaurants] = useState([])
-  const [restaurantsLoading, setRestaurantsLoading] = useState(false)
 
   const handleWheelScroll = (ref) => (event) => {
     if (!ref.current) return
     ref.current.scrollLeft += event.deltaY
   }
-
-  useEffect(() => {
-    if (isNavigating || showRoutePanel || !userLocation) {
-      setNearbyRestaurants([])
-      return
-    }
-
-    let cancelled = false
-    setRestaurantsLoading(true)
-    searchNearbyPOIs('음식점', userLocation.lat, userLocation.lng, {
-      fuelSettings: settings,
-    })
-      .then((results) => {
-        if (cancelled) return
-        setNearbyRestaurants((results ?? []).filter((item) => (item.distanceKm ?? Infinity) <= 10).slice(0, 2))
-        setRestaurantsLoading(false)
-      })
-      .catch(() => {
-        if (cancelled) return
-        setNearbyRestaurants([])
-        setRestaurantsLoading(false)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [isNavigating, settings, showRoutePanel, userLocation])
 
   if (isNavigating || showRoutePanel) return null
 
@@ -96,41 +65,6 @@ export default function HomeBottomPanel() {
             <QuickChip icon="🍽️" label="맛집" onClick={() => openNearbyCategory('음식점')} />
             <QuickChip icon="🅿️" label="주차장" onClick={() => openNearbyCategory('주차장')} />
           </div>
-        </div>
-
-        <div className="px-4 mt-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-xs font-bold text-gray-500 tracking-wide">주변 10km 맛집</div>
-            <button onClick={() => openNearbyCategory('음식점')} className="text-[11px] text-tmap-blue font-bold">
-              전체 보기
-            </button>
-          </div>
-          {restaurantsLoading ? (
-            <div className="rounded-2xl bg-gray-50 px-4 py-3 text-xs text-gray-400">주변 맛집을 찾는 중이에요</div>
-          ) : nearbyRestaurants.length === 0 ? (
-            <div className="rounded-2xl bg-gray-50 px-4 py-3 text-xs text-gray-400">주변 10km 내 맛집 후보가 아직 없습니다</div>
-          ) : (
-            <div className="space-y-2">
-              {nearbyRestaurants.map((restaurant) => (
-                <button
-                  key={restaurant.id}
-                  onClick={() => openNearbyCategory('음식점')}
-                  className="w-full rounded-2xl bg-gray-50 px-4 py-3 text-left"
-                >
-                  <div className="text-sm font-black text-gray-900 truncate">{restaurant.name}</div>
-                  <div className="text-[11px] text-gray-500 mt-1 truncate">
-                    {restaurant.googleRating != null
-                      ? `Google ${restaurant.googleRating.toFixed(1)} · 리뷰 ${restaurant.googleUserRatingCount?.toLocaleString?.() ?? 0}`
-                      : '별점 정보 없음'}
-                  </div>
-                  <div className="text-[10px] text-gray-400 mt-1">
-                    {restaurant.distanceKm != null ? `${restaurant.distanceKm.toFixed(1)}km` : '현재 위치 기준'}
-                    {typeof restaurant.googleOpenNow === 'boolean' ? ` · ${restaurant.googleOpenNow ? '영업중' : '영업종료'}` : ''}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
         </div>
 
         <div className="px-4 mt-3">

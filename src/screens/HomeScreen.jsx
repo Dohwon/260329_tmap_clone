@@ -54,10 +54,13 @@ export default function HomeScreen() {
     isSearchOverlayOpen,
     openSearchOverlay,
     closeSearchOverlay,
+    refreshHomeRestaurantPins,
+    homeRestaurantPinsLoadedAt,
   } = useAppStore()
   const [showLayerMenu, setShowLayerMenu] = useState(false)
   const [showHighwayExplorer, setShowHighwayExplorer] = useState(false)
   const safetySpeechRef = useRef('')
+  const restaurantRefreshCoordRef = useRef(null)
 
   // 팝업 상호 배타적 열기
   const openSearch = () => { openSearchOverlay(); setShowLayerMenu(false); setShowHighwayExplorer(false) }
@@ -101,6 +104,18 @@ export default function HomeScreen() {
     window.speechSynthesis.cancel()
     window.speechSynthesis.speak(utterance)
   }, [isNavigating, safetyHazards, settings.safetyModeEnabled, settings.voiceGuidance, userLocation])
+
+  useEffect(() => {
+    if (isNavigating || showRoutePanel || !userLocation) return
+    const last = restaurantRefreshCoordRef.current
+    const movedDistanceKm = last
+      ? Math.hypot((userLocation.lat - last.lat) * 110, (userLocation.lng - last.lng) * 88)
+      : Infinity
+    const shouldRefresh = !last || movedDistanceKm >= 1.5 || Date.now() - homeRestaurantPinsLoadedAt > 1000 * 60 * 10
+    if (!shouldRefresh) return
+    restaurantRefreshCoordRef.current = { lat: userLocation.lat, lng: userLocation.lng }
+    refreshHomeRestaurantPins()
+  }, [homeRestaurantPinsLoadedAt, isNavigating, refreshHomeRestaurantPins, showRoutePanel, userLocation])
 
   return (
     <div className="relative w-full h-full overflow-hidden">
