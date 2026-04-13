@@ -166,6 +166,36 @@ function dedupeWaypoints(waypoints = []) {
   return unique.slice(0, 3)
 }
 
+function mergeWaypointsInRouteOrder(existingWaypoints = [], incomingWaypoint, referencePolyline = []) {
+  if (!incomingWaypoint || !Number.isFinite(incomingWaypoint.lat) || !Number.isFinite(incomingWaypoint.lng)) {
+    return dedupeWaypoints(existingWaypoints)
+  }
+
+  const base = dedupeWaypoints(existingWaypoints)
+  const withoutDuplicate = base.filter((point) => haversineKm(point.lat, point.lng, incomingWaypoint.lat, incomingWaypoint.lng) > 0.08)
+  const next = [...withoutDuplicate, incomingWaypoint]
+
+  const scored = next.map((point, index) => {
+    const routeOrderKm = Number.isFinite(point.routeOrderKm)
+      ? point.routeOrderKm
+      : getProgressKmOnPolyline([point.lat, point.lng], referencePolyline)
+    return {
+      ...point,
+      routeOrderKm: Number.isFinite(routeOrderKm) ? Number(routeOrderKm.toFixed(1)) : null,
+      _originalIndex: index,
+    }
+  })
+
+  scored.sort((a, b) => {
+    const orderA = Number.isFinite(a.routeOrderKm) ? a.routeOrderKm : Infinity
+    const orderB = Number.isFinite(b.routeOrderKm) ? b.routeOrderKm : Infinity
+    if (orderA !== orderB) return orderA - orderB
+    return a._originalIndex - b._originalIndex
+  })
+
+  return scored.slice(0, 3).map(({ _originalIndex, ...point }) => point)
+}
+
 function getPolylineDistanceKm(polyline = []) {
   if (!Array.isArray(polyline) || polyline.length < 2) return 0
   let total = 0
@@ -208,6 +238,58 @@ function getRoadPath(road) {
   return [road.startCoord, ...road.majorJunctions.map((junction) => junction.coord), road.endCoord]
 }
 
+function projectPointToSegment(point, start, end) {
+  const latFactor = 111320
+  const lngFactor = 111320 * Math.cos((((point[0] + start[0] + end[0]) / 3) * Math.PI) / 180)
+  const px = point[1] * lngFactor
+  const py = point[0] * latFactor
+  const ax = start[1] * lngFactor
+  const ay = start[0] * latFactor
+  const bx = end[1] * lngFactor
+  const by = end[0] * latFactor
+  const abx = bx - ax
+  const aby = by - ay
+  const ab2 = abx * abx + aby * aby
+
+  if (ab2 === 0) {
+    return { ratio: 0, distanceM: Math.hypot(px - ax, py - ay) }
+  }
+
+  const apx = px - ax
+  const apy = py - ay
+  const ratio = Math.min(1, Math.max(0, (apx * abx + apy * aby) / ab2))
+  const closestX = ax + (abx * ratio)
+  const closestY = ay + (aby * ratio)
+  return {
+    ratio,
+    distanceM: Math.hypot(px - closestX, py - closestY),
+  }
+}
+
+function getProgressKmOnPolyline(point, polyline = []) {
+  if (!Array.isArray(point) || point.length < 2 || !Array.isArray(polyline) || polyline.length < 2) return null
+
+  let travelledM = 0
+  let bestDistanceM = Infinity
+  let bestProgressKm = null
+
+  for (let index = 0; index < polyline.length - 1; index += 1) {
+    const start = normalizeCoordPair(polyline[index])
+    const end = normalizeCoordPair(polyline[index + 1])
+    if (!start || !end) continue
+
+    const segmentLengthM = haversineKm(start[0], start[1], end[0], end[1]) * 1000
+    const projection = projectPointToSegment(point, start, end)
+    if (projection.distanceM < bestDistanceM) {
+      bestDistanceM = projection.distanceM
+      bestProgressKm = (travelledM + (segmentLengthM * projection.ratio)) / 1000
+    }
+    travelledM += segmentLengthM
+  }
+
+  return bestProgressKm
+}
+
 function detectScenicRoads(origin, destination, polyline = [], minDetourMinutes = 20) {
   // 경로 전체에서 최대 12개 포인트 샘플
   const step = Math.max(1, Math.floor(polyline.length / 12))
@@ -226,47 +308,27 @@ function detectScenicRoads(origin, destination, polyline = [], minDetourMinutes 
         haversineKm(origin.lat, origin.lng, mLat, mLng),
         haversineKm(destination.lat, destination.lng, mLat, mLng)
       )
+      const encounteredProgressKm = getProgressKmOnPolyline([mLat, mLng], polyline)
       return {
         ...seg,
         routeDistanceKm: Number(routeDistanceKm.toFixed(1)),
         directDistanceKm: Number(directDistanceKm.toFixed(1)),
+        encounteredProgressKm: Number.isFinite(encounteredProgressKm) ? Number(encounteredProgressKm.toFixed(1)) : null,
         isRecommended: routeDistanceKm <= 10,
         isReachableSoon: routeDistanceKm <= 30,
+        recommendationMode: routeDistanceKm <= 10 ? 'nearby' : routeDistanceKm <= 30 ? 'reachable' : 'distant',
+        noScenicWithin30Km: routeDistanceKm > 30,
       }
     })
     .sort((a, b) => {
+      const progressA = Number.isFinite(a.encounteredProgressKm) ? a.encounteredProgressKm : Infinity
+      const progressB = Number.isFinite(b.encounteredProgressKm) ? b.encounteredProgressKm : Infinity
+      if (progressA !== progressB) return progressA - progressB
       if (a.routeDistanceKm !== b.routeDistanceKm) return a.routeDistanceKm - b.routeDistanceKm
       return b.stars - a.stars
     })
 
-  const types = ['coastal', 'mountain']
-  const suggestions = []
-
-  for (const type of types) {
-    const sameType = ranked.filter((item) => item.scenicType === type)
-    const recommended = sameType.filter((item) => item.isRecommended).slice(0, 1)
-    if (recommended.length > 0) {
-      suggestions.push(...recommended.map((item) => ({ ...item, recommendationMode: 'nearby' })))
-      continue
-    }
-
-    const reachable = sameType.filter((item) => item.isReachableSoon).slice(0, 1)
-    if (reachable.length > 0) {
-      suggestions.push(...reachable.map((item) => ({ ...item, recommendationMode: 'reachable' })))
-      continue
-    }
-
-    const nearest = sameType[0]
-    if (nearest) {
-      suggestions.push({
-        ...nearest,
-        recommendationMode: 'distant',
-        noScenicWithin30Km: true,
-      })
-    }
-  }
-
-  return suggestions
+  return ranked.slice(0, 6)
 }
 
 function getRoadById(roadId) {
@@ -1119,7 +1181,10 @@ const useAppStore = create((set, get) => ({
   setShowRoutePanel: (showRoutePanel) => set({ showRoutePanel }),
   setRoutePanelMode: (routePanelMode) => set({ routePanelMode }),
   addWaypoint: (point) => set((state) => ({
-    waypoints: [...state.waypoints, { ...point, id: point.id ?? `wp-${Date.now()}` }],
+    waypoints: dedupeWaypoints([
+      ...state.waypoints,
+      { ...point, id: point.id ?? `wp-${Date.now()}` },
+    ]),
   })),
   removeWaypoint: (id) => set((state) => ({
     waypoints: state.waypoints.filter(w => w.id !== id),
@@ -1392,12 +1457,11 @@ const useAppStore = create((set, get) => ({
   applyScenicRoute: async (suggestion) => {
     const state = get()
     const origin = state.userLocation ?? DEFAULT_ORIGIN
-    const { destination, routePreferences, driverPreset } = state
+    const { destination, routePreferences, driverPreset, waypoints, routes, selectedRouteId } = state
     if (!destination) return
     set({ isLoadingRoutes: true, scenicRouteError: null })
-
-    const scenicRouteOpt = { searchOption: '00', title: `${suggestion.name} 경유`, tag: '경관경로', tagColor: 'green' }
-    const start = { ...origin, name: '현재 위치' }
+    const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? routes[0] ?? null
+    const referencePolyline = selectedRoute?.polyline ?? []
 
     // 경유지 좌표 후보: viaPoints → segmentMid → segmentStart/End 중간점 → POI 검색
     const coordCandidates = []
@@ -1454,50 +1518,34 @@ const useAppStore = create((set, get) => ({
       }
     }
 
-    // 모든 좌표 후보로 routeSequential30 순차 시도 (에러 종류와 무관하게 모두 시도)
-    let viaRoute = null
-    for (const pt of snappedCandidates) {
-      try {
-        viaRoute = await fetchRouteByWaypoints(start, destination, [pt], scenicRouteOpt)
-        if (viaRoute) break
-      } catch {
-        // 다음 후보로 계속 시도
-      }
-    }
-
-    // 경유지 경로 실패 시 직접 경로로 폴백 (경관 경로 태그는 유지)
-    if (!viaRoute) {
-      try {
-        viaRoute = await fetchDirectRoute(origin.lat, origin.lng, destination.lat, destination.lng, scenicRouteOpt)
-      } catch {
-        // 직접 경로도 실패
-      }
-    }
-
-    if (viaRoute) {
-      try {
-        const scenicId = `route-scenic-${suggestion.id}`
-        const decorated = decorateRoute(
-          { ...viaRoute, id: scenicId, tag: '경관경로', tagColor: 'green', routeColor: '#10B981' },
-          99,
-          { origin, destination, routePreferences, driverPreset }
-        )
-        set({
-          routes: [...get().routes.filter(r => r.id !== scenicId), decorated],
-          selectedRouteId: decorated.id,
-          isLoadingRoutes: false,
-          mergeOptions: buildMergeOptions(decorated, null, driverPreset),
-          mapCenter: decorated.polyline?.[Math.floor(decorated.polyline.length / 2)] ?? get().mapCenter,
-          mapZoom: 9,
-          scenicRoadSuggestions: get().scenicRoadSuggestions.filter((s) => s.id !== suggestion.id),
-        })
-      } catch (err) {
-        set({ isLoadingRoutes: false, scenicRouteError: err?.message ?? '경로 처리 실패' })
-      }
-    } else {
+    const scenicWaypoint = snappedCandidates[0]
+    if (!scenicWaypoint) {
       set({
         isLoadingRoutes: false,
-        scenicRouteError: `${suggestion.name} 경로를 찾을 수 없습니다. 경관 구간 후보를 실제 도로에 맞춰도 TMAP 경로 탐색에 실패했습니다.`,
+        scenicRouteError: `${suggestion.name} 경로를 찾을 수 없습니다. 경관 구간 후보를 실제 도로에 맞춰도 유효한 진입 좌표를 만들지 못했습니다.`,
+      })
+      return
+    }
+
+    try {
+      const nextWaypoint = {
+        ...scenicWaypoint,
+        id: scenicWaypoint.id ?? `scenic-${suggestion.id}`,
+        scenicId: suggestion.id,
+        scenicType: suggestion.scenicType,
+        scenicName: suggestion.name,
+        routeOrderKm: getProgressKmOnPolyline([scenicWaypoint.lat, scenicWaypoint.lng], referencePolyline),
+      }
+      const mergedWaypoints = mergeWaypointsInRouteOrder(waypoints, nextWaypoint, referencePolyline)
+      set({
+        waypoints: mergedWaypoints,
+        scenicRoadSuggestions: get().scenicRoadSuggestions.filter((s) => s.id !== suggestion.id),
+      })
+      await get().searchRoute(destination)
+    } catch (err) {
+      set({
+        isLoadingRoutes: false,
+        scenicRouteError: err?.message ?? '경관 경유지 적용 실패',
       })
     }
   },
