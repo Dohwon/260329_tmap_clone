@@ -83,6 +83,12 @@ export default function ScenicRoadDialog() {
             {destination && ` 최종 목적지(${destination.name})까지 총 ${formatMin(totalEta)} 예상.`}
           </div>
 
+          {suggestion.requiresBacktrack && (
+            <div className="bg-red-50 border border-red-100 rounded-xl px-3 py-2 text-xs text-red-600">
+              현재 진행 방향 기준으로는 이 경관도로가 뒤쪽에 있어 잠시 돌아가야 합니다. 역주행에 가까운 우회가 포함될 수 있습니다.
+            </div>
+          )}
+
           {/* 오류 메시지 */}
           {scenicRouteError && (
             <div className="bg-red-50 border border-red-100 rounded-xl px-3 py-2 text-xs text-red-600">

@@ -291,6 +291,9 @@ function getProgressKmOnPolyline(point, polyline = []) {
 }
 
 function detectScenicRoads(origin, destination, polyline = [], minDetourMinutes = 20) {
+  const MAX_SCENIC_AHEAD_KM = 80
+  const MIN_FORWARD_PROGRESS_KM = 0
+
   // 경로 전체에서 최대 12개 포인트 샘플
   const step = Math.max(1, Math.floor(polyline.length / 12))
   const checkPoints = [
@@ -309,18 +312,28 @@ function detectScenicRoads(origin, destination, polyline = [], minDetourMinutes 
         haversineKm(destination.lat, destination.lng, mLat, mLng)
       )
       const encounteredProgressKm = getProgressKmOnPolyline([mLat, mLng], polyline)
+      const requiresBacktrack = Number.isFinite(encounteredProgressKm)
+        ? encounteredProgressKm <= 0.5 && routeDistanceKm > 1.5
+        : false
       return {
         ...seg,
         routeDistanceKm: Number(routeDistanceKm.toFixed(1)),
         directDistanceKm: Number(directDistanceKm.toFixed(1)),
         encounteredProgressKm: Number.isFinite(encounteredProgressKm) ? Number(encounteredProgressKm.toFixed(1)) : null,
+        requiresBacktrack,
         isRecommended: routeDistanceKm <= 10,
         isReachableSoon: routeDistanceKm <= 30,
         recommendationMode: routeDistanceKm <= 10 ? 'nearby' : routeDistanceKm <= 30 ? 'reachable' : 'distant',
         noScenicWithin30Km: routeDistanceKm > 30,
       }
     })
+    .filter((seg) => Number.isFinite(seg.encounteredProgressKm))
+    .filter((seg) => seg.encounteredProgressKm >= MIN_FORWARD_PROGRESS_KM)
+    .filter((seg) => seg.encounteredProgressKm <= MAX_SCENIC_AHEAD_KM)
     .sort((a, b) => {
+      if (a.requiresBacktrack !== b.requiresBacktrack) {
+        return a.requiresBacktrack ? 1 : -1
+      }
       const progressA = Number.isFinite(a.encounteredProgressKm) ? a.encounteredProgressKm : Infinity
       const progressB = Number.isFinite(b.encounteredProgressKm) ? b.encounteredProgressKm : Infinity
       if (progressA !== progressB) return progressA - progressB
