@@ -137,3 +137,28 @@
   - `src/components/Map/MapView.jsx`
   - `src/components/Navigation/NavigationOverlay.jsx`
   - `src/utils/navigationLogic.js`
+
+### 2026-04-14 경관도로 추천 기준/경유지 일관성
+
+- 상태: `mitigated`
+- 증상:
+  - 해안도로/산악도로를 선택해도 실제 경유지 목록에는 보이지 않고 ETA만 늘어나는 경우가 있었음
+  - 현재 진행 중인 경로와 무관하게 멀리 떨어진 동쪽 산악도로처럼 `원본 경로선에서 크게 벗어난 후보`가 추천될 수 있었음
+  - 추천 도로가 실제 어디로 진입하는지 주소가 부족해 사용자가 TMAP과 비교하기 어려웠음
+- 원인:
+  - 경관 경로를 임시 route 재계산으로만 처리해 실제 `waypoints` state와 분리돼 있었음
+  - 추천 가까움 판단이 원본 메인 경로선이 아니라 현재 결과 경로/샘플 기준으로 흔들릴 수 있었음
+  - 경관 진입점은 대표 좌표 중심이라 실제 도로 주소가 바로 노출되지 않았음
+- 현재 대응:
+  - 경관도로 선택 시 road snap 된 후보를 실제 `waypoints` state에 넣고 재탐색하도록 변경
+  - 경관 추천 기준선은 `scenicReferencePolyline`으로 따로 보존한 원본 메인 경로선을 사용
+  - 추천 후보는 `원본 경로 앞쪽`, `원본 경로 80km 이내`, `원본 경로선 반경 20km 이내`만 유지
+  - 뒤로 돌아가야 하는 후보는 완전 제거하지 않고 빨간 경고와 함께 뒤쪽으로 정렬
+  - 추천 카드에 `진입 위치` 주소를 함께 표기
+- 남은 한계:
+  - 경관도로 데이터 자체가 정적 세그먼트 중심이라, 실제 진입 IC/교차로 명칭까지 항상 TMAP 수준으로 정확히 맞지는 않음
+  - road snap 실패 구간은 `roadLabel` 또는 대표점 주소 수준으로만 보일 수 있음
+- 관련 파일:
+  - `src/store/appStore.js`
+  - `src/components/Navigation/ScenicRoadDialog.jsx`
+  - `src/services/tmapService.js`
