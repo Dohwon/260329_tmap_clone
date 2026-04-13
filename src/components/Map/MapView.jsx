@@ -424,6 +424,13 @@ function getCongestionColor(score) {
   return COLORS.congestion1
 }
 
+function hasValidCoordPair(coord) {
+  return Array.isArray(coord)
+    && coord.length >= 2
+    && Number.isFinite(Number(coord[0]))
+    && Number.isFinite(Number(coord[1]))
+}
+
 function buildCongestionOverlaySegments(segments = []) {
   return (segments ?? [])
     .filter((segment) => {
@@ -828,7 +835,9 @@ export default function MapView({ darkMode = false }) {
           ))}
 
           {/* 실제 IC/JC 분기점 마커 */}
-          {visibleLayers.mergePoints && !driverFollowMode && !showMinimalNavigationMap && (selectedRoute.junctions ?? []).map((jct) => (
+          {visibleLayers.mergePoints && !driverFollowMode && !showMinimalNavigationMap && (selectedRoute.junctions ?? [])
+            .filter((jct) => Number.isFinite(Number(jct?.lat)) && Number.isFinite(Number(jct?.lng)))
+            .map((jct) => (
             <Marker key={jct.id} position={[jct.lat, jct.lng]} icon={junctionIcon}>
               <Popup>
                 <div className="text-sm font-bold">{jct.name}</div>
@@ -843,9 +852,10 @@ export default function MapView({ darkMode = false }) {
           {visibleLayers.speedCameras && (driverFollowMode
             ? (selectedRoute.cameras ?? []).filter((camera) => {
                 if (!userLocation) return false
+                if (!hasValidCoordPair(camera?.coord)) return false
                 return haversineM(userLocation.lat, userLocation.lng, camera.coord[0], camera.coord[1]) <= 2200
               }).slice(0, 8)
-            : (selectedRoute.cameras ?? [])
+            : (selectedRoute.cameras ?? []).filter((camera) => hasValidCoordPair(camera?.coord))
           ).map((camera) => {
             const report = cameraReports.find(r => r.id === camera.id)
             const icon = report?.type === 'off' ? reportedOffIcon

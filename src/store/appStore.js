@@ -94,6 +94,65 @@ function haversineKm(lat1, lng1, lat2, lng2) {
   return 2 * R * Math.asin(Math.sqrt(a))
 }
 
+function normalizeCoordPair(coord) {
+  if (!Array.isArray(coord) || coord.length < 2) return null
+  const lat = Number(coord[0])
+  const lng = Number(coord[1])
+  return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null
+}
+
+function sanitizePolyline(polyline = []) {
+  return (polyline ?? [])
+    .map((point) => normalizeCoordPair(point))
+    .filter(Boolean)
+}
+
+function sanitizeRoutePointEntries(entries = [], { allowDistanceOnly = false } = {}) {
+  return (entries ?? [])
+    .map((entry) => {
+      const coord = normalizeCoordPair(entry?.coord)
+      const lat = Number(entry?.lat ?? coord?.[0])
+      const lng = Number(entry?.lng ?? coord?.[1])
+      const hasPoint = Number.isFinite(lat) && Number.isFinite(lng)
+      const distanceFromStart = Number(entry?.distanceFromStart)
+
+      if (!hasPoint && !(allowDistanceOnly && Number.isFinite(distanceFromStart))) {
+        return null
+      }
+
+      return {
+        ...entry,
+        ...(hasPoint ? { lat, lng, coord: [lat, lng] } : {}),
+        distanceFromStart: Number.isFinite(distanceFromStart) ? distanceFromStart : entry?.distanceFromStart,
+      }
+    })
+    .filter(Boolean)
+}
+
+function sanitizeSegmentStats(segments = []) {
+  return (segments ?? [])
+    .map((segment) => {
+      const positions = sanitizePolyline(segment?.positions ?? [])
+      if (positions.length < 2) return null
+      const start = positions[0]
+      const end = positions[positions.length - 1]
+      const center = normalizeCoordPair(segment?.center) ?? [
+        Number(((start[0] + end[0]) / 2).toFixed(6)),
+        Number(((start[1] + end[1]) / 2).toFixed(6)),
+      ]
+
+      return {
+        ...segment,
+        positions,
+        center,
+        speedLimit: Number.isFinite(Number(segment?.speedLimit)) ? Number(segment.speedLimit) : null,
+        averageSpeed: Number.isFinite(Number(segment?.averageSpeed)) ? Number(segment.averageSpeed) : null,
+        congestionScore: Number.isFinite(Number(segment?.congestionScore)) ? Number(segment.congestionScore) : 1,
+      }
+    })
+    .filter(Boolean)
+}
+
 function getPolylineDistanceKm(polyline = []) {
   if (!Array.isArray(polyline) || polyline.length < 2) return 0
   let total = 0
@@ -652,6 +711,14 @@ function buildNextSegments(route) {
 
 function decorateRoute(route, index, context) {
   const { driverPreset, routePreferences } = context
+  const safePolyline = sanitizePolyline(route.polyline)
+  const safeManeuvers = sanitizeRoutePointEntries(route.maneuvers, { allowDistanceOnly: true })
+  const safeJunctions = sanitizeRoutePointEntries(route.junctions, { allowDistanceOnly: true })
+  const safeCameras = sanitizeRoutePointEntries(route.cameras).map((camera) => ({
+    ...camera,
+    endCoord: normalizeCoordPair(camera.endCoord),
+  }))
+  const safeSegmentStats = sanitizeSegmentStats(route.segmentStats)
   let eta = route.eta
   let mergeCount = route.mergeCount
   let highwayRatio = route.highwayRatio
@@ -699,16 +766,20 @@ function decorateRoute(route, index, context) {
     dominantSpeedLimit,
     maxSpeedLimit,
     averageSpeed,
+    polyline: safePolyline,
+    maneuvers: safeManeuvers,
+    junctions: safeJunctions,
+    cameras: safeCameras,
   }
 
   const difficultyScore = mergeCount + (nextRoute.congestionScore * 2)
   nextRoute.difficultyLabel = difficultyScore >= 12 ? '난이도 상' : difficultyScore >= 8 ? '난이도 중' : '난이도 하'
   nextRoute.difficultyColor = difficultyScore >= 12 ? 'red' : difficultyScore >= 8 ? 'orange' : 'green'
-  nextRoute.segmentStats = Array.isArray(route.segmentStats) && route.segmentStats.length > 0
-    ? route.segmentStats
+  nextRoute.segmentStats = safeSegmentStats.length > 0
+    ? safeSegmentStats
     : route.source === 'live' || route.source === 'recorded'
       ? []
-      : buildSegmentStats(nextRoute)
+      : sanitizeSegmentStats(buildSegmentStats(nextRoute))
   const segmentAverageSpeeds = nextRoute.segmentStats
     .map((segment) => Number(segment.averageSpeed))
     .filter((speed) => Number.isFinite(speed) && speed > 0)

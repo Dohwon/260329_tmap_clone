@@ -179,6 +179,13 @@ function formatRestaurantMeta(poi = {}) {
   return `Google ${rating.toFixed(1)}${Number.isFinite(reviewCount) && reviewCount > 0 ? ` · 리뷰 ${reviewCount.toLocaleString()}` : ''}`
 }
 
+function hasValidCoordPair(coord) {
+  return Array.isArray(coord)
+    && coord.length >= 2
+    && Number.isFinite(Number(coord[0]))
+    && Number.isFinite(Number(coord[1]))
+}
+
 export default function NavigationOverlay() {
   const {
     isNavigating, stopNavigation, destination, routes, selectedRouteId,
@@ -245,6 +252,7 @@ export default function NavigationOverlay() {
     const route = routes.find(r => r.id === selectedRouteId)
     const cameras = route?.cameras ?? []
     for (const cam of cameras) {
+      if (!hasValidCoordPair(cam?.coord)) continue
       if (nearCameraNotifiedRef.current.has(cam.id)) continue
       const dist = haversineM(userLocation.lat, userLocation.lng, cam.coord[0], cam.coord[1])
       if (dist < 120) {
@@ -521,6 +529,7 @@ export default function NavigationOverlay() {
     const currentSpeed = Math.round(userLocation.speedKmh ?? 0)
 
     for (const camera of cameras) {
+      if (!hasValidCoordPair(camera?.coord)) continue
       const distanceM = haversineM(userLocation.lat, userLocation.lng, camera.coord[0], camera.coord[1])
       const threshold = distanceM <= 120 ? '100m' : distanceM <= 600 ? '600m' : null
       if (!threshold) continue
