@@ -117,6 +117,12 @@ export default function HomeScreen() {
     refreshHomeRestaurantPins()
   }, [homeRestaurantPinsLoadedAt, isNavigating, refreshHomeRestaurantPins, showRoutePanel, userLocation])
 
+  useEffect(() => {
+    if (!showRoutePanel) return
+    setShowLayerMenu(false)
+    setShowHighwayExplorer(false)
+  }, [showRoutePanel])
+
   return (
     <div className="relative w-full h-full overflow-hidden">
       <MapView darkMode={darkMode} />
@@ -209,8 +215,6 @@ export default function HomeScreen() {
 
       {isSearchOverlayOpen && <SearchSheet onClose={closeSearchOverlay} />}
       {showHighwayExplorer && <HighwayExplorer onClose={() => setShowHighwayExplorer(false)} />}
-      {/* RoutePanel 열릴 때 레이어메뉴/탐색기 닫기 */}
-      {showRoutePanel && showLayerMenu && setShowLayerMenu(false)}
     </div>
   )
 }
