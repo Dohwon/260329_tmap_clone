@@ -39,6 +39,11 @@ export default function ScenicRoadDialog() {
             {suggestion.emoji} {suggestion.name}
           </div>
           <div className="text-white/80 text-sm mt-1">{suggestion.roadLabel}</div>
+          {suggestion.entryAddress && (
+            <div className="text-white/70 text-[11px] mt-1 truncate">
+              진입 위치: {suggestion.entryAddress}
+            </div>
+          )}
           <div className="text-white/90 text-xs font-semibold mt-2">{recommendationLabel}</div>
         </div>
 

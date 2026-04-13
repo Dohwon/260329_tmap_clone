@@ -290,23 +290,33 @@ function getProgressKmOnPolyline(point, polyline = []) {
   return bestProgressKm
 }
 
+function getDistanceKmToPolyline(point, polyline = []) {
+  if (!Array.isArray(point) || point.length < 2 || !Array.isArray(polyline) || polyline.length < 2) return null
+
+  let bestDistanceM = Infinity
+  for (let index = 0; index < polyline.length - 1; index += 1) {
+    const start = normalizeCoordPair(polyline[index])
+    const end = normalizeCoordPair(polyline[index + 1])
+    if (!start || !end) continue
+    const projection = projectPointToSegment(point, start, end)
+    if (projection.distanceM < bestDistanceM) {
+      bestDistanceM = projection.distanceM
+    }
+  }
+
+  return Number.isFinite(bestDistanceM) ? Number((bestDistanceM / 1000).toFixed(1)) : null
+}
+
 function detectScenicRoads(origin, destination, polyline = [], minDetourMinutes = 20) {
   const MAX_SCENIC_AHEAD_KM = 80
   const MIN_FORWARD_PROGRESS_KM = 0
-
-  // 경로 전체에서 최대 12개 포인트 샘플
-  const step = Math.max(1, Math.floor(polyline.length / 12))
-  const checkPoints = [
-    [origin.lat, origin.lng],
-    [destination.lat, destination.lng],
-    ...polyline.filter((_, i) => i % step === 0),
-  ]
+  const MAX_ROUTE_CORRIDOR_KM = 20
 
   const ranked = SCENIC_SEGMENTS_SORTED
     .filter((seg) => seg.detourMinutes >= minDetourMinutes)
     .map((seg) => {
       const [mLat, mLng] = seg.segmentMid
-      const routeDistanceKm = Math.min(...checkPoints.map(([lat, lng]) => haversineKm(lat, lng, mLat, mLng)))
+      const routeDistanceKm = getDistanceKmToPolyline([mLat, mLng], polyline)
       const directDistanceKm = Math.min(
         haversineKm(origin.lat, origin.lng, mLat, mLng),
         haversineKm(destination.lat, destination.lng, mLat, mLng)
@@ -327,6 +337,7 @@ function detectScenicRoads(origin, destination, polyline = [], minDetourMinutes 
         noScenicWithin30Km: routeDistanceKm > 30,
       }
     })
+    .filter((seg) => Number.isFinite(seg.routeDistanceKm) && seg.routeDistanceKm <= MAX_ROUTE_CORRIDOR_KM)
     .filter((seg) => Number.isFinite(seg.encounteredProgressKm))
     .filter((seg) => seg.encounteredProgressKm >= MIN_FORWARD_PROGRESS_KM)
     .filter((seg) => seg.encounteredProgressKm <= MAX_SCENIC_AHEAD_KM)
@@ -342,6 +353,46 @@ function detectScenicRoads(origin, destination, polyline = [], minDetourMinutes 
     })
 
   return ranked.slice(0, 6)
+}
+
+async function decorateScenicSuggestionsWithEntry(suggestions = []) {
+  const resolved = await Promise.all(
+    (suggestions ?? []).map(async (suggestion) => {
+      const seed =
+        suggestion?.viaPoints?.[0]
+        ?? (Array.isArray(suggestion?.segmentMid)
+          ? { name: suggestion.name, lat: suggestion.segmentMid[0], lng: suggestion.segmentMid[1] }
+          : null)
+
+      if (!seed || !Number.isFinite(seed.lat) || !Number.isFinite(seed.lng)) {
+        return suggestion
+      }
+
+      try {
+        const enriched = await enrichDestinationTarget({
+          id: `scenic-entry-${suggestion.id}`,
+          name: seed.name ?? suggestion.name,
+          address: seed.address ?? seed.name ?? suggestion.roadLabel ?? suggestion.name,
+          lat: seed.lat,
+          lng: seed.lng,
+        }, { preferRoadSnap: true })
+
+        return {
+          ...suggestion,
+          entryName: enriched?.name ?? seed.name ?? suggestion.name,
+          entryAddress: enriched?.address ?? seed.address ?? suggestion.roadLabel ?? null,
+        }
+      } catch {
+        return {
+          ...suggestion,
+          entryName: seed.name ?? suggestion.name,
+          entryAddress: seed.address ?? suggestion.roadLabel ?? null,
+        }
+      }
+    })
+  )
+
+  return resolved
 }
 
 function getRoadById(roadId) {
@@ -1296,6 +1347,7 @@ const useAppStore = create((set, get) => ({
     drivePathHistory: [],
     driveSampleHistory: [],
     driveRouteSnapshot: null,
+    scenicReferencePolyline: [],
   }),
 
   // ── 경로 저장 ──────────────────────────────────────
@@ -1463,6 +1515,7 @@ const useAppStore = create((set, get) => ({
 
   // 해안/산악도로 우회 제안
   scenicRoadSuggestions: [],   // DetectedScenicRoad[]
+  scenicReferencePolyline: [],
   dismissScenicSuggestion: (id) => set((state) => ({
     scenicRoadSuggestions: state.scenicRoadSuggestions.filter((item) => item.id !== id),
   })),
@@ -1470,11 +1523,13 @@ const useAppStore = create((set, get) => ({
   applyScenicRoute: async (suggestion) => {
     const state = get()
     const origin = state.userLocation ?? DEFAULT_ORIGIN
-    const { destination, routePreferences, driverPreset, waypoints, routes, selectedRouteId } = state
+    const { destination, routePreferences, driverPreset, waypoints, routes, selectedRouteId, scenicReferencePolyline } = state
     if (!destination) return
     set({ isLoadingRoutes: true, scenicRouteError: null })
     const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? routes[0] ?? null
-    const referencePolyline = selectedRoute?.polyline ?? []
+    const referencePolyline = Array.isArray(scenicReferencePolyline) && scenicReferencePolyline.length > 1
+      ? scenicReferencePolyline
+      : (selectedRoute?.polyline ?? [])
 
     // 경유지 좌표 후보: viaPoints → segmentMid → segmentStart/End 중간점 → POI 검색
     const coordCandidates = []
@@ -1781,7 +1836,7 @@ const useAppStore = create((set, get) => ({
   searchRoute: async (destination) => {
     const normalizedDestination = await enrichDestinationTarget(destination)
     const origin = await resolveRoutingOrigin(get().userLocation ?? DEFAULT_ORIGIN)
-    const { routePreferences, driverPreset } = get()
+    const { routePreferences, driverPreset, scenicReferencePolyline, waypoints } = get()
     set({
       activeTab: 'home',
       destination: normalizedDestination,
@@ -1821,14 +1876,19 @@ const useAppStore = create((set, get) => ({
       })), driverPreset)
     const selectedRouteId = decoratedRoutes[0]?.id ?? null
     const selectedRoute = decoratedRoutes[0] ?? null
+    const hasScenicWaypoint = (waypoints ?? []).some((point) => point?.scenicId)
+    const referencePolyline = hasScenicWaypoint && Array.isArray(scenicReferencePolyline) && scenicReferencePolyline.length > 1
+      ? scenicReferencePolyline
+      : (selectedRoute?.polyline ?? [])
 
     // 해안/산악도로 감지 — 타입별 독립 필터 (해안선호≠산악선호)
     const wantsCoastal = routePreferences.includeScenic || driverPreset === 'expert'
     const wantsMountain = routePreferences.includeMountain || driverPreset === 'expert'
-    const scenicRoadSuggestions = (wantsCoastal || wantsMountain)
-      ? detectScenicRoads(origin, normalizedDestination, selectedRoute?.polyline ?? [])
+    const rawScenicRoadSuggestions = (wantsCoastal || wantsMountain)
+      ? detectScenicRoads(origin, normalizedDestination, referencePolyline)
           .filter(s => s.scenicType === 'coastal' ? wantsCoastal : wantsMountain)
       : []
+    const scenicRoadSuggestions = await decorateScenicSuggestionsWithEntry(rawScenicRoadSuggestions)
 
     set({
       routes: decoratedRoutes,
@@ -1839,6 +1899,9 @@ const useAppStore = create((set, get) => ({
       mapCenter: selectedRoute?.polyline?.[Math.floor(selectedRoute.polyline.length / 2)] ?? [normalizedDestination.lat, normalizedDestination.lng],
       mapZoom: selectedRoute ? 8 : 14,
       scenicRoadSuggestions,
+      scenicReferencePolyline: hasScenicWaypoint
+        ? scenicReferencePolyline
+        : (selectedRoute?.polyline?.slice(0, 400) ?? []),
     })
   },
 

@@ -86,6 +86,9 @@ export default function HomeBottomPanel() {
                   <div className="min-w-0">
                     <div className="text-xs font-bold text-gray-900 truncate">{road.name}</div>
                     <div className="text-[11px] text-gray-400 truncate">{road.startName} → {road.endName}</div>
+                    <div className="text-[10px] text-gray-300 truncate">
+                      {road.startAddress ?? road.startName} → {road.endAddress ?? road.endName}
+                    </div>
                   </div>
                 </div>
               </button>

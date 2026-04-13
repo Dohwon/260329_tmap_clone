@@ -95,6 +95,9 @@ export default function HighwayExplorer({ onClose }) {
                     <div className="text-xs text-gray-500 mt-0.5 truncate">
                       {hw.startName} → {hw.endName}
                     </div>
+                    <div className="text-[11px] text-gray-400 mt-0.5 truncate">
+                      {hw.startAddress ?? hw.startName} → {hw.endAddress ?? hw.endName}
+                    </div>
                   </div>
 
                   {selected?.id === hw.id && (
