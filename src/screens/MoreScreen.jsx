@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react'
 import useAppStore from '../store/appStore'
 import { HIGHWAYS } from '../data/highwayData'
+import { analyzeRecordedDrive, buildDrivingHabitSummary } from '../utils/navigationLogic'
 
 function haversineKm(lat1, lng1, lat2, lng2) {
   const R = 6371
@@ -38,46 +39,6 @@ function getHighwayTrafficRows(userLocation) {
     if (a.distanceKm == null || b.distanceKm == null) return 0
     return a.distanceKm - b.distanceKm
   })
-}
-
-function getDrivingHabitSummary(savedRoutes) {
-  const drivingRoutes = savedRoutes.filter((route) => route.source !== 'no_movement')
-  const totalTrips = drivingRoutes.length
-  if (totalTrips === 0) {
-    return {
-      title: '저장된 주행이 아직 없습니다',
-      lines: [
-        '경로를 한 번 저장하면 총 주행 거리와 고속도로 선호도를 분석합니다.',
-        '현재는 실제 주행 데이터가 없어서 습관 분석을 만들 수 없습니다.',
-      ],
-    }
-  }
-
-  const totalDistance = drivingRoutes.reduce((sum, route) => sum + (route.distance ?? 0), 0)
-  const avgHighway = Math.round(drivingRoutes.reduce((sum, route) => sum + (route.highwayRatio ?? 0), 0) / totalTrips)
-  const avgToll = Math.round(drivingRoutes.reduce((sum, route) => sum + (route.tollFee ?? 0), 0) / totalTrips)
-  const longTripCount = drivingRoutes.filter((route) => (route.distance ?? 0) >= 80).length
-  const shortTripCount = totalTrips - longTripCount
-
-  const styleLine = avgHighway >= 70
-    ? '고속도로 중심 주행 성향이 강합니다.'
-    : avgHighway >= 45
-      ? '고속도로와 일반도로를 균형 있게 사용하는 편입니다.'
-      : '도심/일반도로 비중이 높은 편입니다.'
-
-  const tripLine = longTripCount > shortTripCount
-    ? '장거리 저장 경로가 많아서 장거리 드라이버 패턴에 가깝습니다.'
-    : '중단거리 저장 경로가 많아서 생활권 이동 비중이 큽니다.'
-
-  return {
-    title: '저장된 경로 기반 운전 습관 분석',
-    lines: [
-      `총 ${totalTrips}회 경로를 저장했고 누적 ${totalDistance.toFixed(1)}km를 기록했습니다.`,
-      `평균 고속도로 비율은 ${avgHighway}%이고 평균 통행료는 약 ${avgToll.toLocaleString()}원입니다.`,
-      styleLine,
-      tripLine,
-    ],
-  }
 }
 
 function getNearestRoadId(userLocation) {
@@ -139,7 +100,17 @@ export default function MoreScreen() {
     await openNearbyCategory(keyword)
   }
 
-  const drivingHabit = useMemo(() => getDrivingHabitSummary(savedRoutes), [savedRoutes])
+  const drivingHabit = useMemo(() => buildDrivingHabitSummary(savedRoutes), [savedRoutes])
+  const routeAnalyses = useMemo(
+    () => Object.fromEntries(savedRoutes.map((route) => [
+      route.id,
+      route.routeAnalysis ?? analyzeRecordedDrive(route.polyline ?? [], [], {
+        polyline: route.originalRoutePolyline ?? route.polyline ?? [],
+        junctions: route.junctions ?? [],
+      }),
+    ])),
+    [savedRoutes]
+  )
   const highwayRows = useMemo(() => getHighwayTrafficRows(userLocation), [userLocation])
 
   const MENU_SECTIONS = [
@@ -188,11 +159,12 @@ export default function MoreScreen() {
           icon: '🛡️',
           label: '안전 운전 모드',
           desc: settings.safetyModeEnabled ? '실행 중' : '목적지 없이 위험요소 안내',
+          toggle: true,
+          enabled: settings.safetyModeEnabled,
           action: async () => {
             const nextValue = !settings.safetyModeEnabled
             updateSetting('safetyModeEnabled', nextValue)
             if (nextValue) await refreshSafetyHazards()
-            setActiveTab('home')
             showToast(nextValue ? '안전 운전 모드를 켰습니다.' : '안전 운전 모드를 껐습니다.')
           },
         },
@@ -223,27 +195,59 @@ export default function MoreScreen() {
             </div>
             <div className="bg-white rounded-2xl overflow-hidden divide-y divide-gray-50">
               {section.items.map((item) => (
-                <button
-                  key={item.label}
-                  onClick={item.action}
-                  className="w-full flex items-center gap-3 px-4 py-3.5 active:bg-gray-50"
-                >
-                  <div className="w-9 h-9 bg-gray-100 rounded-xl flex items-center justify-center text-lg flex-shrink-0">
-                    {item.icon}
-                  </div>
-                  <div className="flex-1 text-left">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-gray-900">{item.label}</span>
-                      {item.live && (
-                        <span className="text-xs bg-tmap-blue text-white px-1.5 py-0.5 rounded-full font-bold">Live</span>
-                      )}
+                item.toggle ? (
+                  <div
+                    key={item.label}
+                    className="w-full flex items-center gap-3 px-4 py-3.5"
+                  >
+                    <div className="w-9 h-9 bg-gray-100 rounded-xl flex items-center justify-center text-lg flex-shrink-0">
+                      {item.icon}
                     </div>
-                    <div className="text-xs text-gray-400">{item.desc}</div>
+                    <div className="flex-1 text-left">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-gray-900">{item.label}</span>
+                      </div>
+                      <div className="text-xs text-gray-400">{item.desc}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={item.action}
+                      aria-label={`${item.label} 토글`}
+                      aria-pressed={Boolean(item.enabled)}
+                      className={`relative w-11 h-6 rounded-full transition-colors ${
+                        item.enabled ? 'bg-tmap-blue' : 'bg-gray-200'
+                      }`}
+                    >
+                      <div
+                        className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${
+                          item.enabled ? 'translate-x-5' : 'translate-x-0.5'
+                        }`}
+                      />
+                    </button>
                   </div>
-                  <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                </button>
+                ) : (
+                  <button
+                    key={item.label}
+                    onClick={item.action}
+                    className="w-full flex items-center gap-3 px-4 py-3.5 active:bg-gray-50"
+                  >
+                    <div className="w-9 h-9 bg-gray-100 rounded-xl flex items-center justify-center text-lg flex-shrink-0">
+                      {item.icon}
+                    </div>
+                    <div className="flex-1 text-left">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-gray-900">{item.label}</span>
+                        {item.live && (
+                          <span className="text-xs bg-tmap-blue text-white px-1.5 py-0.5 rounded-full font-bold">Live</span>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-400">{item.desc}</div>
+                    </div>
+                    <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                )
               ))}
             </div>
           </div>
@@ -266,6 +270,19 @@ export default function MoreScreen() {
                         ? '실제 이동 없음'
                         : `${route.distance?.toFixed?.(1) ?? route.distance}km · ${route.eta ?? '--'}분 · 고속 ${route.highwayRatio ?? '--'}%`}
                     </div>
+                    {route.source === 'recorded' && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <span className="text-[11px] px-2 py-1 rounded-full bg-white text-gray-600 font-semibold">
+                          이탈 {routeAnalyses[route.id]?.deviationCount ?? 0}회
+                        </span>
+                        <span className="text-[11px] px-2 py-1 rounded-full bg-white text-gray-600 font-semibold">
+                          급감속 {routeAnalyses[route.id]?.brakingEventCount ?? 0}회
+                        </span>
+                        <span className="text-[11px] px-2 py-1 rounded-full bg-white text-gray-600 font-semibold">
+                          실속 {route.actualAverageMovingSpeed ?? routeAnalyses[route.id]?.averageMovingSpeedKmh ?? '--'}km/h
+                        </span>
+                      </div>
+                    )}
                   </div>
                   <button
                     onClick={() => deleteSavedRoute(route.id)}
@@ -287,6 +304,15 @@ export default function MoreScreen() {
                     실제 주행 경로 다시 안내
                   </button>
                 )}
+                {route.source === 'recorded' && routeAnalyses[route.id]?.summaryLines?.length > 0 && (
+                  <div className="mt-3 rounded-2xl bg-white px-3 py-3 space-y-1.5">
+                    {routeAnalyses[route.id].summaryLines.slice(0, 3).map((line) => (
+                      <div key={`${route.id}-${line}`} className="text-xs text-gray-600 leading-5">
+                        {line}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))
           )}
@@ -303,6 +329,31 @@ export default function MoreScreen() {
               ))}
             </div>
           </div>
+          {(drivingHabit.topDeviation || drivingHabit.topDetour || drivingHabit.topBrake) && (
+            <div className="grid gap-3">
+              {drivingHabit.topDeviation && (
+                <div className="rounded-2xl border border-gray-100 p-4">
+                  <div className="text-xs font-bold text-gray-400">자주 벗어나는 합류</div>
+                  <div className="text-sm font-black text-gray-900 mt-1">{drivingHabit.topDeviation.label}</div>
+                  <div className="text-xs text-gray-500 mt-1">{drivingHabit.topDeviation.count}회</div>
+                </div>
+              )}
+              {drivingHabit.topDetour && (
+                <div className="rounded-2xl border border-gray-100 p-4">
+                  <div className="text-xs font-bold text-gray-400">실제 선호 우회</div>
+                  <div className="text-sm font-black text-gray-900 mt-1">{drivingHabit.topDetour.label}</div>
+                  <div className="text-xs text-gray-500 mt-1">{drivingHabit.topDetour.count}회</div>
+                </div>
+              )}
+              {drivingHabit.topBrake && (
+                <div className="rounded-2xl border border-gray-100 p-4">
+                  <div className="text-xs font-bold text-gray-400">브레이크 빈발 구간</div>
+                  <div className="text-sm font-black text-gray-900 mt-1">{drivingHabit.topBrake.label}</div>
+                  <div className="text-xs text-gray-500 mt-1">{drivingHabit.topBrake.count}회</div>
+                </div>
+              )}
+            </div>
+          )}
         </BottomSheet>
       )}
 

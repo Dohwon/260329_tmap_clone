@@ -8,6 +8,37 @@ import HighwayExplorer from '../components/Map/HighwayExplorer'
 import useAppStore from '../store/appStore'
 import SearchSheet from '../components/Search/SearchSheet'
 
+function getBearingDeg(fromLat, fromLng, toLat, toLng) {
+  const fromLatRad = (fromLat * Math.PI) / 180
+  const toLatRad = (toLat * Math.PI) / 180
+  const deltaLngRad = ((toLng - fromLng) * Math.PI) / 180
+  const y = Math.sin(deltaLngRad) * Math.cos(toLatRad)
+  const x =
+    Math.cos(fromLatRad) * Math.sin(toLatRad) -
+    Math.sin(fromLatRad) * Math.cos(toLatRad) * Math.cos(deltaLngRad)
+  return (((Math.atan2(y, x) * 180) / Math.PI) + 360) % 360
+}
+
+function getHeadingGap(a, b) {
+  const diff = Math.abs(a - b) % 360
+  return diff > 180 ? 360 - diff : diff
+}
+
+function getHazardsAhead(safetyHazards = [], userLocation) {
+  if (!userLocation) return safetyHazards
+  const heading = Number(userLocation.heading)
+  const hasHeading = Number.isFinite(heading) && heading > 0
+
+  return [...safetyHazards]
+    .map((hazard) => {
+      const bearing = getBearingDeg(userLocation.lat, userLocation.lng, hazard.lat, hazard.lng)
+      const headingGap = hasHeading ? getHeadingGap(heading, bearing) : 0
+      return { ...hazard, headingGap }
+    })
+    .filter((hazard) => !hasHeading || hazard.headingGap <= 70)
+    .sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity))
+}
+
 export default function HomeScreen() {
   const {
     isNavigating,
@@ -52,7 +83,7 @@ export default function HomeScreen() {
 
   useEffect(() => {
     if (isNavigating || !settings.safetyModeEnabled || !settings.voiceGuidance || !userLocation) return
-    const nearestHazard = (safetyHazards ?? []).find((hazard) => hazard.distanceKm != null && hazard.distanceKm <= 0.6)
+    const nearestHazard = getHazardsAhead(safetyHazards ?? [], userLocation).find((hazard) => hazard.distanceKm != null && hazard.distanceKm <= 0.6)
     if (!nearestHazard || !window.speechSynthesis) return
 
     const threshold = nearestHazard.distanceKm <= 0.12 ? '100m' : '600m'
@@ -154,7 +185,7 @@ export default function HomeScreen() {
       )}
 
       <NavigationOverlay />
-      {settings.safetyModeEnabled && !isNavigating && <SafetyModeBanner safetyHazards={safetyHazards} />}
+      {settings.safetyModeEnabled && !isNavigating && <SafetyModeBanner safetyHazards={getHazardsAhead(safetyHazards, userLocation)} />}
       <RoutePreviewPanel />
       {!isSearchOverlayOpen && !showRoutePanel && !isNavigating && <HomeBottomPanel />}
 
@@ -185,7 +216,7 @@ function SafetyModeBanner({ safetyHazards }) {
 
   if (!nextHazard) {
     return (
-      <div className="absolute top-28 left-4 right-4 z-20">
+      <div className="absolute top-40 left-4 right-4 z-20">
         <div className="rounded-2xl bg-white/92 backdrop-blur-md shadow-lg px-4 py-3 border border-emerald-100">
           <div className="text-[11px] font-bold text-emerald-600">안전 운전 모드</div>
           <div className="text-sm font-semibold text-gray-900 mt-0.5">주변 위험요소를 확인하는 중입니다</div>
@@ -195,7 +226,7 @@ function SafetyModeBanner({ safetyHazards }) {
   }
 
   return (
-    <div className="absolute top-28 left-4 right-4 z-20">
+    <div className="absolute top-40 left-4 right-4 z-20">
       <div className="rounded-2xl bg-white/92 backdrop-blur-md shadow-lg px-4 py-3 border border-emerald-100">
         <div className="flex items-center gap-3">
           <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-lg ${nextHazard.type === 'school_zone' ? 'bg-amber-100' : 'bg-sky-100'}`}>

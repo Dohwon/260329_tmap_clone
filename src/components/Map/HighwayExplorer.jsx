@@ -4,7 +4,7 @@ import useAppStore from '../../store/appStore'
 
 export default function HighwayExplorer({ onClose }) {
   const [selected, setSelected] = useState(null)
-  const { setMapCenter, searchRoute, selectRoad } = useAppStore()
+  const { setMapCenter, searchRoute, searchRouteAlongRoad, selectRoad } = useAppStore()
 
   const handleSelect = (hw) => {
     setSelected(hw)
@@ -24,6 +24,12 @@ export default function HighwayExplorer({ onClose }) {
   const goEnd = () => {
     if (!selected) return
     searchRoute({ name: selected.endName, address: selected.endAddress ?? selected.endName, lat: selected.endCoord[0], lng: selected.endCoord[1] })
+    onClose()
+  }
+
+  const goWholeRoad = async (viaPoint = null) => {
+    if (!selected) return
+    await searchRouteAlongRoad({ road: selected, viaPoint })
     onClose()
   }
 
@@ -149,6 +155,12 @@ export default function HighwayExplorer({ onClose }) {
                         <div className="font-normal opacity-80 mt-0.5">{hw.endName}</div>
                       </button>
                     </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); goWholeRoad({ id: `${hw.id}-start`, name: hw.startName, address: hw.startAddress ?? hw.startName, lat: hw.startCoord[0], lng: hw.startCoord[1] }) }}
+                      className="mt-2 w-full py-2.5 rounded-xl bg-gray-900 text-white text-xs font-bold"
+                    >
+                      🛣️ 시점 진입 후 {hw.endName}까지 계속 주행
+                    </button>
                   </div>
                 )}
               </button>

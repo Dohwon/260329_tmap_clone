@@ -159,6 +159,11 @@ function sanitizeRouteLabel(label, fallback) {
     .slice(0, 40) || fallback
 }
 
+function buildRouteErrorMessage(res, json) {
+  if (res?.status === 429) return 'TMAP 요청이 많아 잠시 후 다시 시도해주세요.'
+  return json?.error?.errorMessage ?? json?.error?.code ?? json?.error?.message ?? `TMAP HTTP ${res.status}`
+}
+
 function searchFallbackPlaces(keyword, nearLat, nearLng) {
   const normalized = keyword.trim().toLowerCase()
   const compact = normalizeSearchText(normalized)
@@ -202,19 +207,81 @@ function setCachedSearch(keyword, nearLat, nearLng, results) {
 }
 
 function mapRoadType(props = {}) {
-  if ([4, 5, 6].includes(Number(props.roadType))) return 'highway'
-  if (Number(props.roadType) === 7) return 'local'
   if (JUNCTION_TURN_TYPES.has(Number(props.turnType))) return 'junction'
-  return 'national'
+  const roadTypeCode = Number(props.roadType)
+  const roadName = String(props.roadName ?? props.name ?? props.description ?? '')
+
+  if ([4, 5, 6].includes(roadTypeCode)) return 'highway'
+  if (/고속도로|도시고속|자동차전용/.test(roadName)) return 'highway'
+  if (/국도|번국도|국가지원지방도/.test(roadName)) return 'national'
+  return 'local'
 }
 
 function estimateSegmentSpeedLimit(props = {}, roadType) {
-  const raw = Number(props.speed ?? props.speedLimit ?? props.limitSpeed ?? 0)
-  if (Number.isFinite(raw) && raw > 0) return raw
+  const raw = Number(props.speedLimit ?? props.limitSpeed ?? props.maxSpeed ?? props.restrictedSpeed ?? 0)
+  const roadName = String(props.roadName ?? props.name ?? props.description ?? '')
+  const isSchoolZone = /어린이|스쿨존|보호구역/.test(roadName)
+
+  if (Number.isFinite(raw) && raw > 0) {
+    if (isSchoolZone) return 30
+    if (roadType === 'local') return Math.min(raw, 60)
+    if (roadType === 'national') return Math.min(raw, 90)
+    if (roadType === 'highway') return Math.min(raw, 110)
+    return raw
+  }
+
+  if (isSchoolZone) return 30
+  if (roadType === 'local') {
+    if (/대로|로|길/.test(roadName)) return 50
+    return 40
+  }
+  if (roadType === 'national') return 80
   if (roadType === 'highway') return 100
-  if (roadType === 'local') return 50
-  if (roadType === 'junction') return 80
-  return 70
+  return null
+}
+
+function estimateSegmentAverageSpeed(props = {}, roadType, speedLimit) {
+  const rawSpeed = Number(props.speed ?? props.avgSpeed ?? props.trafficSpeed ?? 0)
+  if (Number.isFinite(rawSpeed) && rawSpeed > 0) {
+    const clamped = Number.isFinite(speedLimit) && speedLimit > 0
+      ? Math.min(rawSpeed, speedLimit)
+      : roadType === 'local'
+        ? Math.min(rawSpeed, 60)
+        : roadType === 'national'
+          ? Math.min(rawSpeed, 90)
+          : rawSpeed
+    return Math.round(clamped)
+  }
+
+  const distance = Number(props.distance ?? 0)
+  const time = Number(props.time ?? props.sectionTime ?? 0)
+  if (distance > 0 && time > 0) {
+    const calculated = Math.max(5, Math.round((distance / time) * 3.6))
+    const clamped = Number.isFinite(speedLimit) && speedLimit > 0
+      ? Math.min(calculated, speedLimit)
+      : roadType === 'local'
+        ? Math.min(calculated, 60)
+        : roadType === 'national'
+          ? Math.min(calculated, 90)
+          : calculated
+    return clamped
+  }
+
+  return null
+}
+
+function estimateSegmentCongestionScore(props = {}, averageSpeed, speedLimit) {
+  const traffic = String(props.traffic ?? '')
+  if (traffic === '2') return 3
+  if (traffic === '1') return 2
+  if (traffic === '0') return 1
+
+  if (Number.isFinite(averageSpeed) && Number.isFinite(speedLimit) && speedLimit > 0) {
+    if (averageSpeed < speedLimit * 0.6) return 3
+    if (averageSpeed < speedLimit * 0.8) return 2
+  }
+
+  return 1
 }
 
 function isSyntheticAddress(address) {
@@ -674,9 +741,13 @@ export async function fetchRouteByWaypoints(start, destination, wayPoints = [], 
 
     try {
       const json = await res.json()
-      lastMessage = json?.error?.errorMessage ?? json?.error?.code ?? json?.error?.message ?? `TMAP HTTP ${res.status}`
+      lastMessage = buildRouteErrorMessage(res, json)
     } catch {
-      lastMessage = `TMAP HTTP ${res.status}`
+      lastMessage = res.status === 429 ? 'TMAP 요청이 많아 잠시 후 다시 시도해주세요.' : `TMAP HTTP ${res.status}`
+    }
+
+    if (res.status === 429) {
+      throw new Error(lastMessage)
     }
   }
 
@@ -753,9 +824,13 @@ async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
 
       try {
         const json = await res.json()
-        lastMessage = json?.error?.errorMessage ?? json?.error?.code ?? json?.error?.message ?? `TMAP HTTP ${res.status}`
+        lastMessage = buildRouteErrorMessage(res, json)
       } catch {
-        lastMessage = `TMAP HTTP ${res.status}`
+        lastMessage = res.status === 429 ? 'TMAP 요청이 많아 잠시 후 다시 시도해주세요.' : `TMAP HTTP ${res.status}`
+      }
+
+      if (res.status === 429) {
+        throw new Error(lastMessage)
       }
     }
   }
@@ -783,6 +858,10 @@ function parseRouteResponse(json, option) {
   let currentRoadName = ''  // 현재 통과 중인 도로명
   let currentRoadNo = ''    // 현재 도로번호
 
+  function getDistanceFromStartKm() {
+    return Math.max(0, Math.round(accumulatedDist / 100) / 10)
+  }
+
   for (let fi = 0; fi < features.length; fi++) {
     const feature = features[fi]
     if (feature.geometry?.type === 'LineString') {
@@ -798,22 +877,20 @@ function parseRouteResponse(json, option) {
       const positions = feature.geometry.coordinates.map((coord) => [coord[1], coord[0]])
       const roadType = mapRoadType(props)
       const speedLimit = estimateSegmentSpeedLimit(props, roadType)
-      const averageSpeed = Math.max(
-        roadType === 'local' ? 25 : 35,
-        Math.round((Number(props.speed) || speedLimit) * (props.traffic === '0' ? 0.95 : props.traffic === '1' ? 0.82 : props.traffic === '2' ? 0.66 : 0.55))
-      )
+      const averageSpeed = estimateSegmentAverageSpeed(props, roadType, speedLimit)
+      const congestionScore = estimateSegmentCongestionScore(props, averageSpeed, speedLimit)
 
       if (positions.length > 1) {
         const startPoint = positions[0]
         const endPoint = positions[positions.length - 1]
         liveSegmentStats.push({
           id: `live-segment-${liveSegmentStats.length}`,
-          name: currentRoadName || props.description || (roadType === 'highway' ? '고속도로 본선' : roadType === 'local' ? '일반도로' : '국도 구간'),
+          name: currentRoadName || props.roadName || props.description || (roadType === 'highway' ? '고속도로 본선' : roadType === 'national' ? '국도 구간' : '일반도로'),
           positions,
           roadType,
           speedLimit,
           averageSpeed,
-          congestionScore: averageSpeed < speedLimit * 0.6 ? 3 : averageSpeed < speedLimit * 0.8 ? 2 : 1,
+          congestionScore,
           center: [
             (startPoint[0] + endPoint[0]) / 2,
             (startPoint[1] + endPoint[1]) / 2,
@@ -821,8 +898,8 @@ function parseRouteResponse(json, option) {
         })
       }
 
-      if ([4, 5, 6].includes(props.roadType)) highwayDist += dist
-      else if (props.roadType === 7) localDist += dist
+      if (roadType === 'highway') highwayDist += dist
+      else if (roadType === 'local') localDist += dist
       else nationalDist += dist
 
       // LineString turnType으로도 분기점 추출 가능
@@ -834,14 +911,14 @@ function parseRouteResponse(json, option) {
           const nextFeature = features.slice(fi + 1).find(f => f.geometry?.type === 'LineString')
           const afterRoadName = nextFeature?.properties?.roadName ?? currentRoadName
           const afterRoadNo = nextFeature?.properties?.roadNo ?? currentRoadNo
-          const afterRoadType = [4, 5, 6].includes(props.roadType) ? 'highway' : 'national'
+          const afterRoadType = mapRoadType(props) === 'highway' ? 'highway' : 'national'
           junctions.push({
             id: `jct-${junctions.length}`,
             name: props.description ?? props.name ?? `분기점 ${junctions.length + 1}`,
             lat: firstCoord[1],
             lng: firstCoord[0],
             turnType: props.turnType,
-            distanceFromStart: Math.round(accumulatedDist / 100) / 10, // km
+            distanceFromStart: getDistanceFromStartKm(),
             afterRoadType,
             afterRoadName: afterRoadName
               ? (afterRoadNo ? `${afterRoadName} (${afterRoadNo}호선)` : afterRoadName)
@@ -854,13 +931,14 @@ function parseRouteResponse(json, option) {
       // Point 피처(전환점) 에서 분기점 정보 보완
       const props = feature.properties ?? {}
       const turnType = Number(props.turnType)
-      const isGuidePoint = props.pointType === 'N' && ![200, 201].includes(turnType)
+      const pointType = String(props.pointType ?? '').toUpperCase()
+      const isGuidePoint = turnType > 0 && ![200, 201].includes(turnType) && pointType !== 'S' && pointType !== 'E'
       if (isGuidePoint && (props.name || props.description || props.nextRoadName)) {
         const [lng, lat] = feature.geometry.coordinates
         const nextFeature = features.slice(fi + 1).find(f => f.geometry?.type === 'LineString')
         const afterRoadName = nextFeature?.properties?.roadName ?? ''
         const afterRoadNo = nextFeature?.properties?.roadNo ?? ''
-        const afterRoadType = [4, 5, 6].includes(nextFeature?.properties?.roadType)
+        const afterRoadType = mapRoadType(nextFeature?.properties ?? {}) === 'highway'
           ? 'highway' : 'national'
         const maneuver = {
           id: `man-${maneuvers.length}`,
@@ -868,7 +946,7 @@ function parseRouteResponse(json, option) {
           lat,
           lng,
           turnType,
-          distanceFromStart: Math.round((props.totalDistance ?? accumulatedDist) / 100) / 10,
+          distanceFromStart: getDistanceFromStartKm(),
           afterRoadType,
           instructionText: props.description ?? '',
           laneHint: props.guideLane ?? props.laneInfo ?? props.lane ?? props.guideInfo ?? '',
@@ -904,10 +982,20 @@ function parseRouteResponse(json, option) {
   const nationalRoadRatio = Math.round((nationalDist / totalDist) * 100) || 0
   const localRoadRatio = Math.max(0, 100 - highwayRatio - nationalRoadRatio)
   const congestionScore = trafficTime / Math.max(totalTime, 1) > 0.3 ? 3 : trafficTime / Math.max(totalTime, 1) > 0.1 ? 2 : 1
-  const averageSpeed = totalTime > 0
-    ? Math.max(25, Math.round((totalDistance / totalTime) * 3.6))
-    : (highwayRatio >= 70 ? 86 : highwayRatio >= 40 ? 68 : 52)
-  const dominantSpeedLimit = highwayRatio >= 75 ? 110 : highwayRatio >= 45 ? 100 : 80
+  const actualSegmentSpeedLimits = liveSegmentStats
+    .map((segment) => Number(segment.speedLimit))
+    .filter((speed) => Number.isFinite(speed) && speed > 0)
+  const actualSegmentAverageSpeeds = liveSegmentStats
+    .map((segment) => Number(segment.averageSpeed))
+    .filter((speed) => Number.isFinite(speed) && speed > 0)
+  const averageSpeed = actualSegmentAverageSpeeds.length > 0
+    ? Math.round(actualSegmentAverageSpeeds.reduce((sum, speed) => sum + speed, 0) / actualSegmentAverageSpeeds.length)
+    : totalTime > 0
+      ? Math.max(5, Math.round((totalDistance / totalTime) * 3.6))
+      : null
+  const dominantSpeedLimit = actualSegmentSpeedLimits.length > 0
+    ? Math.max(...actualSegmentSpeedLimits)
+    : null
 
   // TMAP safetyFacilityList에서 실제 카메라 위치 추출
   const safetyList = summary.safetyFacilityList ?? []
@@ -922,7 +1010,7 @@ function parseRouteResponse(json, option) {
       id: `cam-${i}`,
       coord: [lat, lng],
       type: isSection ? 'section_start' : 'fixed',
-      speedLimit: parseInt(cam.speed ?? cam.speedLimit ?? 100, 10),
+      speedLimit: parseInt(cam.speed ?? cam.speedLimit ?? 0, 10) || null,
       label: isSection ? '구간단속' : '지점단속',
     }
     cameras.push(base)
@@ -943,9 +1031,10 @@ function parseRouteResponse(json, option) {
   const totalKm = totalDistance / 1000
   const hwKm = highwayDist / 1000
   const fixedCameraCount = cameras.filter(c => c.type === 'fixed').length
-    || Math.max(1, Math.round(hwKm / 6 + (totalKm - hwKm) / 12))
   const sectionCameraCount = cameras.filter(c => c.type === 'section_start').length
-    || (highwayRatio >= 40 ? Math.max(1, Math.round(hwKm / 25)) : 0)
+  const sectionEnforcementDistance = cameras
+    .filter((camera) => camera.type === 'section_start')
+    .reduce((sum, camera) => sum + (Number(camera.sectionLength) || 0), 0)
 
   const segmentStats = liveSegmentStats.length > 0
     ? liveSegmentStats
@@ -966,7 +1055,7 @@ function parseRouteResponse(json, option) {
     congestionLabel: ['', '원활', '서행', '정체'][congestionScore],
     fixedCameraCount,
     sectionCameraCount,
-    sectionEnforcementDistance: highwayRatio >= 60 ? 6 : 0,
+    sectionEnforcementDistance: Number(sectionEnforcementDistance.toFixed(1)),
     dominantSpeedLimit,
     maxSpeedLimit: dominantSpeedLimit,
     averageSpeed,
@@ -1031,10 +1120,24 @@ export async function reverseGeocode(lat, lng) {
   }
 }
 
-export async function enrichDestinationTarget(target) {
+export async function enrichDestinationTarget(target, options = {}) {
   if (!target || !Number.isFinite(target.lat) || !Number.isFinite(target.lng)) return target
 
   const next = { ...target }
+  const preferRoadSnap = options.preferRoadSnap ?? true
+  if (preferRoadSnap) {
+    const snapped = await snapToNearestRoad(next.lat, next.lng).catch(() => null)
+    if (snapped) {
+      const distanceKm = haversineKm(next.lat, next.lng, snapped.lat, snapped.lng)
+      if (distanceKm <= 0.12) {
+        next.originalLat = next.lat
+        next.originalLng = next.lng
+        next.lat = snapped.lat
+        next.lng = snapped.lng
+      }
+    }
+  }
+
   const shouldResolveAddress = !next.address || isSyntheticAddress(next.address)
   if (shouldResolveAddress) {
     const resolvedAddress = await reverseGeocode(next.lat, next.lng).catch(() => null)

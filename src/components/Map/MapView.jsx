@@ -1,9 +1,9 @@
-import React, { useEffect, useMemo } from 'react'
+import React, { useEffect, useMemo, useRef } from 'react'
 import { CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import useAppStore from '../../store/appStore'
 import { HIGHWAYS } from '../../data/highwayData'
-import { shouldUseRawRoutePolyline } from '../../utils/navigationLogic'
+import { getCurrentRouteSegment, getGuidancePriority, getNavigationCameraState, shouldUseRawRoutePolyline } from '../../utils/navigationLogic'
 
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -86,12 +86,113 @@ const junctionIcon = makeBadgeIcon({ text: '분', background: '#FF6B00', size: 2
 const schoolZoneIcon = makeBadgeIcon({ text: '30', background: '#F59E0B', size: 30 })
 const speedBumpIcon = makeBadgeIcon({ text: '턱', background: '#0EA5E9', size: 30 })
 
-function getLookAheadCenter(map, location, zoom = 19, enabled = true) {
+function getBearingDeg(fromLat, fromLng, toLat, toLng) {
+  const fromLatRad = (fromLat * Math.PI) / 180
+  const toLatRad = (toLat * Math.PI) / 180
+  const deltaLngRad = ((toLng - fromLng) * Math.PI) / 180
+  const y = Math.sin(deltaLngRad) * Math.cos(toLatRad)
+  const x =
+    Math.cos(fromLatRad) * Math.sin(toLatRad) -
+    Math.sin(fromLatRad) * Math.cos(toLatRad) * Math.cos(deltaLngRad)
+  return (((Math.atan2(y, x) * 180) / Math.PI) + 360) % 360
+}
+
+function projectPointToSegment(point, start, end) {
+  const latFactor = 111320
+  const lngFactor = 111320 * Math.cos((((point[0] + start[0] + end[0]) / 3) * Math.PI) / 180)
+  const px = point[1] * lngFactor
+  const py = point[0] * latFactor
+  const ax = start[1] * lngFactor
+  const ay = start[0] * latFactor
+  const bx = end[1] * lngFactor
+  const by = end[0] * latFactor
+  const abx = bx - ax
+  const aby = by - ay
+  const ab2 = abx * abx + aby * aby
+
+  if (ab2 === 0) {
+    return { ratio: 0, distanceM: Math.hypot(px - ax, py - ay) }
+  }
+
+  const apx = px - ax
+  const apy = py - ay
+  const ratio = Math.min(1, Math.max(0, (apx * abx + apy * aby) / ab2))
+  const closestX = ax + (abx * ratio)
+  const closestY = ay + (aby * ratio)
+  return {
+    ratio,
+    distanceM: Math.hypot(px - closestX, py - closestY),
+  }
+}
+
+function getHeadingDelta(current, previous) {
+  const raw = ((current - previous + 540) % 360) - 180
+  return raw
+}
+
+function resolveDriverHeading(userLocation, locationHistory = []) {
+  const liveHeading = Number(userLocation?.heading)
+  if (Number.isFinite(liveHeading) && liveHeading > 0) return liveHeading
+
+  if (Array.isArray(locationHistory) && locationHistory.length >= 2) {
+    const from = locationHistory[locationHistory.length - 2]
+    const to = locationHistory[locationHistory.length - 1]
+    if (Array.isArray(from) && Array.isArray(to)) {
+      return getBearingDeg(from[0], from[1], to[0], to[1])
+    }
+  }
+
+  return 0
+}
+
+function getLookAheadCenter(map, location, zoom = 19.2, enabled = true, cameraState = null) {
   if (!location) return null
   const latLng = L.latLng(location.lat, location.lng)
   if (!enabled) return latLng
+  const offsetY = Number(cameraState?.lookAheadOffsetY) || -340
   const projected = map.project(latLng, zoom)
-  return map.unproject(projected.add([0, -300]), zoom)
+  return map.unproject(projected.add([0, offsetY]), zoom)
+}
+
+function getRouteLookAheadHeading(route, userLocation, fallbackHeading = 0) {
+  const polyline = route?.polyline ?? []
+  if (!userLocation || polyline.length < 2) return fallbackHeading
+
+  let travelledM = 0
+  let bestDistanceM = Infinity
+  let bestProgressM = 0
+
+  for (let index = 0; index < polyline.length - 1; index += 1) {
+    const start = polyline[index]
+    const end = polyline[index + 1]
+    const segmentLengthM = haversineM(start[0], start[1], end[0], end[1])
+    const projection = projectPointToSegment([userLocation.lat, userLocation.lng], start, end)
+    if (projection.distanceM < bestDistanceM) {
+      bestDistanceM = projection.distanceM
+      bestProgressM = travelledM + (segmentLengthM * projection.ratio)
+    }
+    travelledM += segmentLengthM
+  }
+
+  const lookAheadTargetM = bestProgressM + Math.max(110, Math.min(260, (userLocation.speedKmh ?? 0) * 2.4))
+  let traversedM = 0
+
+  for (let index = 0; index < polyline.length - 1; index += 1) {
+    const start = polyline[index]
+    const end = polyline[index + 1]
+    const segmentLengthM = haversineM(start[0], start[1], end[0], end[1])
+    if (traversedM + segmentLengthM >= lookAheadTargetM) {
+      const remainM = Math.max(0, lookAheadTargetM - traversedM)
+      const ratio = segmentLengthM > 0 ? remainM / segmentLengthM : 0
+      const targetLat = start[0] + ((end[0] - start[0]) * ratio)
+      const targetLng = start[1] + ((end[1] - start[1]) * ratio)
+      return getBearingDeg(userLocation.lat, userLocation.lng, targetLat, targetLng)
+    }
+    traversedM += segmentLengthM
+  }
+
+  const tail = polyline[polyline.length - 1]
+  return getBearingDeg(userLocation.lat, userLocation.lng, tail[0], tail[1])
 }
 
 function MapController({ center, zoom, darkMode, minimalMap }) {
@@ -99,11 +200,34 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
   const navAutoFollow = useAppStore((s) => s.navAutoFollow)
   const setNavAutoFollow = useAppStore((s) => s.setNavAutoFollow)
   const userLocation = useAppStore((s) => s.userLocation)
+  const locationHistory = useAppStore((s) => s.locationHistory)
   const settings = useAppStore((s) => s.settings)
+  const routes = useAppStore((s) => s.routes)
+  const mergeOptions = useAppStore((s) => s.mergeOptions)
+  const selectedRouteId = useAppStore((s) => s.selectedRouteId)
+  const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
+  const { nextAction } = getGuidancePriority(selectedRoute, userLocation, mergeOptions)
+  const nextGuidance = nextAction
+  const cameraState = getNavigationCameraState(nextGuidance)
+  const navZoom = cameraState.zoom
+  const smoothedHeadingRef = useRef(0)
+  const programmaticMotionRef = useRef(false)
 
-  // 드래그만 auto-follow 해제 (zoomstart는 setView/panTo 프로그래밍 호출도 발생시키므로 제외)
+  const runProgrammaticMotion = (fn) => {
+    programmaticMotionRef.current = true
+    fn()
+    window.setTimeout(() => {
+      programmaticMotionRef.current = false
+    }, 260)
+  }
+
   const map = useMapEvents({
-    dragstart: () => { if (isNavigating) setNavAutoFollow(false) },
+    dragstart: () => {
+      if (isNavigating && !programmaticMotionRef.current) setNavAutoFollow(false)
+    },
+    zoomstart: () => {
+      if (isNavigating && !programmaticMotionRef.current) setNavAutoFollow(false)
+    },
   })
 
   // 안내 시작 시 내 위치로 강제 포커스 (스토어에서 직접 읽어 stale closure 방지)
@@ -111,24 +235,34 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
     if (!isNavigating) return
     const freshLoc = useAppStore.getState().userLocation
     const target = freshLoc
-      ? getLookAheadCenter(map, freshLoc, 19, settings.navigationLookAhead)
+      ? getLookAheadCenter(map, freshLoc, navZoom, settings.navigationLookAhead, cameraState)
       : (Array.isArray(center) ? center : null)
-    if (target) map.setView(target, 19, { animate: true, duration: 0.45 })
+    if (target) {
+      runProgrammaticMotion(() => {
+        map.stop()
+        map.setView(target, navZoom, { animate: false })
+      })
+    }
     // 시작 시 자동추적 활성화
     useAppStore.getState().setNavAutoFollow(true)
-  }, [isNavigating, settings.navigationLookAhead]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [cameraState, isNavigating, navZoom, settings.navigationLookAhead]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 연속 auto-follow: 내비 시작 직후에는 확대 수준을 유지하고, 이후에는 부드럽게 중심만 이동
   useEffect(() => {
     if (!isNavigating || !navAutoFollow || !userLocation) return
-    const target = getLookAheadCenter(map, userLocation, 19, settings.navigationLookAhead) ?? L.latLng(userLocation.lat, userLocation.lng)
+    const target = getLookAheadCenter(map, userLocation, navZoom, settings.navigationLookAhead, cameraState) ?? L.latLng(userLocation.lat, userLocation.lng)
     const centerDistance = map.distance(map.getCenter(), target)
-    if (map.getZoom() < 19 || centerDistance > 35) {
-      map.setView(target, Math.max(19, map.getZoom()), { animate: true, duration: 0.28 })
+    if (Math.abs(map.getZoom() - navZoom) > 0.08 || centerDistance > (cameraState.recenterThresholdM ?? 28)) {
+      runProgrammaticMotion(() => {
+        map.stop()
+        map.setView(target, navZoom, { animate: false })
+      })
       return
     }
-    map.panTo(target, { animate: true, duration: 0.22 })
-  }, [userLocation, navAutoFollow, isNavigating, settings.navigationLookAhead]) // eslint-disable-line react-hooks/exhaustive-deps
+    runProgrammaticMotion(() => {
+      map.panTo(target, { animate: false })
+    })
+  }, [cameraState, userLocation, navAutoFollow, isNavigating, navZoom, settings.navigationLookAhead]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const tilePane = map.getPane('tilePane')
@@ -139,13 +273,42 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
       return
     }
     if (isNavigating && minimalMap) {
-      tilePane.style.filter = 'grayscale(0.72) saturate(0.45) brightness(0.88)'
-      tilePane.style.opacity = '0.78'
+      tilePane.style.filter = 'grayscale(0.82) saturate(0.32) brightness(0.92) contrast(0.96)'
+      tilePane.style.opacity = '0.68'
       return
     }
     tilePane.style.filter = 'none'
     tilePane.style.opacity = '1'
   }, [darkMode, isNavigating, map, minimalMap])
+
+  useEffect(() => {
+    const container = map.getContainer()
+    const rotationLayer = container?.closest('.map-rotation-layer')
+    if (!rotationLayer) return
+
+    if (!isNavigating || !navAutoFollow) {
+      rotationLayer.style.transform = 'none'
+      rotationLayer.style.transformOrigin = '50% 50%'
+      rotationLayer.style.setProperty('--driver-map-rotation', '0deg')
+      return
+    }
+
+    const nextHeading = getRouteLookAheadHeading(
+      selectedRoute,
+      userLocation,
+      resolveDriverHeading(userLocation, locationHistory)
+    )
+    const previousHeading = smoothedHeadingRef.current
+    const headingDelta = getHeadingDelta(nextHeading, previousHeading)
+    const smoothing = Math.abs(headingDelta) >= 30 ? 0.9 : 0.72
+    const smoothedHeading = previousHeading + (headingDelta * smoothing)
+    smoothedHeadingRef.current = smoothedHeading
+
+    const rotationDeg = -smoothedHeading
+    rotationLayer.style.transformOrigin = '50% 50%'
+    rotationLayer.style.transform = `rotate(${rotationDeg}deg) scale(1.18)`
+    rotationLayer.style.setProperty('--driver-map-rotation', `${rotationDeg}deg`)
+  }, [isNavigating, locationHistory, map, navAutoFollow, selectedRoute, userLocation])
 
   // 일반 지도 이동 (안내 중에는 무시)
   useEffect(() => {
@@ -218,6 +381,7 @@ function buildSpeedMarkers(segments) {
   const markers = []
   let prevLimit = null
   for (const segment of segments) {
+    if (!Number.isFinite(Number(segment.speedLimit)) || Number(segment.speedLimit) <= 0) continue
     if (segment.speedLimit !== prevLimit) {
       markers.push({
         id: `${segment.id}-speed`,
@@ -236,12 +400,37 @@ function getCongestionColor(score) {
   return COLORS.congestion1
 }
 
+function buildCongestionOverlaySegments(segments = []) {
+  return (segments ?? [])
+    .filter((segment) => {
+      const averageSpeed = Number(segment?.averageSpeed)
+      const speedLimit = Number(segment?.speedLimit)
+      const congestionScore = Number(segment?.congestionScore)
+      if (!Array.isArray(segment?.positions) || segment.positions.length < 2) return false
+      if (!Number.isFinite(averageSpeed) || averageSpeed <= 0) return false
+      if (congestionScore >= 3) return true
+      if (congestionScore === 2) return true
+      return Number.isFinite(speedLimit) && speedLimit > 0 && averageSpeed <= speedLimit * 0.78
+    })
+    .map((segment) => ({
+      ...segment,
+      overlayWeight: Number(segment?.congestionScore) >= 3 ? 11 : 9,
+      overlayOpacity: Number(segment?.congestionScore) >= 3 ? 0.88 : 0.72,
+    }))
+}
+
 function getRouteSegmentColor(roadType) {
   if (roadType === 'highway') return COLORS.routeHighway
   if (roadType === 'national') return COLORS.routeNational
   if (roadType === 'local') return COLORS.routeLocal
   if (roadType === 'junction') return COLORS.routeJunction
-  return COLORS.selectedRoute
+  return COLORS.secondaryRoute
+}
+
+function formatSpeedLimitLabel(speedLimit) {
+  return Number.isFinite(Number(speedLimit)) && Number(speedLimit) > 0
+    ? `제한 ${speedLimit}km/h`
+    : '제한속도 정보 없음'
 }
 
 function getRoutePath(route, curvature = 0.1) {
@@ -267,6 +456,8 @@ export default function MapView({ darkMode = false }) {
     getSelectedRoadDetail,
     cameraReports,
     searchRoute,
+    searchRouteAlongRoad,
+    navAutoFollow,
     isNavigating,
     settings,
     safetyHazards,
@@ -275,6 +466,23 @@ export default function MapView({ darkMode = false }) {
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
   const otherRoutes = routes.filter((route) => route.id !== selectedRouteId)
   const selectedRoad = selectedRoadId ? getSelectedRoadDetail() : null
+  const hasRealRouteSegments = Array.isArray(selectedRoute?.segmentStats) && selectedRoute.segmentStats.length > 0
+  const showMinimalNavigationMap = isNavigating && settings.navigationMinimalMap
+  const driverFollowMode = isNavigating && navAutoFollow
+  const currentRouteSegment = useMemo(
+    () => getCurrentRouteSegment(selectedRoute, userLocation),
+    [selectedRoute, userLocation]
+  )
+  const currentSegmentIndex = useMemo(() => {
+    if (!selectedRoute?.segmentStats?.length || !currentRouteSegment?.id) return -1
+    return selectedRoute.segmentStats.findIndex((segment) => segment.id === currentRouteSegment.id)
+  }, [currentRouteSegment?.id, selectedRoute?.segmentStats])
+  const visibleNavigationSegments = useMemo(() => {
+    const segments = selectedRoute?.segmentStats ?? []
+    if (!driverFollowMode || segments.length === 0) return segments
+    const startIndex = Math.max(0, currentSegmentIndex)
+    return segments.slice(startIndex, startIndex + 8)
+  }, [currentSegmentIndex, driverFollowMode, selectedRoute?.segmentStats])
 
   const routeSpeedMarkers = useMemo(
     () => (selectedRoute ? buildSpeedMarkers(selectedRoute.segmentStats ?? []) : []),
@@ -284,28 +492,41 @@ export default function MapView({ darkMode = false }) {
     () => (selectedRoad ? buildSpeedMarkers(selectedRoad.congestionSegments ?? []) : []),
     [selectedRoad]
   )
+  const routeCongestionSegments = useMemo(
+    () => buildCongestionOverlaySegments(selectedRoute?.segmentStats ?? []),
+    [selectedRoute]
+  )
   const nearbyRoadCameras = useMemo(
     () => buildNearbyRoadCameras(userLocation),
     [userLocation]
   )
   const currentLocationIcon = useMemo(
-    () => makeCurrentLocationIcon(userLocation?.heading ?? 0),
-    [userLocation?.heading]
+    () => makeCurrentLocationIcon(
+      driverFollowMode
+        ? getRouteLookAheadHeading(
+            selectedRoute,
+            userLocation,
+            resolveDriverHeading(userLocation, locationHistory)
+          )
+        : (userLocation?.heading ?? 0)
+    ),
+    [driverFollowMode, locationHistory, selectedRoute, userLocation]
   )
-  const showMinimalNavigationMap = isNavigating && settings.navigationMinimalMap
 
   // OSM Korea HOT 타일은 현재 유효한 한국어 라벨 베이스맵을 제공한다.
   const tileUrl = 'https://tiles.osm.kr/hot/{z}/{x}/{y}.png'
   const labelUrl = null
 
   return (
-    <MapContainer
-      center={mapCenter}
-      zoom={mapZoom}
-      zoomControl={false}
-      attributionControl
-      style={{ height: '100%', width: '100%' }}
-    >
+    <div className="map-rotation-shell">
+      <div className="map-rotation-layer">
+        <MapContainer
+          center={mapCenter}
+          zoom={mapZoom}
+          zoomControl={false}
+          attributionControl
+          style={{ height: '100%', width: '100%' }}
+        >
       <TileLayer
         url={tileUrl}
         attribution='&copy; OpenStreetMap contributors &copy; OSM Korea'
@@ -319,7 +540,7 @@ export default function MapView({ darkMode = false }) {
       )}
       <MapController center={mapCenter} zoom={mapZoom} darkMode={darkMode} minimalMap={showMinimalNavigationMap} />
 
-      {locationHistory.length > 1 && (
+      {!driverFollowMode && locationHistory.length > 1 && (
         <Polyline
           positions={locationHistory}
           pathOptions={{ color: '#5AC8FA', weight: 4, opacity: 0.35, dashArray: '10 8' }}
@@ -356,6 +577,23 @@ export default function MapView({ darkMode = false }) {
                 className="mt-2 w-full py-1.5 rounded-lg bg-tmap-blue text-white text-xs font-bold"
               >
                 🚗 여기로 안내
+              </button>
+              <button
+                onClick={() => {
+                  searchRouteAlongRoad({
+                    road: selectedRoad,
+                    viaPoint: {
+                      id: `${selectedRoad.id}-start`,
+                      name: selectedRoad.startName,
+                      address: selectedRoad.startAddress ?? selectedRoad.startName ?? '',
+                      lat: selectedRoad.startCoord[0],
+                      lng: selectedRoad.startCoord[1],
+                    },
+                  })
+                }}
+                className="mt-2 w-full py-1.5 rounded-lg bg-gray-900 text-white text-xs font-bold"
+              >
+                🛣️ 시점 진입 후 종점까지 계속 주행
               </button>
             </Popup>
           </Marker>
@@ -404,7 +642,7 @@ export default function MapView({ darkMode = false }) {
               <Marker key={camera.id} position={camera.coord} icon={icon}>
                 <Popup>
                   <div className="text-sm font-bold">{camera.label}</div>
-                  <div className="text-xs text-gray-500">제한 {camera.speedLimit}km/h</div>
+                  <div className="text-xs text-gray-500">{formatSpeedLimitLabel(camera.speedLimit)}</div>
                   {camera.sectionLength && <div className="text-xs text-gray-500">구간 {camera.sectionLength}km</div>}
                   {report && <div className="text-xs text-amber-600 mt-1">신고: {report.type === 'off' ? '꺼진 카메라' : '없는 카메라'}</div>}
                 </Popup>
@@ -447,6 +685,23 @@ export default function MapView({ darkMode = false }) {
                 >
                   🚗 여기로 안내
                 </button>
+                <button
+                  onClick={() => {
+                    searchRouteAlongRoad({
+                      road: selectedRoad,
+                      viaPoint: {
+                        id: stop.id,
+                        name: stop.name,
+                        address: `${selectedRoad.name} ${stop.name}`,
+                        lat: stop.coord[0],
+                        lng: stop.coord[1],
+                      },
+                    })
+                  }}
+                  className="mt-2 w-full py-1.5 rounded-lg bg-gray-900 text-white text-xs font-bold"
+                >
+                  🛣️ 들른 후 {selectedRoad.endName}까지 계속 주행
+                </button>
               </Popup>
             </Marker>
           ))}
@@ -461,7 +716,7 @@ export default function MapView({ darkMode = false }) {
         </>
       )}
 
-      {!showMinimalNavigationMap && otherRoutes.map((route) => (
+      {!driverFollowMode && !showMinimalNavigationMap && otherRoutes.map((route) => (
         <Polyline
           key={route.id}
           positions={getRoutePath(route, 0.1)}
@@ -471,19 +726,26 @@ export default function MapView({ darkMode = false }) {
 
       {selectedRoute && (
         <>
-          {(selectedRoute.segmentStats ?? [])
-            .filter((segment) => Array.isArray(segment.positions) && segment.positions.length > 1)
-            .map((segment) => (
-              <Polyline
-                key={`route-segment-${segment.id}`}
-                positions={smoothPath(segment.positions, 0.03)}
-                pathOptions={{
-                  color: getRouteSegmentColor(segment.roadType),
-                  weight: showMinimalNavigationMap ? 10 : 8,
-                  opacity: isNavigating ? 0.92 : 0.9,
-                }}
-              />
-            ))}
+          {!driverFollowMode && hasRealRouteSegments ? (
+            visibleNavigationSegments
+              .filter((segment) => Array.isArray(segment.positions) && segment.positions.length > 1)
+              .map((segment) => (
+                <Polyline
+                  key={`route-segment-${segment.id}`}
+                  positions={smoothPath(segment.positions, 0.03)}
+                  pathOptions={{
+                    color: getRouteSegmentColor(segment.roadType),
+                    weight: showMinimalNavigationMap ? 10 : 8,
+                    opacity: isNavigating ? 0.92 : 0.9,
+                  }}
+                />
+              ))
+          ) : (
+            <Polyline
+              positions={getRoutePath(selectedRoute, 0.1)}
+              pathOptions={{ color: selectedRoute.routeColor ?? COLORS.selectedRoute, weight: showMinimalNavigationMap ? 10 : 8, opacity: 0.9 }}
+            />
+          )}
 
           {isNavigating && (
             <Polyline
@@ -492,15 +754,32 @@ export default function MapView({ darkMode = false }) {
             />
           )}
 
-          {visibleLayers.congestion && !showMinimalNavigationMap && (selectedRoute.segmentStats ?? []).map((segment) => (
+          {visibleLayers.congestion && !driverFollowMode && !showMinimalNavigationMap && hasRealRouteSegments && routeCongestionSegments.map((segment) => (
             <Polyline
               key={segment.id}
               positions={smoothPath(segment.positions, 0.03)}
-              pathOptions={{ color: getCongestionColor(segment.congestionScore), weight: 8, opacity: 0.55 }}
-            />
+              pathOptions={{
+                color: getCongestionColor(segment.congestionScore),
+                weight: segment.overlayWeight,
+                opacity: segment.overlayOpacity,
+                lineCap: 'round',
+              }}
+            >
+              <Popup>
+                <div className="text-sm font-bold">{segment.name ?? '정체 구간'}</div>
+                <div className="text-xs text-gray-500 mt-1">
+                  실속 {Number.isFinite(Number(segment.averageSpeed)) ? `${Math.round(segment.averageSpeed)}km/h` : '--'}
+                  {' · '}
+                  {formatSpeedLimitLabel(segment.speedLimit)}
+                </div>
+                <div className="text-xs text-gray-400 mt-1">
+                  {segment.congestionScore >= 3 ? '실시간 정체' : '실시간 서행'}
+                </div>
+              </Popup>
+            </Polyline>
           ))}
 
-          {visibleLayers.speedLimits && routeSpeedMarkers.map((marker) => (
+          {visibleLayers.speedLimits && !driverFollowMode && routeSpeedMarkers.map((marker) => (
             <Marker
               key={marker.id}
               position={marker.center}
@@ -509,7 +788,7 @@ export default function MapView({ darkMode = false }) {
           ))}
 
           {/* 실제 IC/JC 분기점 마커 */}
-          {visibleLayers.mergePoints && !showMinimalNavigationMap && (selectedRoute.junctions ?? []).map((jct) => (
+          {visibleLayers.mergePoints && !driverFollowMode && !showMinimalNavigationMap && (selectedRoute.junctions ?? []).map((jct) => (
             <Marker key={jct.id} position={[jct.lat, jct.lng]} icon={junctionIcon}>
               <Popup>
                 <div className="text-sm font-bold">{jct.name}</div>
@@ -521,7 +800,13 @@ export default function MapView({ darkMode = false }) {
           ))}
 
           {/* 경로 과속카메라 (TMAP safetyFacilityList 기반) */}
-          {visibleLayers.speedCameras && (selectedRoute.cameras ?? []).map((camera) => {
+          {visibleLayers.speedCameras && (driverFollowMode
+            ? (selectedRoute.cameras ?? []).filter((camera) => {
+                if (!userLocation) return false
+                return haversineM(userLocation.lat, userLocation.lng, camera.coord[0], camera.coord[1]) <= 2200
+              }).slice(0, 8)
+            : (selectedRoute.cameras ?? [])
+          ).map((camera) => {
             const report = cameraReports.find(r => r.id === camera.id)
             const icon = report?.type === 'off' ? reportedOffIcon
               : report?.type === 'fake' ? reportedFakeIcon
@@ -532,7 +817,7 @@ export default function MapView({ darkMode = false }) {
               <Marker key={`route-cam-${camera.id}`} position={camera.coord} icon={icon}>
                 <Popup>
                   <div className="text-sm font-bold">{camera.label}</div>
-                  <div className="text-xs text-gray-500">제한 {camera.speedLimit}km/h</div>
+                  <div className="text-xs text-gray-500">{formatSpeedLimitLabel(camera.speedLimit)}</div>
                   {camera.sectionLength && <div className="text-xs text-gray-500">구간 {camera.sectionLength}km</div>}
                 </Popup>
               </Marker>
@@ -545,13 +830,19 @@ export default function MapView({ darkMode = false }) {
         <Marker key={`nearby-cam-${camera.id}`} position={camera.coord} icon={fixedCameraIcon}>
           <Popup>
             <div className="text-sm font-bold">{camera.label}</div>
-            <div className="text-xs text-gray-500">제한 {camera.speedLimit}km/h</div>
+            <div className="text-xs text-gray-500">{formatSpeedLimitLabel(camera.speedLimit)}</div>
             <div className="text-xs text-gray-500">{Math.round(camera.distanceM)}m 거리</div>
           </Popup>
         </Marker>
       ))}
 
-      {settings.safetyModeEnabled && (safetyHazards ?? []).slice(0, 12).map((hazard) => (
+      {settings.safetyModeEnabled && (driverFollowMode
+        ? (safetyHazards ?? []).filter((hazard) => {
+            if (!userLocation) return false
+            return haversineM(userLocation.lat, userLocation.lng, hazard.lat, hazard.lng) <= 1200
+          }).slice(0, 4)
+        : (safetyHazards ?? []).slice(0, 12)
+      ).map((hazard) => (
         <Marker
           key={`hazard-${hazard.id}`}
           position={[hazard.lat, hazard.lng]}
@@ -566,7 +857,7 @@ export default function MapView({ darkMode = false }) {
       ))}
 
       {/* 신고된 카메라 (전체 지도에 표시) */}
-      {cameraReports.map((report) => (
+      {!driverFollowMode && cameraReports.map((report) => (
         <Marker
           key={`report-${report.id}`}
           position={report.coord}
@@ -599,6 +890,8 @@ export default function MapView({ darkMode = false }) {
           </Popup>
         </Marker>
       )}
-    </MapContainer>
+        </MapContainer>
+      </div>
+    </div>
   )
 }

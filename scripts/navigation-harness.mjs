@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict'
 import { searchInstantPlaceCandidates } from '../src/services/tmapService.js'
 import {
+  analyzeRecordedDrive,
   analyzeRouteProgress,
+  buildDrivingHabitSummary,
   ensureLiveRouteSource,
   formatGuidanceDistance,
+  getCurrentRouteSegment,
   getGuidanceInstruction,
+  getGuidancePriority,
+  getLaneGuidance,
   getRemainingEta,
   getTurnInstruction,
   getUpcomingJunction,
@@ -82,10 +87,193 @@ run('guidance text prefers real TMAP instruction wording when available', () => 
   )
 })
 
+run('nearest guidance is preferred over distant merge actions', () => {
+  const route = ensureLiveRouteSource({
+    id: 'route-guidance-priority',
+    distance: 12,
+    eta: 18,
+    polyline: [
+      [37.5, 127.0],
+      [37.5, 127.12],
+    ],
+    maneuvers: [
+      {
+        id: 'man-near-left',
+        turnType: 12,
+        distanceFromStart: 0.08,
+        instructionText: '80m 후 좌회전',
+      },
+    ],
+    junctions: [
+      {
+        id: 'jct-far-merge',
+        turnType: 17,
+        distanceFromStart: 6.1,
+        afterRoadType: 'highway',
+        afterRoadName: '경부고속도로',
+      },
+    ],
+  })
+
+  const result = getGuidancePriority(route, { lat: 37.5, lng: 127.0001 }, [
+    {
+      id: 'merge-far',
+      afterRoadType: 'highway',
+      afterRoadName: '경부고속도로',
+      distanceFromCurrent: 6.1,
+    },
+  ])
+
+  assert.equal(result.nextAction?.turnType, 12)
+})
+
+run('projected guidance point on route is prioritized even without distanceFromStart', () => {
+  const route = ensureLiveRouteSource({
+    id: 'route-guidance-projection',
+    distance: 3,
+    eta: 7,
+    polyline: [
+      [37.5, 127.0],
+      [37.5, 127.004],
+      [37.5005, 127.004],
+    ],
+    maneuvers: [
+      {
+        id: 'man-turn-near',
+        turnType: 12,
+        lat: 37.5,
+        lng: 127.0038,
+        instructionText: '곧 좌회전',
+      },
+    ],
+    junctions: [
+      {
+        id: 'jct-far',
+        turnType: 17,
+        lat: 37.5005,
+        lng: 127.004,
+        distanceFromStart: 2.7,
+        afterRoadType: 'highway',
+      },
+    ],
+  })
+
+  const result = getGuidancePriority(route, { lat: 37.5, lng: 127.0031 })
+  assert.equal(result.nextAction?.id, 'man-turn-near')
+  assert.ok((result.nextAction?.remainingDistanceKm ?? 1) < 0.2)
+})
+
 run('remaining ETA shrinks with route progress', () => {
   const { progress } = getUpcomingJunction(liveRoute, userLocationNearFirstJunction)
   const remainingEta = getRemainingEta(liveRoute, progress.remainingKm)
   assert.ok(remainingEta < liveRoute.eta, `expected ETA ${remainingEta} < ${liveRoute.eta}`)
+})
+
+run('current route segment is selected from the nearest actual segment', () => {
+  const route = {
+    ...liveRoute,
+    segmentStats: [
+      {
+        id: 'seg-local',
+        roadType: 'local',
+        speedLimit: 50,
+        positions: [
+          [37.5, 127.0],
+          [37.5, 127.008],
+        ],
+      },
+      {
+        id: 'seg-highway',
+        roadType: 'highway',
+        speedLimit: 100,
+        positions: [
+          [37.5, 127.008],
+          [37.5, 127.02],
+        ],
+      },
+    ],
+  }
+  const currentSegment = getCurrentRouteSegment(route, { lat: 37.5, lng: 127.004, speedKmh: 32 })
+  assert.ok(currentSegment, 'expected a current segment')
+  assert.equal(currentSegment.id, 'seg-local')
+  assert.equal(currentSegment.speedLimit, 50)
+})
+
+run('lane guidance prefers explicit laneInfo patterns when available', () => {
+  assert.equal(
+    getLaneGuidance({
+      laneHint: '우측 2개 차로 유지 후 분기점 진입',
+      turnType: 19,
+    }),
+    '우측 2개 차로 유지'
+  )
+  assert.equal(
+    getLaneGuidance({
+      laneHint: '1~2차로 이용하여 우회전',
+      turnType: 13,
+    }),
+    '1~2차로 이용'
+  )
+})
+
+run('recorded drive analysis finds deviations and braking hotspots from actual samples', () => {
+  const analysis = analyzeRecordedDrive(
+    [
+      [37.5, 127.0],
+      [37.5002, 127.002],
+      [37.5006, 127.006],
+      [37.5008, 127.01],
+    ],
+    [
+      { lat: 37.5, lng: 127.0, speedKmh: 72, capturedAt: '2026-04-13T00:00:00.000Z' },
+      { lat: 37.5002, lng: 127.002, speedKmh: 68, capturedAt: '2026-04-13T00:00:04.000Z' },
+      { lat: 37.5006, lng: 127.006, speedKmh: 44, capturedAt: '2026-04-13T00:00:08.000Z' },
+      { lat: 37.5008, lng: 127.01, speedKmh: 28, capturedAt: '2026-04-13T00:00:12.000Z' },
+    ],
+    {
+      polyline: [
+        [37.5, 127.0],
+        [37.5, 127.01],
+      ],
+      junctions: [
+        { id: 'jct-1', name: '테스트 JC', lat: 37.5006, lng: 127.006, afterRoadName: '국도 1호선' },
+      ],
+    }
+  )
+
+  assert.ok(analysis.deviationCount >= 1, 'expected off-route deviation')
+  assert.ok(analysis.brakingEventCount >= 1, 'expected braking event')
+  assert.ok(analysis.preferredDetours.length >= 1, 'expected preferred detour summary')
+})
+
+run('driving habit summary aggregates recorded-route deviation patterns', () => {
+  const summary = buildDrivingHabitSummary([
+    {
+      id: 'saved-1',
+      source: 'recorded',
+      distance: 12.5,
+      highwayRatio: 78,
+      polyline: [
+        [37.5, 127.0],
+        [37.5004, 127.004],
+      ],
+      originalRoutePolyline: [
+        [37.5, 127.0],
+        [37.5, 127.004],
+      ],
+      junctions: [{ id: 'jct-1', name: '테스트 JC', lat: 37.5003, lng: 127.003 }],
+      routeAnalysis: {
+        averageMovingSpeedKmh: 61,
+        deviations: [{ label: '테스트 JC 부근 경로 이탈' }],
+        preferredDetours: [{ label: '국도 1호선 쪽 우회' }],
+        brakingHotspots: [{ label: '테스트 JC 부근 급감속' }],
+      },
+    },
+  ])
+
+  assert.equal(summary.topDeviation?.label, '테스트 JC 부근 경로 이탈')
+  assert.equal(summary.topDetour?.label, '국도 1호선 쪽 우회')
+  assert.equal(summary.topBrake?.label, '테스트 JC 부근 급감속')
 })
 
 run('merge options are also rebased from current progress', () => {

@@ -6,13 +6,13 @@ import { SCENIC_SEGMENTS } from '../../data/scenicRoads'
 import { PRESET_INFO } from '../../data/mockData'
 import { searchNearbyPOIs } from '../../services/tmapService'
 import {
-  analyzeRouteProgress,
   formatGuidanceDistance,
   getGuidanceInstruction,
+  getGuidancePriority,
+  getCurrentRouteSegment,
   getLaneGuidance,
   getRemainingEta,
   getUpcomingMergeOptions,
-  getUpcomingJunction,
   haversineM,
 } from '../../utils/navigationLogic'
 
@@ -53,13 +53,132 @@ function areSimilarPolylines(a = [], b = []) {
   return avgDiffKm <= 0.12 && Math.abs(getPolylineDistanceKm(a) - getPolylineDistanceKm(b)) <= 1.5
 }
 
+function getLanePattern(guidance) {
+  const laneText = String(guidance?.laneHint ?? guidance?.instructionText ?? guidance?.description ?? '')
+    .replace(/\s+/g, ' ')
+    .replace(/왼쪽/g, '좌측')
+    .replace(/오른쪽/g, '우측')
+    .trim()
+
+  if (laneText.includes('우측 2개 차로')) {
+    return ['muted', 'forward', 'active-right', 'active-right']
+  }
+  if (laneText.includes('좌측 2개 차로')) {
+    return ['active-left', 'active-left', 'forward', 'muted']
+  }
+  if (laneText.includes('가운데 2개 차로')) {
+    return ['muted', 'active-forward', 'active-forward', 'muted']
+  }
+  if (/1\s*(?:~|-)\s*2차로/.test(laneText)) {
+    return ['active-left', 'active-left', 'forward', 'muted']
+  }
+  if (/3\s*(?:~|-)\s*4차로/.test(laneText)) {
+    return ['muted', 'forward', 'active-right', 'active-right']
+  }
+
+  const t = Number(guidance?.turnType)
+  if (t === 12 || t === 16 || t === 18) {
+    return ['active-left', 'forward', 'muted']
+  }
+  if (t === 13 || t === 17 || t === 19) {
+    return ['muted', 'forward', 'active-right']
+  }
+  if (t >= 125 && t <= 130) {
+    return ['muted', 'active-right', 'active-right']
+  }
+  return ['forward', 'active-forward', 'forward']
+}
+
+function getLaneArrow(lane) {
+  if (lane === 'active-left') return '↖'
+  if (lane === 'active-right') return '↗'
+  return '↑'
+}
+
+function stripLaneMention(text = '') {
+  return String(text)
+    .replace(/(좌측|우측|가운데)\s*\d+개?\s*차로(?:를)?\s*(이용|준비|진입|유지|이동)/g, '')
+    .replace(/(좌측|우측|가운데)\s*\d+\s*(?:~|-)\s*\d+차로(?:를)?\s*(이용|준비|진입|유지|이동)/g, '')
+    .replace(/(\d+\s*(?:~|-)\s*\d+차로|\d+차로)(?:를)?\s*(이용|준비|진입|유지|이동)/g, '')
+    .replace(/([좌우]측|왼쪽|오른쪽|가운데|중앙)[^.,]{0,18}차로/g, '')
+    .replace(/차선\s*준비/g, '')
+    .replace(/차로\s*준비/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[,.\s]+|[,.\s]+$/g, '')
+    .trim()
+}
+
+function createSpeech(text) {
+  const utterance = new SpeechSynthesisUtterance(text)
+  utterance.lang = 'ko-KR'
+  utterance.rate = 1
+  return utterance
+}
+
+function playAlertChime(repeat = 1) {
+  if (typeof window === 'undefined') return
+  const AudioCtor = window.AudioContext ?? window.webkitAudioContext
+  if (!AudioCtor) return
+
+  const ctx = new AudioCtor()
+  const now = ctx.currentTime
+  for (let index = 0; index < repeat; index += 1) {
+    const startAt = now + (index * 0.22)
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = 'sine'
+    osc.frequency.value = index === repeat - 1 ? 1220 : 980
+    gain.gain.setValueAtTime(0.0001, startAt)
+    gain.gain.exponentialRampToValueAtTime(0.16, startAt + 0.015)
+    gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.16)
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(startAt)
+    osc.stop(startAt + 0.18)
+  }
+  window.setTimeout(() => ctx.close().catch(() => {}), 1200)
+}
+
+function buildCameraAlertSpeech(camera, distanceM, threshold, isOverSpeed) {
+  const roundedDistance = Math.max(100, Math.round(distanceM / 10) * 10)
+  const limitText = camera?.speedLimit ? `제한속도 ${camera.speedLimit}킬로 ` : ''
+  const cameraLabel = camera?.type === 'section_start'
+    ? `${limitText}구간단속 시작`
+    : camera?.type === 'section_end'
+      ? '구간단속 종료'
+      : `${limitText}과속카메라`
+
+  if (threshold === '100m') {
+    return isOverSpeed
+      ? `100미터 앞 ${cameraLabel}입니다. 속도를 줄이세요.`
+      : `100미터 앞 ${cameraLabel}입니다.`
+  }
+
+  return isOverSpeed
+    ? `${roundedDistance}미터 앞 ${cameraLabel}입니다. 속도를 줄이세요.`
+    : `${roundedDistance}미터 앞 ${cameraLabel}입니다.`
+}
+
+function buildHazardAlertSpeech(hazard, distanceM, threshold) {
+  const roundedDistance = Math.max(100, Math.round(distanceM / 10) * 10)
+  if (hazard?.type === 'school_zone') {
+    return threshold === '100m'
+      ? '100미터 앞 어린이 보호구역입니다. 제한속도 30킬로입니다.'
+      : `${roundedDistance}미터 앞 어린이 보호구역입니다. 감속하세요.`
+  }
+
+  return threshold === '100m'
+    ? '100미터 앞 과속방지턱입니다. 감속하세요.'
+    : `${roundedDistance}미터 앞 과속방지턱입니다. 감속하세요.`
+}
+
 export default function NavigationOverlay() {
   const {
     isNavigating, stopNavigation, destination, routes, selectedRouteId,
     mergeOptions, userLocation, saveRoute, savedRoutes, drivePathHistory, cameraReports, reportCamera,
     navAutoFollow, setNavAutoFollow, addWaypoint, searchRoute, waypoints,
     refreshNavigationRoute, navigationLastRefreshedAt, isRefreshingNavigation,
-    settings, driverPreset, setDriverPreset, showRoutePanel, openSearchOverlay,
+    settings, driverPreset, setDriverPreset, showRoutePanel, openSearchOverlay, safetyHazards, refreshSafetyHazards,
   } = useAppStore()
   const [showMerge, setShowMerge] = useState(false)
   const [showSaveDialog, setShowSaveDialog] = useState(false)
@@ -69,12 +188,20 @@ export default function NavigationOverlay() {
   const [nearbyPOIs, setNearbyPOIs] = useState([])
   const [nearbyLoading, setNearbyLoading] = useState(false)
   const [nearbyCategory, setNearbyCategory] = useState('주유소')
+  const [isRouteSheetCollapsed, setIsRouteSheetCollapsed] = useState(true)
+  const [alertFlash, setAlertFlash] = useState(null)
   const segmentRef = useRef(null)
   const wakeLockRef = useRef(null)
   const nearCameraNotifiedRef = useRef(new Set()) // 이미 알린 카메라 id
   const notifiedScenicRef = useRef(new Set()) // 이미 알린 scenic segment id
   const spokenGuidanceRef = useRef(new Set())
+  const spokenSafetyRef = useRef(new Set())
+  const overSpeedAlertedAtRef = useRef(0)
   const startedVoiceRef = useRef(false)
+  const routeSheetTouchStartRef = useRef(null)
+  const flashTimerRef = useRef(null)
+  const speechQueueRef = useRef([])
+  const speechBusyRef = useRef(false)
 
   // 화면 꺼짐 방지
   useEffect(() => {
@@ -131,11 +258,51 @@ export default function NavigationOverlay() {
   }, [userLocation, isNavigating])
 
   const route = routes.find(r => r.id === selectedRouteId)
-  const routeProgress = analyzeRouteProgress(route, userLocation)
-  const { nextJunction: nextRealJunction, nextManeuver } = getUpcomingJunction(route, userLocation)
+  const { progress: routeProgress, nextAction } = getGuidancePriority(route, userLocation, mergeOptions)
+  const currentRouteSegment = getCurrentRouteSegment(route, userLocation)
   const liveMergeOptions = getUpcomingMergeOptions(mergeOptions, routeProgress.progressKm)
   const nextMergeOpt = liveMergeOptions.find((option) => option.remainingDistanceKm > 0.03) ?? liveMergeOptions[0]
   const remainingEta = getRemainingEta(route, routeProgress.remainingKm)
+
+  const triggerAlertFlash = (tone = 'red') => {
+    if (flashTimerRef.current) window.clearTimeout(flashTimerRef.current)
+    setAlertFlash(tone)
+    flashTimerRef.current = window.setTimeout(() => setAlertFlash(null), 520)
+  }
+
+  const flushSpeechQueue = () => {
+    if (!window.speechSynthesis || speechBusyRef.current) return
+    const nextSpeech = speechQueueRef.current.shift()
+    if (!nextSpeech) return
+
+    speechBusyRef.current = true
+    const utterance = createSpeech(nextSpeech)
+    utterance.onend = () => {
+      speechBusyRef.current = false
+      flushSpeechQueue()
+    }
+    utterance.onerror = () => {
+      speechBusyRef.current = false
+      flushSpeechQueue()
+    }
+    window.speechSynthesis.speak(utterance)
+  }
+
+  const enqueueSpeech = (text) => {
+    if (!settings.voiceGuidance || !window.speechSynthesis || !text) return
+    if (speechQueueRef.current.length >= 4) {
+      speechQueueRef.current = speechQueueRef.current.slice(-3)
+    }
+    speechQueueRef.current.push(text)
+    flushSpeechQueue()
+  }
+
+  const speakAlert = (text, { chimeRepeat = 1, flashTone = null } = {}) => {
+    if (!text) return
+    if (flashTone) triggerAlertFlash(flashTone)
+    playAlertChime(chimeRepeat)
+    enqueueSpeech(text)
+  }
 
   useEffect(() => {
     if (!isNavigating || route?.source !== 'live') return
@@ -146,10 +313,34 @@ export default function NavigationOverlay() {
   }, [isNavigating, refreshNavigationRoute, route?.source])
 
   useEffect(() => {
+    if (!isNavigating) return
+    refreshSafetyHazards()
+    const timer = window.setInterval(() => {
+      refreshSafetyHazards()
+    }, 90000)
+    return () => window.clearInterval(timer)
+  }, [isNavigating, refreshSafetyHazards])
+
+  useEffect(() => {
     if (isNavigating) return
     startedVoiceRef.current = false
     spokenGuidanceRef.current.clear()
+    spokenSafetyRef.current.clear()
+    overSpeedAlertedAtRef.current = 0
+    if (flashTimerRef.current) window.clearTimeout(flashTimerRef.current)
+    setAlertFlash(null)
+    speechQueueRef.current = []
+    speechBusyRef.current = false
+    if (window.speechSynthesis) window.speechSynthesis.cancel()
   }, [isNavigating])
+
+  useEffect(() => {
+    if (!isNavigating) {
+      setIsRouteSheetCollapsed(true)
+      return
+    }
+    setIsRouteSheetCollapsed(true)
+  }, [isNavigating, selectedRouteId])
 
   useEffect(() => {
     if (!isNavigating || !route || !userLocation || isRefreshingNavigation || route.source === 'recorded') return
@@ -170,15 +361,16 @@ export default function NavigationOverlay() {
     userLocation,
   ])
 
-  // 상단 배너: 일반 회전 안내 우선, 없으면 분기점, 없으면 목적지
-  const nextGuidance = nextManeuver ?? nextRealJunction
+  // 상단 배너: 다음 조작을 목적지보다 우선 표시
+  const nextGuidance = nextAction
   const nextGuidanceText = nextGuidance ? getGuidanceInstruction(nextGuidance) : null
+  const cleanedInstructionText = stripLaneMention(nextGuidance?.instructionText)
   const bannerTitle = nextGuidance
     ? `${formatGuidanceDistance(nextGuidance.remainingDistanceKm)} 후 ${nextGuidanceText}`
     : destination?.name ?? '목적지'
   const bannerSub = nextGuidance
-    ? (nextGuidance.instructionText
-        ? nextGuidance.instructionText
+    ? (cleanedInstructionText
+        ? cleanedInstructionText
         : nextGuidance.afterRoadName
         ? `${nextGuidance.afterRoadName} 진입`
         : `${nextGuidance.afterRoadType === 'highway' ? '고속도로' : '국도'} 진입`)
@@ -187,7 +379,9 @@ export default function NavigationOverlay() {
     ? '다음 안내'
     : '목적지 안내'
   const bannerTurnType = nextGuidance?.turnType ?? 11
-  const laneGuidance = getLaneGuidance(nextGuidance)
+  const laneSource = nextGuidance ?? nextMergeOpt ?? null
+  const laneGuidance = getLaneGuidance(laneSource)
+  const lanePattern = getLanePattern(laneSource)
   const nearbyFuelSummary = nearbyCategory === '주유소' && nearbyPOIs.length > 0
     ? {
         nearbyLowestPoi: [...nearbyPOIs].sort((a, b) => (a.fuelPrice ?? Infinity) - (b.fuelPrice ?? Infinity))[0] ?? null,
@@ -200,11 +394,7 @@ export default function NavigationOverlay() {
   useEffect(() => {
     if (!isNavigating || !settings.voiceGuidance || startedVoiceRef.current || !window.speechSynthesis) return
     startedVoiceRef.current = true
-    const utterance = new SpeechSynthesisUtterance('안내를 시작합니다.')
-    utterance.lang = 'ko-KR'
-    utterance.rate = 1
-    window.speechSynthesis.cancel()
-    window.speechSynthesis.speak(utterance)
+    enqueueSpeech('안내를 시작합니다.')
   }, [isNavigating, settings.voiceGuidance])
 
   useEffect(() => {
@@ -222,12 +412,67 @@ export default function NavigationOverlay() {
       ? `100미터 후 ${guidanceText}입니다.`
       : `${Math.max(100, remainingM)}미터 후 ${guidanceText}입니다.`
 
-    const utterance = new SpeechSynthesisUtterance(speech)
-    utterance.lang = 'ko-KR'
-    utterance.rate = 1
-    window.speechSynthesis.cancel()
-    window.speechSynthesis.speak(utterance)
+    enqueueSpeech(speech)
   }, [isNavigating, nextGuidance, settings.voiceGuidance])
+
+  useEffect(() => {
+    if (!isNavigating || !userLocation) return
+    const cameras = route?.cameras ?? []
+    const currentSpeed = Math.round(userLocation.speedKmh ?? 0)
+
+    for (const camera of cameras) {
+      const distanceM = haversineM(userLocation.lat, userLocation.lng, camera.coord[0], camera.coord[1])
+      const threshold = distanceM <= 120 ? '100m' : distanceM <= 600 ? '600m' : null
+      if (!threshold) continue
+
+      const key = `${camera.id}:${threshold}`
+      if (spokenSafetyRef.current.has(key)) continue
+      spokenSafetyRef.current.add(key)
+
+      const isOverSpeed = Number.isFinite(camera.speedLimit) && camera.speedLimit > 0 && currentSpeed > camera.speedLimit + 3
+      speakAlert(buildCameraAlertSpeech(camera, distanceM, threshold, isOverSpeed), {
+        chimeRepeat: isOverSpeed ? 3 : 2,
+        flashTone: isOverSpeed ? 'red' : 'amber',
+      })
+      break
+    }
+  }, [isNavigating, route?.cameras, settings.voiceGuidance, userLocation])
+
+  useEffect(() => {
+    if (!isNavigating || !userLocation) return
+    const nearestHazard = (safetyHazards ?? []).find((hazard) => {
+      const distanceM = haversineM(userLocation.lat, userLocation.lng, hazard.lat, hazard.lng)
+      return distanceM <= 600
+    })
+    if (!nearestHazard) return
+
+    const distanceM = haversineM(userLocation.lat, userLocation.lng, nearestHazard.lat, nearestHazard.lng)
+    const threshold = distanceM <= 120 ? '100m' : '600m'
+    const key = `${nearestHazard.id}:${threshold}`
+    if (spokenSafetyRef.current.has(key)) return
+    spokenSafetyRef.current.add(key)
+
+    speakAlert(buildHazardAlertSpeech(nearestHazard, distanceM, threshold), {
+      chimeRepeat: nearestHazard.type === 'school_zone' ? 2 : 1,
+      flashTone: nearestHazard.type === 'school_zone' ? 'amber' : 'sky',
+    })
+  }, [isNavigating, safetyHazards, settings.voiceGuidance, userLocation])
+
+  useEffect(() => {
+    if (!isNavigating || !userLocation) return
+    const speedLimit = Number(currentRouteSegment?.speedLimit)
+    const currentSpeed = Math.round(userLocation.speedKmh ?? 0)
+    if (!Number.isFinite(speedLimit) || speedLimit <= 0 || currentSpeed <= speedLimit + 7) return
+
+    const now = Date.now()
+    if (now - overSpeedAlertedAtRef.current < 20000) return
+    overSpeedAlertedAtRef.current = now
+
+    speakAlert(`현재 제한속도 ${speedLimit}킬로 구간입니다. 속도를 줄이세요.`, {
+      chimeRepeat: 3,
+      flashTone: 'red',
+    })
+  }, [currentRouteSegment?.speedLimit, isNavigating, settings.voiceGuidance, userLocation])
 
   if (!isNavigating || showRoutePanel) return null
 
@@ -274,8 +519,43 @@ export default function NavigationOverlay() {
     setShowNearbyPanel(false)
   }
 
+  const handleRouteSheetTouchStart = (e) => {
+    routeSheetTouchStartRef.current = e.touches?.[0]?.clientY ?? null
+  }
+
+  const handleRouteSheetTouchEnd = (e) => {
+    const startY = routeSheetTouchStartRef.current
+    const endY = e.changedTouches?.[0]?.clientY ?? null
+    routeSheetTouchStartRef.current = null
+    if (startY == null || endY == null) return
+
+    const deltaY = endY - startY
+    if (deltaY <= -28) {
+      setIsRouteSheetCollapsed(false)
+    } else if (deltaY >= 36) {
+      setIsRouteSheetCollapsed(true)
+    }
+  }
+
+  const routeSheetPeekTitle = nextMergeOpt?.name ?? '현재 경로 유지'
+  const routeSheetPeekMeta = nextMergeOpt
+    ? `${Number(nextMergeOpt.remainingDistanceKm ?? nextMergeOpt.distanceFromCurrent).toFixed(2)}km 앞`
+    : `${routeProgress.remainingKm != null ? Number(routeProgress.remainingKm).toFixed(2) : '--'}km 남음`
+
   return (
     <>
+      {alertFlash && (
+        <div
+          className={`absolute inset-0 z-40 pointer-events-none ${
+            alertFlash === 'red'
+              ? 'bg-red-500/18'
+              : alertFlash === 'amber'
+                ? 'bg-amber-400/14'
+                : 'bg-sky-400/14'
+          }`}
+        />
+      )}
+
       {/* 상단 방향 배너 */}
       <div className="absolute top-0 left-0 right-0 z-20">
         <div className="bg-tmap-blue px-5 pt-14 pb-4">
@@ -287,11 +567,6 @@ export default function NavigationOverlay() {
               <div className="text-white/70 text-sm mb-0.5">{bannerLabel}</div>
               <div className="text-white text-xl font-black truncate">{bannerTitle}</div>
               <div className="text-white/70 text-sm mt-0.5 truncate">{bannerSub}</div>
-              {laneGuidance && (
-                <div className="mt-2 inline-flex max-w-full items-center rounded-full bg-white/18 px-3 py-1 text-xs font-bold text-white">
-                  차로 안내 · {laneGuidance}
-                </div>
-              )}
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               <button
@@ -315,10 +590,40 @@ export default function NavigationOverlay() {
           </div>
         </div>
 
+        {(nextGuidance || laneGuidance || nextMergeOpt) && (
+          <div className="bg-emerald-700 px-5 py-3 shadow-md">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                {lanePattern.map((lane, index) => {
+                  const active = lane.startsWith('active')
+                  return (
+                    <div
+                      key={`${lane}-${index}`}
+                      className={`w-8 h-10 rounded-lg flex items-center justify-center text-base font-black border ${
+                        active
+                          ? 'bg-white text-emerald-700 border-white'
+                          : 'bg-white/12 text-white/70 border-white/20'
+                      }`}
+                    >
+                      {getLaneArrow(lane)}
+                    </div>
+                  )
+                })}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[11px] font-bold text-emerald-100">차선 준비</div>
+                <div className="text-sm font-black text-white truncate">
+                  {laneGuidance ?? '지금 진행 방향 차로 유지'}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* 통계 바 */}
         {(() => {
           const currentSpeed = Math.round(userLocation?.speedKmh ?? 0)
-          const speedLimit = route?.dominantSpeedLimit ?? route?.maxSpeedLimit ?? null
+          const speedLimit = currentRouteSegment?.speedLimit ?? null
           const overLimit = speedLimit && currentSpeed > speedLimit
           return (
             <div className="bg-white px-5 py-3 flex items-center shadow-md">
@@ -339,7 +644,7 @@ export default function NavigationOverlay() {
               {/* 현재 속도 배지 */}
               <div className={`ml-3 flex flex-col items-center justify-center w-14 h-14 rounded-full border-[3px] ${overLimit ? 'border-red-500 bg-red-50' : 'border-gray-300'}`}>
                 <span className={`text-base font-black leading-none ${overLimit ? 'text-red-600' : 'text-gray-900'}`}>{currentSpeed}</span>
-                {speedLimit && <span className={`text-[9px] leading-tight ${overLimit ? 'text-red-400' : 'text-gray-400'}`}>/{speedLimit}</span>}
+                <span className={`text-[9px] leading-tight ${overLimit ? 'text-red-400' : 'text-gray-400'}`}>/{speedLimit ?? '--'}</span>
                 <span className="text-[8px] text-gray-400 leading-none">km/h</span>
               </div>
             </div>
@@ -348,8 +653,54 @@ export default function NavigationOverlay() {
       </div>
 
       {/* 하단 분기점 바 */}
-      <div className="absolute bottom-20 left-0 right-0 z-20 px-4">
-        <div className="bg-white rounded-2xl shadow-lg overflow-hidden">
+      {isRouteSheetCollapsed && (
+        <button
+          type="button"
+          onClick={() => setIsRouteSheetCollapsed(false)}
+          className="absolute bottom-0 left-0 right-0 z-10 h-24 bg-transparent"
+          aria-label="하단 경로 패널 펼치기"
+        />
+      )}
+      <div className="absolute bottom-0 left-0 right-0 z-20 px-4 pb-3 pointer-events-none">
+        <div
+          className="pointer-events-auto bg-white rounded-2xl shadow-lg overflow-hidden transition-transform duration-300 ease-out"
+          style={{ transform: isRouteSheetCollapsed ? 'translateY(calc(100% - 18px))' : 'translateY(0)' }}
+        >
+          <button
+            type="button"
+            onClick={() => setIsRouteSheetCollapsed((prev) => !prev)}
+            onTouchStart={handleRouteSheetTouchStart}
+            onTouchEnd={handleRouteSheetTouchEnd}
+            className={`w-full bg-white/95 active:bg-gray-50 ${isRouteSheetCollapsed ? 'px-4 pt-2 pb-2' : 'px-4 pt-3 pb-3 border-b border-gray-100'}`}
+            aria-label={isRouteSheetCollapsed ? '경로 패널 펼치기' : '경로 패널 접기'}
+          >
+            <div className={`flex justify-center ${isRouteSheetCollapsed ? '' : 'mb-2'}`}>
+              <div className="w-10 h-1 rounded-full bg-gray-300" />
+            </div>
+            {!isRouteSheetCollapsed && (
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0 text-left">
+                  <div className="text-[11px] font-bold text-gray-400">현재 경로 유지</div>
+                  <div className="text-sm font-black text-gray-900 truncate">{routeSheetPeekTitle}</div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="text-right">
+                    <div className="text-[11px] font-semibold text-gray-400">{routeSheetPeekMeta}</div>
+                    <div className="text-xs font-bold text-tmap-blue">아래로 밀어 접기</div>
+                  </div>
+                  <svg
+                    className="w-5 h-5 text-gray-400 transition-transform"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7-7-7 7" />
+                  </svg>
+                </div>
+              </div>
+            )}
+          </button>
+
           <div className="px-4 pt-3 pb-2 border-b border-gray-100">
             <div className="text-[11px] font-bold text-gray-400 mb-2">현재 경로 기준</div>
             <div className="flex gap-2">
@@ -671,7 +1022,9 @@ function CameraReportDialog({ camera, cameraReports, onReport, onClose }) {
           <span className="text-2xl">📷</span>
           <div>
             <div className="text-base font-black text-gray-900">{camera.label ?? '카메라'}</div>
-            <div className="text-xs text-gray-400">제한 {camera.speedLimit}km/h</div>
+            <div className="text-xs text-gray-400">
+              {Number.isFinite(Number(camera.speedLimit)) && Number(camera.speedLimit) > 0 ? `제한 ${camera.speedLimit}km/h` : '제한속도 정보 없음'}
+            </div>
           </div>
         </div>
 

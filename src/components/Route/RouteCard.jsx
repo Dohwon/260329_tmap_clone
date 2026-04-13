@@ -10,6 +10,18 @@ export function formatEta(minutes) {
   return m > 0 ? `${h}시간 ${m}분` : `${h}시간`
 }
 
+function formatRouteSpeedMetric(route) {
+  const maxSpeed = Number(route.maxSpeedLimit)
+  const avgSpeed = Number(route.averageSpeed)
+  const hasMax = Number.isFinite(maxSpeed) && maxSpeed > 0
+  const hasAvg = Number.isFinite(avgSpeed) && avgSpeed > 0
+
+  if (hasMax && hasAvg) return `${maxSpeed}/${avgSpeed}`
+  if (hasAvg) return `--/${avgSpeed}`
+  if (hasMax) return `${maxSpeed}/--`
+  return '실값없음'
+}
+
 export default function RouteCard({ route, isSelected, onClick }) {
   const congestion = CONGESTION_INFO[route.congestionScore]
   const { setRoutePanelMode, setSelectedRouteId } = useAppStore()
@@ -112,7 +124,7 @@ export default function RouteCard({ route, isSelected, onClick }) {
         <MetricBadge icon="🔀" value={route.mergeCount} label="합류" />
         <MetricBadge icon="📷" value={route.fixedCameraCount} label="고정" color={route.fixedCameraCount > 3 ? 'red' : 'gray'} />
         <MetricBadge icon="🚧" value={route.sectionCameraCount} label="구간" color={route.sectionCameraCount > 0 ? 'orange' : 'gray'} />
-        <MetricBadge icon="⚡" value={`${route.maxSpeedLimit}/${route.averageSpeed}`} label="최고/평균" />
+        <MetricBadge icon="⚡" value={formatRouteSpeedMetric(route)} label="최고/평균" />
       </div>
 
       {/* 구간단속 있을 때 */}

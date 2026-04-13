@@ -155,7 +155,7 @@ export default function MergeOptionsSheet({ onClose }) {
                     />
                     <MiniStat
                       label="제한속도"
-                      value={`${opt.dominantSpeedLimit}`}
+                      value={Number.isFinite(Number(opt.dominantSpeedLimit)) && Number(opt.dominantSpeedLimit) > 0 ? `${opt.dominantSpeedLimit}` : '--'}
                       unit="km/h"
                       color="#3A3A3C"
                     />
