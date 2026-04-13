@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import useAppStore from '../../store/appStore'
-import { searchInstantPlaceCandidates, searchPOI } from '../../services/tmapService'
+import { buildRestaurantRatingKey, getDiscountedFuelPrice, searchInstantPlaceCandidates, searchPOI } from '../../services/tmapService'
 
 const QUICK_CATEGORIES = [
   { icon: '⛽', label: '주유소' },
@@ -16,6 +16,7 @@ export default function SearchSheet({ onClose, embedded = false }) {
   const [results, setResults] = useState([])
   const [isLoading, setIsLoading] = useState(false)
   const [pendingSelection, setPendingSelection] = useState(null)
+  const [restaurantSelection, setRestaurantSelection] = useState(null)
   const debounceRef = useRef(null)
   const isComposingRef = useRef(false)
   const requestIdRef = useRef(0)
@@ -39,6 +40,10 @@ export default function SearchSheet({ onClose, embedded = false }) {
     searchMode,
     isLoadingNearby,
     setActiveTab,
+    restaurantRatings,
+    stationaryVisitState,
+    rateRestaurant,
+    settings,
   } = useAppStore()
   const activeRoute = useMemo(
     () => routes.find((route) => route.id === selectedRouteId) ?? routes[0] ?? null,
@@ -48,17 +53,26 @@ export default function SearchSheet({ onClose, embedded = false }) {
 
   const closeSheet = () => {
     setPendingSelection(null)
+    setRestaurantSelection(null)
     if (onClose) onClose()
     else setActiveTab('home')
   }
 
-  const handleSelect = (nextDestination) => {
+  const performSelect = (nextDestination) => {
     if (isNavigating) {
       setPendingSelection(nextDestination)
       return
     }
     searchRoute(nextDestination)
     closeSheet()
+  }
+
+  const handleSelect = (nextDestination) => {
+    if (isRestaurantDestination(nextDestination)) {
+      setRestaurantSelection(nextDestination)
+      return
+    }
+    performSelect(nextDestination)
   }
 
   useEffect(() => {
@@ -87,6 +101,7 @@ export default function SearchSheet({ onClose, embedded = false }) {
       try {
         const pois = await searchPOI(query, userLocation?.lat, userLocation?.lng, {
           routePolyline: activeRoutePolyline,
+          fuelSettings: settings,
         })
         if (requestIdRef.current !== requestId) return
         setResults(pois)
@@ -99,7 +114,7 @@ export default function SearchSheet({ onClose, embedded = false }) {
     }, 120)
 
     return () => clearTimeout(debounceRef.current)
-  }, [query, userLocation?.lat, userLocation?.lng])
+  }, [activeRoutePolyline, query, userLocation?.lat, userLocation?.lng])
 
   const showNearby = !query.trim() && searchMode === 'nearby'
   const showRecent = !query.trim() && (searchMode === 'recent' || recentSearches.length > 0)
@@ -107,21 +122,21 @@ export default function SearchSheet({ onClose, embedded = false }) {
   const nearbyFuelSummary = useMemo(() => {
     if (selectedNearbyCategory !== '주유소' || nearbyPlaces.length === 0) return null
     return {
-      nearbyLowestPoi: [...nearbyPlaces].sort((a, b) => (a.fuelPrice ?? Infinity) - (b.fuelPrice ?? Infinity))[0] ?? null,
+      nearbyLowestPoi: [...nearbyPlaces].sort((a, b) => getDiscountedFuelPrice(a, settings) - getDiscountedFuelPrice(b, settings))[0] ?? null,
       routeLowestPoi: nearbyPlaces
         .filter((poi) => poi.isRouteCorridor)
-        .sort((a, b) => (a.fuelPrice ?? Infinity) - (b.fuelPrice ?? Infinity))[0] ?? null,
+        .sort((a, b) => getDiscountedFuelPrice(a, settings) - getDiscountedFuelPrice(b, settings))[0] ?? null,
     }
-  }, [nearbyPlaces, selectedNearbyCategory])
+  }, [nearbyPlaces, selectedNearbyCategory, settings])
   const fuelSearchSummary = useMemo(() => {
     if (!isFuelSearch) return null
     return {
-      nearbyLowestPoi: [...results].sort((a, b) => (a.fuelPrice ?? Infinity) - (b.fuelPrice ?? Infinity))[0] ?? null,
+      nearbyLowestPoi: [...results].sort((a, b) => getDiscountedFuelPrice(a, settings) - getDiscountedFuelPrice(b, settings))[0] ?? null,
       routeLowestPoi: results
         .filter((poi) => poi.isRouteCorridor)
-        .sort((a, b) => (a.fuelPrice ?? Infinity) - (b.fuelPrice ?? Infinity))[0] ?? null,
+        .sort((a, b) => getDiscountedFuelPrice(a, settings) - getDiscountedFuelPrice(b, settings))[0] ?? null,
     }
-  }, [isFuelSearch, results])
+  }, [isFuelSearch, results, settings])
   const containerClass = embedded
     ? 'absolute inset-x-0 top-0 bottom-16 z-20 bg-white flex flex-col'
     : 'absolute inset-0 z-30 bg-white flex flex-col'
@@ -133,6 +148,14 @@ export default function SearchSheet({ onClose, embedded = false }) {
       address: poi.address,
     })
   }
+
+  const selectedRestaurantRating = restaurantSelection
+    ? restaurantRatings[restaurantSelection.restaurantRatingKey ?? buildRestaurantRatingKey(restaurantSelection)] ?? null
+    : null
+  const restaurantRatingEligibility = useMemo(
+    () => getRestaurantRatingEligibility(restaurantSelection, userLocation, stationaryVisitState),
+    [restaurantSelection, stationaryVisitState, userLocation]
+  )
 
   return (
     <div className={containerClass}>
@@ -189,8 +212,8 @@ export default function SearchSheet({ onClose, embedded = false }) {
                     >
                       <div className="text-[11px] font-bold text-orange-500">근방 최저</div>
                       <div className="text-sm font-black text-gray-900 mt-0.5">
-                        {fuelSearchSummary.nearbyLowestPoi?.fuelPrice != null
-                          ? `${fuelSearchSummary.nearbyLowestPoi.fuelPrice.toLocaleString()}원/L`
+                        {fuelSearchSummary.nearbyLowestPoi?.discountedFuelPrice != null
+                          ? `${fuelSearchSummary.nearbyLowestPoi.discountedFuelPrice.toLocaleString()}원/L`
                           : '--'}
                       </div>
                       <div className="text-[11px] text-gray-500 mt-1 truncate">
@@ -204,8 +227,8 @@ export default function SearchSheet({ onClose, embedded = false }) {
                     >
                       <div className="text-[11px] font-bold text-blue-500">경로상 최저</div>
                       <div className="text-sm font-black text-gray-900 mt-0.5">
-                        {fuelSearchSummary.routeLowestPoi?.fuelPrice != null
-                          ? `${fuelSearchSummary.routeLowestPoi.fuelPrice.toLocaleString()}원/L`
+                        {fuelSearchSummary.routeLowestPoi?.discountedFuelPrice != null
+                          ? `${fuelSearchSummary.routeLowestPoi.discountedFuelPrice.toLocaleString()}원/L`
                           : '--'}
                       </div>
                       <div className="text-[11px] text-gray-500 mt-1 truncate">
@@ -297,8 +320,8 @@ export default function SearchSheet({ onClose, embedded = false }) {
                         >
                           <div className="text-[11px] font-bold text-blue-500">경로상 최저</div>
                           <div className="text-sm font-black text-gray-900 mt-0.5">
-                            {nearbyFuelSummary.routeLowestPoi?.fuelPrice != null
-                              ? `${nearbyFuelSummary.routeLowestPoi.fuelPrice.toLocaleString()}원/L`
+                            {nearbyFuelSummary.routeLowestPoi?.discountedFuelPrice != null
+                              ? `${nearbyFuelSummary.routeLowestPoi.discountedFuelPrice.toLocaleString()}원/L`
                               : '--'}
                           </div>
                           <div className="text-[11px] text-gray-500 mt-1 truncate">
@@ -312,8 +335,8 @@ export default function SearchSheet({ onClose, embedded = false }) {
                         >
                           <div className="text-[11px] font-bold text-orange-500">반경내 최저</div>
                           <div className="text-sm font-black text-gray-900 mt-0.5">
-                            {nearbyFuelSummary.nearbyLowestPoi?.fuelPrice != null
-                              ? `${nearbyFuelSummary.nearbyLowestPoi.fuelPrice.toLocaleString()}원/L`
+                            {nearbyFuelSummary.nearbyLowestPoi?.discountedFuelPrice != null
+                              ? `${nearbyFuelSummary.nearbyLowestPoi.discountedFuelPrice.toLocaleString()}원/L`
                               : '--'}
                           </div>
                           <div className="text-[11px] text-gray-500 mt-1 truncate">
@@ -416,8 +439,93 @@ export default function SearchSheet({ onClose, embedded = false }) {
           </div>
         </>
       )}
+
+      {restaurantSelection && (
+        <>
+          <div className="absolute inset-0 z-40 bg-black/35" onClick={() => setRestaurantSelection(null)} />
+          <RestaurantDetailSheet
+            restaurant={restaurantSelection}
+            isNavigating={isNavigating}
+            userRating={selectedRestaurantRating?.rating ?? null}
+            canRate={restaurantRatingEligibility.canRate}
+            canRateReason={restaurantRatingEligibility.reason}
+            onRate={(rating) => {
+              rateRestaurant({
+                placeKey: restaurantSelection.restaurantRatingKey ?? buildRestaurantRatingKey(restaurantSelection),
+                rating,
+                restaurant: restaurantSelection,
+              })
+            }}
+            onAddWaypoint={async () => {
+              addWaypoint({
+                id: `wp-restaurant-${restaurantSelection.lat}-${restaurantSelection.lng}`,
+                name: restaurantSelection.name,
+                lat: restaurantSelection.lat,
+                lng: restaurantSelection.lng,
+                address: restaurantSelection.address,
+              })
+              if (destination) await searchRoute(destination)
+              setRestaurantSelection(null)
+              closeSheet()
+            }}
+            onSetDestination={async () => {
+              if (isNavigating) clearWaypoints()
+              await searchRoute(restaurantSelection)
+              setRestaurantSelection(null)
+              closeSheet()
+            }}
+            onClose={() => setRestaurantSelection(null)}
+          />
+        </>
+      )}
     </div>
   )
+}
+
+function isRestaurantDestination(destination = {}) {
+  return Boolean(destination?.restaurantRatingKey)
+    || [destination?.name, destination?.category, destination?.address].filter(Boolean).join(' ').match(/음식점|맛집|식당|한식|중식|일식|양식|분식|국밥|냉면|칼국수|파스타|치킨|피자|햄버거|고기집|기사식당/i)
+}
+
+function formatGoogleRating(restaurant = {}) {
+  const rating = Number(restaurant?.googleRating)
+  if (!Number.isFinite(rating) || rating <= 0) return '별점 정보 없음'
+  const reviewCount = Number(restaurant?.googleUserRatingCount)
+  return `Google ${rating.toFixed(1)}${Number.isFinite(reviewCount) && reviewCount > 0 ? ` · 리뷰 ${reviewCount.toLocaleString()}` : ''}`
+}
+
+function getRestaurantRatingEligibility(restaurant, userLocation, stationaryVisitState) {
+  if (!restaurant || !userLocation || !stationaryVisitState) {
+    return { canRate: false, reason: '현재 위치 체류 기록이 부족합니다.' }
+  }
+
+  const restaurantLat = Number(restaurant.lat)
+  const restaurantLng = Number(restaurant.lng)
+  if (!Number.isFinite(restaurantLat) || !Number.isFinite(restaurantLng)) {
+    return { canRate: false, reason: '위치 정보가 없어 평점을 남길 수 없습니다.' }
+  }
+
+  const distanceKm = haversineKm(userLocation.lat, userLocation.lng, restaurantLat, restaurantLng)
+  if (distanceKm > 0.25) {
+    return { canRate: false, reason: '해당 음식점 반경 250m 안에서 20분 이상 머물러야 합니다.' }
+  }
+
+  const dwellMinutes = Number(stationaryVisitState?.dwellMinutes ?? 0)
+  if (dwellMinutes < 20) {
+    return { canRate: false, reason: `현재 구역 체류 ${dwellMinutes.toFixed(0)}분 · 20분 이상 머물러야 합니다.` }
+  }
+
+  return { canRate: true, reason: `현재 구역 체류 ${dwellMinutes.toFixed(0)}분` }
+}
+
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371
+  const dLat = ((lat2 - lat1) * Math.PI) / 180
+  const dLng = ((lng2 - lng1) * Math.PI) / 180
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(a))
 }
 
 function SearchResultRow({ destination, onSelect }) {
@@ -440,6 +548,11 @@ function SearchResultRow({ destination, onSelect }) {
             <span className="text-[11px] font-bold text-orange-600">
               {destination.fuelLabel ?? '휘발유'} {destination.fuelPrice.toLocaleString()}원/L
             </span>
+            {destination.discountedFuelPrice != null && destination.fuelBenefitApplied ? (
+              <span className="text-[11px] font-bold text-blue-600">
+                할인 적용 {destination.discountedFuelPrice.toLocaleString()}원/L
+              </span>
+            ) : null}
             {destination.isRouteCorridor ? (
               <span className="px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-bold">
                 경로상
@@ -447,7 +560,9 @@ function SearchResultRow({ destination, onSelect }) {
             ) : null}
             {destination.priceSource ? (
               <span className="text-[10px] text-gray-400">
-                {destination.priceSource === 'opinet' ? '오피넷 실유가' : '유가 정보 없음'}
+                {destination.priceSource === 'opinet'
+                  ? destination.fuelBenefitLabel ?? '오피넷 실유가'
+                  : '유가 정보 없음'}
               </span>
             ) : null}
           </div>
@@ -466,10 +581,121 @@ function SearchResultRow({ destination, onSelect }) {
             </span>
           </div>
         ) : null}
+        {destination.todayHoursLabel || destination.saturdayOpen || destination.sundayOpen ? (
+          <div className="mt-1 flex items-center gap-2 flex-wrap">
+            <span className={`text-[11px] font-bold ${destination.isOpenNow ? 'text-emerald-600' : 'text-gray-500'}`}>
+              {destination.isOpenNow ? '영업중' : '종료'}
+            </span>
+            {destination.todayHoursLabel ? (
+              <span className="text-[11px] text-gray-600">오늘 {destination.todayHoursLabel}</span>
+            ) : null}
+            {destination.saturdayOpen ? (
+              <span className="px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-bold">
+                토 진료
+              </span>
+            ) : null}
+            {destination.sundayOpen ? (
+              <span className="px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 text-[10px] font-bold">
+                일 진료
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+        {isRestaurantDestination(destination) ? (
+          <div className="mt-1 flex items-center gap-2 flex-wrap">
+            <span className={`text-[11px] font-bold ${destination.googleRating != null ? 'text-amber-600' : 'text-gray-500'}`}>
+              {formatGoogleRating(destination)}
+            </span>
+            {typeof destination.googleOpenNow === 'boolean' ? (
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                destination.googleOpenNow ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-600'
+              }`}>
+                {destination.googleOpenNow ? '영업중' : '영업종료'}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
       <svg className="w-4 h-4 text-gray-300 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
       </svg>
     </button>
+  )
+}
+
+function RestaurantDetailSheet({
+  restaurant,
+  isNavigating,
+  userRating,
+  canRate,
+  canRateReason,
+  onRate,
+  onAddWaypoint,
+  onSetDestination,
+  onClose,
+}) {
+  return (
+    <div className="absolute left-4 right-4 bottom-6 z-50 rounded-3xl bg-white shadow-2xl border border-gray-100 p-5">
+      <div className="text-base font-black text-gray-900">{restaurant.name}</div>
+      <div className="text-xs text-gray-500 mt-1">{restaurant.address}</div>
+      <div className="mt-3 rounded-2xl bg-amber-50 px-3 py-3">
+        <div className="text-[11px] font-bold text-amber-600">구글 평점</div>
+        <div className="text-sm font-black text-gray-900 mt-1">{formatGoogleRating(restaurant)}</div>
+        <div className="text-[11px] text-gray-500 mt-1">
+          {typeof restaurant.googleOpenNow === 'boolean'
+            ? restaurant.googleOpenNow ? '현재 영업중' : '현재 영업종료'
+            : '영업 정보 없음'}
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-2xl bg-gray-50 px-3 py-3">
+        <div className="text-[11px] font-bold text-gray-500">내 평점</div>
+        <div className="text-sm font-black text-gray-900 mt-1">
+          {userRating != null ? `${Number(userRating).toFixed(1)}점` : '아직 없음'}
+        </div>
+        <div className={`text-[11px] mt-1 ${canRate ? 'text-emerald-600' : 'text-gray-500'}`}>
+          {canRateReason}
+        </div>
+        <div className="grid grid-cols-5 gap-2 mt-3">
+          {[1, 2, 3, 4, 5].map((score) => (
+            <button
+              key={score}
+              onClick={() => canRate && onRate(score)}
+              disabled={!canRate}
+              className={`rounded-xl py-2 text-xs font-bold border ${
+                userRating === score
+                  ? 'bg-tmap-blue text-white border-tmap-blue'
+                  : 'bg-white text-gray-600 border-gray-200'
+              } disabled:opacity-40`}
+            >
+              {score}.0
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className={`grid gap-3 mt-4 ${isNavigating ? 'grid-cols-2' : 'grid-cols-1'}`}>
+        {isNavigating ? (
+          <button
+            onClick={onAddWaypoint}
+            className="rounded-2xl bg-tmap-blue text-white py-3 text-sm font-bold"
+          >
+            경유지 추가
+          </button>
+        ) : null}
+        <button
+          onClick={onSetDestination}
+          className="rounded-2xl bg-gray-900 text-white py-3 text-sm font-bold"
+        >
+          {isNavigating ? '목적지 변경' : '길안내 시작'}
+        </button>
+      </div>
+      <button
+        onClick={onClose}
+        className="w-full mt-3 rounded-2xl bg-gray-100 text-gray-600 py-3 text-sm font-semibold"
+      >
+        닫기
+      </button>
+    </div>
   )
 }

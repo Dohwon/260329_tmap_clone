@@ -14,6 +14,7 @@ const STORAGE_KEYS = {
   savedRoutes: 'tmap_saved_routes_v1',
   cameraReports: 'tmap_camera_reports_v1',
   settings: 'tmap_settings_v1',
+  restaurantRatings: 'tmap_restaurant_ratings_v1',
 }
 
 const DEFAULT_FAVORITES = [
@@ -28,6 +29,9 @@ const DEFAULT_SETTINGS = {
   mapTheme: 'auto',
   showTrafficOnMap: false,
   safetyModeEnabled: false,
+  fuelBenefitEnabled: true,
+  fuelBenefitBrand: 'SK에너지',
+  fuelBenefitPercent: 5,
 }
 
 const LEGACY_FAVORITE_ADDRESSES = new Set(['서울시 강남구 테헤란로', '서울시 중구 을지로'])
@@ -975,6 +979,32 @@ const useAppStore = create((set, get) => ({
         heading: Number.isFinite(Number(location.heading)) ? Number(location.heading) : null,
         capturedAt: sampleCapturedAt,
       }
+      const currentStationary = state.stationaryVisitState
+      const currentSpeedKmh = Number.isFinite(Number(location.speedKmh)) ? Number(location.speedKmh) : 0
+      const isSlowEnough = currentSpeedKmh <= 8
+      const nextStationary = !isSlowEnough
+        ? null
+        : !currentStationary
+          ? {
+              anchorLat: location.lat,
+              anchorLng: location.lng,
+              startedAt: sampleCapturedAt,
+              lastSeenAt: sampleCapturedAt,
+              dwellMinutes: 0,
+            }
+          : haversineKm(currentStationary.anchorLat, currentStationary.anchorLng, location.lat, location.lng) <= 0.12
+            ? {
+                ...currentStationary,
+                lastSeenAt: sampleCapturedAt,
+                dwellMinutes: Number(Math.max(0, (Date.parse(sampleCapturedAt) - Date.parse(currentStationary.startedAt)) / 60000).toFixed(1)),
+              }
+            : {
+                anchorLat: location.lat,
+                anchorLng: location.lng,
+                startedAt: sampleCapturedAt,
+                lastSeenAt: sampleCapturedAt,
+                dwellMinutes: 0,
+              }
 
       return {
         userLocation: location,
@@ -985,6 +1015,7 @@ const useAppStore = create((set, get) => ({
         driveSampleHistory: state.isNavigating && shouldAppendDriveSample
           ? [...state.driveSampleHistory.slice(-1499), nextDriveSample]
           : state.driveSampleHistory,
+        stationaryVisitState: nextStationary,
       }
     }),
   setUserAddress: (userAddress) => set({ userAddress }),
@@ -1107,6 +1138,28 @@ const useAppStore = create((set, get) => ({
 
   // ── 경로 저장 ──────────────────────────────────────
   savedRoutes: readStorage(STORAGE_KEYS.savedRoutes, []),
+  restaurantRatings: readStorage(STORAGE_KEYS.restaurantRatings, {}),
+  stationaryVisitState: null,
+  rateRestaurant: ({ placeKey, rating, restaurant }) => {
+    const normalizedRating = Number(rating)
+    if (!placeKey || !Number.isFinite(normalizedRating) || normalizedRating < 1 || normalizedRating > 5) return
+    const entry = {
+      placeKey,
+      rating: normalizedRating,
+      ratedAt: new Date().toISOString(),
+      name: restaurant?.name ?? '',
+      address: restaurant?.address ?? '',
+      lat: Number.isFinite(Number(restaurant?.lat)) ? Number(restaurant.lat) : null,
+      lng: Number.isFinite(Number(restaurant?.lng)) ? Number(restaurant.lng) : null,
+      googlePlaceId: restaurant?.googlePlaceId ?? null,
+    }
+    const next = {
+      ...get().restaurantRatings,
+      [placeKey]: entry,
+    }
+    writeStorage(STORAGE_KEYS.restaurantRatings, next)
+    set({ restaurantRatings: next })
+  },
   saveRoute: ({ route, destination, name, forceNoMovement = false }) => {
     const actualDrivePath = get().drivePathHistory
     const actualDriveSamples = get().driveSampleHistory
@@ -1447,6 +1500,7 @@ const useAppStore = create((set, get) => ({
     try {
       const nearbyPlaces = await searchNearbyPOIs(category, origin.lat, origin.lng, {
         routePolyline: selectedRoute?.polyline ?? [],
+        fuelSettings: get().settings,
       })
       set({ nearbyPlaces, isLoadingNearby: false })
     } catch {

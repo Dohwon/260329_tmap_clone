@@ -83,6 +83,49 @@ const CATEGORY_META = {
 
 const FUEL_SEARCH_PATTERN = /(주유소|충전소|휘발유|경유|LPG|가스충전|gs칼텍스|sk에너지|s-oil|현대오일뱅크|알뜰주유소)/i
 const PARKING_SEARCH_PATTERN = /(주차장|공영주차장|민영주차장|환승주차장|타워주차장|공영|민영|주차타워)/i
+const HOSPITAL_SEARCH_PATTERN = /(병원|의원|한의원|치과|클리닉|응급의료센터|응급실|내과|소아과|정형외과|이비인후과|외과|피부과|안과|산부인과|비뇨의학과)/i
+const RESTAURANT_SEARCH_PATTERN = /(음식점|맛집|식당|한식|중식|일식|양식|분식|국밥|냉면|칼국수|파스타|치킨|피자|햄버거|고기집|기사식당)/i
+
+function getFuelBenefitConfig(settings = {}) {
+  return {
+    enabled: Boolean(settings?.fuelBenefitEnabled),
+    brand: String(settings?.fuelBenefitBrand ?? '').trim(),
+    percent: Number(settings?.fuelBenefitPercent ?? 0),
+  }
+}
+
+export function getDiscountedFuelPrice(item = {}, settings = {}) {
+  const rawPrice = Number(item?.fuelPrice)
+  if (!Number.isFinite(rawPrice) || rawPrice <= 0) return null
+  const benefit = getFuelBenefitConfig(settings)
+  if (!benefit.enabled || !benefit.brand || !Number.isFinite(benefit.percent) || benefit.percent <= 0) return rawPrice
+  const brandText = String(item?.brand ?? item?.name ?? '')
+  if (!brandText.includes(benefit.brand)) return rawPrice
+  return Math.round(rawPrice * (1 - (benefit.percent / 100)))
+}
+
+function applyFuelBenefitMeta(item = {}, settings = {}) {
+  const benefit = getFuelBenefitConfig(settings)
+  const discountedFuelPrice = getDiscountedFuelPrice(item, settings)
+  const benefitApplied = Boolean(
+    discountedFuelPrice != null &&
+    Number(item?.fuelPrice) > 0 &&
+    discountedFuelPrice < Number(item?.fuelPrice)
+  )
+  return {
+    ...item,
+    discountedFuelPrice,
+    fuelBenefitApplied: benefitApplied,
+    fuelBenefitLabel: benefitApplied ? `${benefit.brand} ${benefit.percent}% 할인 적용` : null,
+  }
+}
+
+function getFuelSortPrice(item = {}, settings = {}) {
+  const discounted = getDiscountedFuelPrice(item, settings)
+  if (Number.isFinite(discounted) && discounted > 0) return discounted
+  const rawPrice = Number(item?.fuelPrice)
+  return Number.isFinite(rawPrice) && rawPrice > 0 ? rawPrice : Infinity
+}
 
 function normalizeSearchText(text) {
   return String(text ?? '').toLowerCase().replace(/[\s\-_/.,]/g, '')
@@ -96,6 +139,39 @@ function haversineKm(lat1, lng1, lat2, lng2) {
     Math.sin(dLat / 2) ** 2 +
     Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2
   return 2 * R * Math.asin(Math.sqrt(a))
+}
+
+function getNearestPolylinePointIndex(lat, lng, polyline = []) {
+  if (!Array.isArray(polyline) || polyline.length === 0) return { index: -1, distanceKm: Infinity }
+  let bestIndex = -1
+  let bestDistance = Infinity
+  for (let index = 0; index < polyline.length; index += 1) {
+    const point = polyline[index]
+    const distance = haversineKm(lat, lng, point[0], point[1])
+    if (distance < bestDistance) {
+      bestDistance = distance
+      bestIndex = index
+    }
+  }
+  return { index: bestIndex, distanceKm: bestDistance }
+}
+
+function getPolylineDistanceBetweenIndices(polyline = [], fromIndex = 0, toIndex = 0) {
+  if (!Array.isArray(polyline) || polyline.length < 2 || fromIndex < 0 || toIndex < 0 || toIndex <= fromIndex) return 0
+  let total = 0
+  for (let index = fromIndex; index < Math.min(polyline.length - 1, toIndex); index += 1) {
+    const current = polyline[index]
+    const next = polyline[index + 1]
+    total += haversineKm(current[0], current[1], next[0], next[1])
+  }
+  return Number(total.toFixed(1))
+}
+
+function normalizeFuelText(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/주식회사|㈜|\(주\)|\s+/g, '')
+    .replace(/[-_/.,]/g, '')
 }
 
 function buildRoadSearchPlaces() {
@@ -215,6 +291,41 @@ function isFuelSearchKeyword(keyword = '') {
 
 function isParkingSearchKeyword(keyword = '') {
   return PARKING_SEARCH_PATTERN.test(String(keyword ?? '').trim())
+}
+
+function isHospitalSearchKeyword(keyword = '') {
+  return HOSPITAL_SEARCH_PATTERN.test(String(keyword ?? '').trim())
+}
+
+function isHospitalPoi(item = {}) {
+  return HOSPITAL_SEARCH_PATTERN.test([item?.name, item?.category, item?.address].filter(Boolean).join(' '))
+}
+
+function isRestaurantSearchKeyword(keyword = '') {
+  return RESTAURANT_SEARCH_PATTERN.test(String(keyword ?? '').trim())
+}
+
+export function buildRestaurantRatingKey(item = {}) {
+  const lat = Number(item?.lat)
+  const lng = Number(item?.lng)
+  const base = item?.googlePlaceId || item?.id || item?.name || 'restaurant'
+  const latKey = Number.isFinite(lat) ? lat.toFixed(5) : 'na'
+  const lngKey = Number.isFinite(lng) ? lng.toFixed(5) : 'na'
+  return `restaurant:${base}:${latKey}:${lngKey}`
+}
+
+function isRestaurantPoi(item = {}) {
+  return RESTAURANT_SEARCH_PATTERN.test([item?.name, item?.category, item?.address].filter(Boolean).join(' '))
+}
+
+function scoreFuelKeywordMatch(item, keyword = '') {
+  const compactKeyword = normalizeFuelText(keyword)
+  const haystack = normalizeFuelText([item?.name, item?.brand, item?.address, item?.category].filter(Boolean).join(' '))
+  if (!compactKeyword) return 0
+  if (haystack === compactKeyword) return 100
+  if (haystack.includes(compactKeyword)) return 70
+  if (compactKeyword.includes(haystack)) return 40
+  return FUEL_SEARCH_PATTERN.test(keyword) ? 10 : 0
 }
 
 function mapRoadType(props = {}) {
@@ -365,13 +476,13 @@ function distanceKmToPolyline(lat, lng, polyline = []) {
   return Number.isFinite(best) ? Number(best.toFixed(1)) : null
 }
 
-function enrichFuelStops(results, routePolyline = []) {
+function enrichFuelStops(results, routePolyline = [], settings = {}) {
   const sorted = results.map((result) => {
     const fuelPrice = Number.isFinite(result.fuelPrice) && result.fuelPrice > 0
       ? result.fuelPrice
       : null
     const routeDistanceKm = distanceKmToPolyline(result.lat, result.lng, routePolyline)
-    return {
+    return applyFuelBenefitMeta({
       ...result,
       fuelPrice,
       fuelLabel: result.fuelLabel ?? '휘발유',
@@ -380,19 +491,76 @@ function enrichFuelStops(results, routePolyline = []) {
         : 'unknown',
       routeDistanceKm,
       isRouteCorridor: routeDistanceKm != null ? routeDistanceKm <= 1.5 : false,
-    }
+    }, settings)
   })
   const routeLowest = sorted
     .filter((item) => item.isRouteCorridor && Number.isFinite(item.fuelPrice))
-    .sort((a, b) => a.fuelPrice - b.fuelPrice)[0] ?? null
+    .sort((a, b) => getFuelSortPrice(a, settings) - getFuelSortPrice(b, settings))[0] ?? null
   const nearbyLowest = [...sorted]
     .filter((item) => Number.isFinite(item.fuelPrice))
-    .sort((a, b) => a.fuelPrice - b.fuelPrice)[0] ?? null
+    .sort((a, b) => getFuelSortPrice(a, settings) - getFuelSortPrice(b, settings))[0] ?? null
   return sorted.map((item) => ({
     ...item,
-    nearbyLowestFuelPrice: nearbyLowest?.fuelPrice ?? null,
-    routeLowestFuelPrice: routeLowest?.fuelPrice ?? nearbyLowest?.fuelPrice ?? null,
+    nearbyLowestFuelPrice: nearbyLowest?.discountedFuelPrice ?? nearbyLowest?.fuelPrice ?? null,
+    routeLowestFuelPrice: routeLowest?.discountedFuelPrice ?? nearbyLowest?.discountedFuelPrice ?? routeLowest?.fuelPrice ?? nearbyLowest?.fuelPrice ?? null,
   }))
+}
+
+function mergeFuelSearchResults(baseResults = [], liveFuelResults = [], routePolyline = [], keyword = '', nearLat = null, nearLng = null, settings = {}) {
+  const liveFuel = [...liveFuelResults]
+  const merged = baseResults.map((result) => {
+    const matched = liveFuel.find((station) => {
+      const distanceKm = haversineKm(result.lat, result.lng, station.lat, station.lng)
+      const sameName = normalizeFuelText(result.name).includes(normalizeFuelText(station.name))
+        || normalizeFuelText(station.name).includes(normalizeFuelText(result.name))
+      return distanceKm <= 0.45 || sameName
+    }) ?? null
+
+    if (!matched) {
+      return {
+        ...result,
+        fuelPrice: null,
+        fuelLabel: '휘발유',
+        priceSource: 'unknown',
+      }
+    }
+
+    return {
+      ...result,
+      brand: matched.brand ?? result.brand,
+      address: result.address || matched.address,
+      lat: matched.lat ?? result.lat,
+      lng: matched.lng ?? result.lng,
+      fuelPrice: matched.fuelPrice,
+      fuelLabel: matched.fuelLabel ?? '휘발유',
+      priceSource: matched.priceSource ?? 'opinet',
+      distanceKm: nearLat != null && nearLng != null
+        ? Number(haversineKm(nearLat, nearLng, matched.lat, matched.lng).toFixed(1))
+        : matched.distanceKm ?? result.distanceKm,
+    }
+  })
+
+  const unmatchedLiveFuel = liveFuel.filter((station) =>
+    !merged.some((result) => haversineKm(result.lat, result.lng, station.lat, station.lng) <= 0.2)
+  )
+
+  const combined = enrichFuelStops(
+    [...merged, ...unmatchedLiveFuel].filter((item, index, all) =>
+      all.findIndex((other) => haversineKm(other.lat, other.lng, item.lat, item.lng) <= 0.05) === index
+    ),
+    routePolyline,
+    settings
+  )
+
+  return combined.sort((a, b) => {
+    const keywordDiff = scoreFuelKeywordMatch(b, keyword) - scoreFuelKeywordMatch(a, keyword)
+    if (keywordDiff !== 0) return keywordDiff
+    const priceDiff = getFuelSortPrice(a, settings) - getFuelSortPrice(b, settings)
+    if (priceDiff !== 0) return priceDiff
+    const routeDiff = (a.routeDistanceKm ?? Infinity) - (b.routeDistanceKm ?? Infinity)
+    if (routeDiff !== 0) return routeDiff
+    return (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity)
+  })
 }
 
 function estimateParkingFee(poi, index = 0) {
@@ -429,21 +597,268 @@ function enrichParkingPlaces(results) {
   }))
 }
 
-async function fetchNearbyFuelFromApi(lat, lng, routePolyline = []) {
+async function fetchHospitalHoursMeta(results = []) {
+  const targets = results
+    .filter((item) => isHospitalPoi(item))
+    .slice(0, 8)
+    .map((item) => ({
+      id: item.id,
+      name: item.name,
+      address: item.address,
+      lat: item.lat,
+      lng: item.lng,
+    }))
+
+  if (targets.length === 0) return new Map()
+
+  const params = new URLSearchParams({
+    meta: 'hospitalHours',
+    items: JSON.stringify(targets),
+  })
+  const res = await fetch(`/api/meta/tmap-status?${params}`, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+    },
+  })
+
+  if (!res.ok) return new Map()
+  const json = await res.json().catch(() => ({}))
+  const items = Array.isArray(json?.items) ? json.items : []
+  return new Map(items.map((item) => [item.sourceId, item.hospital]).filter(([, hospital]) => Boolean(hospital)))
+}
+
+async function fetchRestaurantRatingsMeta(results = []) {
+  const targets = results
+    .filter((item) => isRestaurantPoi(item))
+    .slice(0, 12)
+    .map((item) => ({
+      id: item.id,
+      name: item.name,
+      address: item.address,
+      lat: item.lat,
+      lng: item.lng,
+    }))
+
+  if (targets.length === 0) return new Map()
+
+  const res = await fetch('/api/meta/tmap-status', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      meta: 'restaurantRatings',
+      items: targets,
+    }),
+  })
+
+  if (!res.ok) return new Map()
+  const json = await res.json().catch(() => ({}))
+  const items = Array.isArray(json?.items) ? json.items : []
+  return new Map(items.map((item) => [item.sourceId, item.restaurant]).filter(([, restaurant]) => Boolean(restaurant)))
+}
+
+async function enrichHospitalPlaces(results = []) {
+  const hospitalMap = await fetchHospitalHoursMeta(results).catch(() => new Map())
+  if (hospitalMap.size === 0) return results
+
+  return results.map((result) => {
+    const meta = hospitalMap.get(result.id)
+    if (!meta) return result
+    return {
+      ...result,
+      hospitalHoursSource: meta.source ?? 'public-medical-data',
+      isOpenNow: meta.isOpenNow,
+      todayHoursLabel: meta.todayHoursLabel,
+      saturdayOpen: meta.saturdayOpen,
+      sundayOpen: meta.sundayOpen,
+      dutyTel1: meta.dutyTel1,
+      dutyDivNam: meta.dutyDivNam,
+    }
+  })
+}
+
+function attachRouteCorridorMeta(results = [], routePolyline = [], corridorKm = 10) {
+  return results.map((result) => {
+    const routeDistanceKm = distanceKmToPolyline(result.lat, result.lng, routePolyline)
+    return {
+      ...result,
+      routeDistanceKm,
+      isRouteCorridor: routeDistanceKm != null ? routeDistanceKm <= corridorKm : false,
+    }
+  })
+}
+
+async function enrichRestaurantPlaces(results = [], routePolyline = []) {
+  const withKeys = attachRouteCorridorMeta(results, routePolyline, 10).map((result) => ({
+    ...result,
+    restaurantRatingKey: buildRestaurantRatingKey(result),
+  }))
+  const restaurantMap = await fetchRestaurantRatingsMeta(withKeys).catch(() => new Map())
+
+  return withKeys
+    .map((result) => {
+      const meta = restaurantMap.get(result.id)
+      if (!meta) {
+        return {
+          ...result,
+          googleRating: null,
+          googleUserRatingCount: null,
+          googleOpenNow: null,
+          googleMapsUri: null,
+          googleRatingSource: 'unavailable',
+        }
+      }
+      return {
+        ...result,
+        googlePlaceId: meta.placeId ?? null,
+        googleRating: Number.isFinite(Number(meta.rating)) ? Number(meta.rating) : null,
+        googleUserRatingCount: Number.isFinite(Number(meta.userRatingCount)) ? Number(meta.userRatingCount) : null,
+        googleOpenNow: typeof meta.openNow === 'boolean' ? meta.openNow : null,
+        googleMapsUri: meta.googleMapsUri ?? null,
+        googleRatingSource: meta.source ?? 'google-places',
+      }
+    })
+    .sort((a, b) => {
+      if (a.isRouteCorridor !== b.isRouteCorridor) return a.isRouteCorridor ? -1 : 1
+      const ratingDiff = (Number(b.googleRating) || -1) - (Number(a.googleRating) || -1)
+      if (ratingDiff !== 0) return ratingDiff
+      const reviewDiff = (Number(b.googleUserRatingCount) || -1) - (Number(a.googleUserRatingCount) || -1)
+      if (reviewDiff !== 0) return reviewDiff
+      const routeDiff = (a.routeDistanceKm ?? Infinity) - (b.routeDistanceKm ?? Infinity)
+      if (routeDiff !== 0) return routeDiff
+      return (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity)
+    })
+}
+
+async function fetchNearbyFuelFromApi(lat, lng, routePolyline = [], options = {}) {
   const params = new URLSearchParams({
     lat: String(lat),
     lng: String(lng),
-    radius: '6000',
-    productCode: 'B027',
-    limit: '8',
+    radius: String(options.radius ?? 5000),
+    productCode: String(options.productCode ?? 'B027'),
+    limit: String(options.limit ?? 8),
   })
+  if (options.keyword) params.set('keyword', String(options.keyword))
   const res = await fetch(`/api/fuel/nearby?${params}`, { headers: { Accept: 'application/json' } })
   if (!res.ok) {
     const errorBody = await res.json().catch(() => ({}))
     throw new Error(errorBody?.error?.message ?? errorBody?.error?.code ?? `HTTP ${res.status}`)
   }
   const json = await res.json()
-  return enrichFuelStops(json.items ?? [], routePolyline)
+  return enrichFuelStops(json.items ?? [], routePolyline, options.settings)
+}
+
+async function fetchFuelSearchResults(keyword, nearLat, nearLng, routePolyline = [], settings = {}) {
+  if (!Number.isFinite(nearLat) || !Number.isFinite(nearLng)) return []
+  const liveFuel = await fetchNearbyFuelFromApi(nearLat, nearLng, routePolyline, {
+    radius: 5000,
+    limit: 10,
+    keyword,
+    settings,
+  }).catch(() => [])
+
+  if (liveFuel.length === 0) return []
+  const ranked = [...liveFuel].sort((a, b) => {
+    const keywordDiff = scoreFuelKeywordMatch(b, keyword) - scoreFuelKeywordMatch(a, keyword)
+    if (keywordDiff !== 0) return keywordDiff
+    const priceDiff = getFuelSortPrice(a, settings) - getFuelSortPrice(b, settings)
+    if (priceDiff !== 0) return priceDiff
+    const routeDiff = (a.routeDistanceKm ?? Infinity) - (b.routeDistanceKm ?? Infinity)
+    if (routeDiff !== 0) return routeDiff
+    return (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity)
+  })
+  return ranked
+}
+
+async function fetchRestStopFuelPrices(stops = []) {
+  if (!Array.isArray(stops) || stops.length === 0) return []
+  const res = await fetch('/api/fuel/rest-prices', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      productCode: 'B027',
+      stops: stops.map((stop) => ({
+        id: stop.id,
+        name: stop.name,
+        lat: stop.lat,
+        lng: stop.lng,
+      })),
+    }),
+  })
+  if (!res.ok) return []
+  const json = await res.json().catch(() => ({}))
+  return Array.isArray(json?.items) ? json.items : []
+}
+
+function getUpcomingRouteRestStops(routePolyline = [], userLocation = null, limit = 2) {
+  if (!userLocation || !Array.isArray(routePolyline) || routePolyline.length < 2) return []
+  const currentProjection = getNearestPolylinePointIndex(userLocation.lat, userLocation.lng, routePolyline)
+  if (currentProjection.index < 0) return []
+
+  return HIGHWAYS.flatMap((road) =>
+    (road.restStops ?? []).map((stop) => {
+      const stopProjection = getNearestPolylinePointIndex(stop.coord[0], stop.coord[1], routePolyline)
+      if (stopProjection.index < 0) return null
+      if (stopProjection.distanceKm > 1.8) return null
+      if (stopProjection.index <= currentProjection.index + 2) return null
+      return {
+        id: stop.id,
+        name: stop.name,
+        roadName: road.name,
+        type: stop.type,
+        kmMarker: stop.km ?? null,
+        lat: stop.coord[0],
+        lng: stop.coord[1],
+        distanceFromCurrentKm: getPolylineDistanceBetweenIndices(routePolyline, currentProjection.index, stopProjection.index),
+      }
+    })
+  )
+    .filter(Boolean)
+    .sort((a, b) => a.distanceFromCurrentKm - b.distanceFromCurrentKm)
+    .slice(0, limit)
+}
+
+export async function fetchUpcomingFuelContext(routePolyline = [], userLocation = null, settings = {}) {
+  if (!userLocation || !Array.isArray(routePolyline) || routePolyline.length < 2) {
+    return { nextRouteFuel: null, nextRestFuelStops: [] }
+  }
+
+  const liveFuel = await fetchNearbyFuelFromApi(userLocation.lat, userLocation.lng, routePolyline, {
+    radius: 5000,
+    limit: 8,
+    settings,
+  }).catch(() => [])
+
+  const nextRouteFuel = liveFuel
+    .filter((item) => item.isRouteCorridor)
+    .sort((a, b) => {
+      const priceDiff = getFuelSortPrice(a, settings) - getFuelSortPrice(b, settings)
+      if (priceDiff !== 0) return priceDiff
+      const routeDiff = (a.routeDistanceKm ?? Infinity) - (b.routeDistanceKm ?? Infinity)
+      if (routeDiff !== 0) return routeDiff
+      return (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity)
+    })[0] ?? null
+
+  const upcomingStops = getUpcomingRouteRestStops(routePolyline, userLocation, 2)
+  const restFuelMatches = await fetchRestStopFuelPrices(upcomingStops).catch(() => [])
+  const nextRestFuelStops = upcomingStops.map((stop) => {
+    const matched = restFuelMatches.find((item) => item.stopId === stop.id)?.station ?? null
+    return {
+      ...stop,
+      fuelStation: matched ? applyFuelBenefitMeta(matched, settings) : null,
+    }
+  })
+
+  return {
+    nextRouteFuel,
+    nextRestFuelStops,
+  }
 }
 
 function buildSearchOptionAttempts(option) {
@@ -514,27 +929,43 @@ async function fetchFullAddrGeo(keyword) {
 export async function searchPOI(keyword, nearLat, nearLng, options = {}) {
   const trimmedKeyword = String(keyword ?? '').trim()
   const routePolyline = options.routePolyline ?? []
+  const fuelSettings = options.fuelSettings ?? {}
   const includeFuelMeta = options.includeFuelMeta ?? isFuelSearchKeyword(trimmedKeyword)
   const includeParkingMeta = options.includeParkingMeta ?? isParkingSearchKeyword(trimmedKeyword)
+  const includeHospitalMeta = options.includeHospitalMeta ?? isHospitalSearchKeyword(trimmedKeyword)
+  const includeRestaurantMeta = options.includeRestaurantMeta ?? isRestaurantSearchKeyword(trimmedKeyword)
   if (trimmedKeyword.length < 2) return []
 
   const cached = getCachedSearch(trimmedKeyword, nearLat, nearLng)
   if (cached) {
+    const cachedWithDistance = cached.map((item) => ({
+      ...item,
+      distanceKm: nearLat != null && nearLng != null
+        ? Number(haversineKm(nearLat, nearLng, item.lat, item.lng).toFixed(1))
+        : item.distanceKm,
+    }))
     if (includeFuelMeta) {
-      return enrichFuelStops(
-        cached.map((item) => ({
-          ...item,
-          distanceKm: nearLat != null && nearLng != null
-            ? Number(haversineKm(nearLat, nearLng, item.lat, item.lng).toFixed(1))
-            : item.distanceKm,
-        })),
-        routePolyline
+      const liveFuelResults = await fetchFuelSearchResults(trimmedKeyword, nearLat, nearLng, routePolyline, fuelSettings).catch(() => [])
+      return mergeFuelSearchResults(
+        cachedWithDistance,
+        liveFuelResults,
+        routePolyline,
+        trimmedKeyword,
+        nearLat,
+        nearLng,
+        fuelSettings
       )
     }
     if (includeParkingMeta) {
-      return enrichParkingPlaces(cached)
+      return enrichParkingPlaces(cachedWithDistance)
     }
-    return cached
+    if (includeHospitalMeta || cachedWithDistance.some((item) => isHospitalPoi(item))) {
+      return enrichHospitalPlaces(cachedWithDistance)
+    }
+    if (includeRestaurantMeta || cachedWithDistance.some((item) => isRestaurantPoi(item))) {
+      return enrichRestaurantPlaces(cachedWithDistance, routePolyline)
+    }
+    return cachedWithDistance
   }
 
   const localFastResults = searchFallbackPlaces(trimmedKeyword, nearLat, nearLng)
@@ -556,21 +987,34 @@ export async function searchPOI(keyword, nearLat, nearLng, options = {}) {
   if (exactLocalResults.length >= 3 || hasExactLocalMatch || (exactLocalResults.length > 0 && trimmedKeyword.length <= 6)) {
     const fastResults = exactLocalResults.slice(0, 10)
     setCachedSearch(trimmedKeyword, nearLat, nearLng, fastResults)
+    const fastResultsWithDistance = fastResults.map((item) => ({
+      ...item,
+      distanceKm: nearLat != null && nearLng != null
+        ? Number(haversineKm(nearLat, nearLng, item.lat, item.lng).toFixed(1))
+        : item.distanceKm,
+    }))
     if (includeFuelMeta) {
-      return enrichFuelStops(
-        fastResults.map((item) => ({
-          ...item,
-          distanceKm: nearLat != null && nearLng != null
-            ? Number(haversineKm(nearLat, nearLng, item.lat, item.lng).toFixed(1))
-            : item.distanceKm,
-        })),
-        routePolyline
+      const liveFuelResults = await fetchFuelSearchResults(trimmedKeyword, nearLat, nearLng, routePolyline, fuelSettings).catch(() => [])
+      return mergeFuelSearchResults(
+        fastResultsWithDistance,
+        liveFuelResults,
+        routePolyline,
+        trimmedKeyword,
+        nearLat,
+        nearLng,
+        fuelSettings
       )
     }
     if (includeParkingMeta) {
-      return enrichParkingPlaces(fastResults)
+      return enrichParkingPlaces(fastResultsWithDistance)
     }
-    return fastResults
+    if (includeHospitalMeta || fastResultsWithDistance.some((item) => isHospitalPoi(item))) {
+      return enrichHospitalPlaces(fastResultsWithDistance)
+    }
+    if (includeRestaurantMeta || fastResultsWithDistance.some((item) => isRestaurantPoi(item))) {
+      return enrichRestaurantPlaces(fastResultsWithDistance, routePolyline)
+    }
+    return fastResultsWithDistance
   }
 
   const isRoadAddress = ROAD_ADDRESS_PATTERN.test(trimmedKeyword)
@@ -620,28 +1064,98 @@ export async function searchPOI(keyword, nearLat, nearLng, options = {}) {
 
   const finalResults = results.slice(0, 15)
   setCachedSearch(trimmedKeyword, nearLat, nearLng, finalResults)
+  const finalResultsWithDistance = finalResults.map((item) => ({
+    ...item,
+    distanceKm: nearLat != null && nearLng != null
+      ? Number(haversineKm(nearLat, nearLng, item.lat, item.lng).toFixed(1))
+      : item.distanceKm,
+  }))
   if (includeFuelMeta) {
-    return enrichFuelStops(
-      finalResults.map((item) => ({
-        ...item,
-        distanceKm: nearLat != null && nearLng != null
-          ? Number(haversineKm(nearLat, nearLng, item.lat, item.lng).toFixed(1))
-          : item.distanceKm,
-      })),
-      routePolyline
+    const liveFuelResults = await fetchFuelSearchResults(trimmedKeyword, nearLat, nearLng, routePolyline, fuelSettings).catch(() => [])
+    return mergeFuelSearchResults(
+      finalResultsWithDistance,
+      liveFuelResults,
+      routePolyline,
+      trimmedKeyword,
+      nearLat,
+      nearLng,
+      fuelSettings
     )
   }
   if (includeParkingMeta) {
-    return enrichParkingPlaces(finalResults)
+    return enrichParkingPlaces(finalResultsWithDistance)
   }
-  return finalResults
+  if (includeHospitalMeta || finalResultsWithDistance.some((item) => isHospitalPoi(item))) {
+    return enrichHospitalPlaces(finalResultsWithDistance)
+  }
+  if (includeRestaurantMeta || finalResultsWithDistance.some((item) => isRestaurantPoi(item))) {
+    return enrichRestaurantPlaces(finalResultsWithDistance, routePolyline)
+  }
+  return finalResultsWithDistance
+}
+
+async function fetchRouteCorridorRestaurants(lat, lng, routePolyline = []) {
+  if (!Array.isArray(routePolyline) || routePolyline.length < 2) {
+    const nearby = await searchPOI('음식점', lat, lng, { includeRestaurantMeta: true })
+    return nearby
+      .map((item) => ({
+        ...item,
+        routeDistanceKm: item.distanceKm ?? null,
+        isRouteCorridor: Number.isFinite(Number(item.distanceKm)) ? Number(item.distanceKm) <= 10 : false,
+      }))
+      .filter((item) => item.isRouteCorridor)
+      .sort((a, b) => {
+        const ratingDiff = (Number(b.googleRating) || -1) - (Number(a.googleRating) || -1)
+        if (ratingDiff !== 0) return ratingDiff
+        const reviewDiff = (Number(b.googleUserRatingCount) || -1) - (Number(a.googleUserRatingCount) || -1)
+        if (reviewDiff !== 0) return reviewDiff
+        return (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity)
+      })
+      .slice(0, 18)
+  }
+
+  const sampleIndexes = [...new Set([
+    0,
+    Math.floor(routePolyline.length * 0.2),
+    Math.floor(routePolyline.length * 0.45),
+    Math.floor(routePolyline.length * 0.7),
+    routePolyline.length - 1,
+  ])].filter((index) => index >= 0 && index < routePolyline.length)
+
+  const searchResults = await Promise.all(
+    sampleIndexes.map((index) => {
+      const point = routePolyline[index]
+      return fetchPoiSearch('음식점', point[0], point[1], 'B').catch(() => [])
+    })
+  )
+
+  const seen = new Set()
+  const merged = searchResults
+    .flat()
+    .filter((item) => {
+      const key = item.id ?? `${item.name}-${item.lat}-${item.lng}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .map((item) => ({
+      ...item,
+      distanceKm: Number(haversineKm(lat, lng, item.lat, item.lng).toFixed(1)),
+    }))
+
+  const corridorOnly = attachRouteCorridorMeta(merged, routePolyline, 10)
+    .filter((item) => item.isRouteCorridor)
+    .slice(0, 18)
+
+  return enrichRestaurantPlaces(corridorOnly, routePolyline)
 }
 
 export async function searchNearbyPOIs(category, lat, lng, options = {}) {
   const routePolyline = options.routePolyline ?? []
+  const fuelSettings = options.fuelSettings ?? {}
   if (category === '주유소') {
     try {
-      const liveFuel = await fetchNearbyFuelFromApi(lat, lng, routePolyline)
+      const liveFuel = await fetchNearbyFuelFromApi(lat, lng, routePolyline, { settings: fuelSettings })
       if (liveFuel.length > 0) return liveFuel
     } catch {
       // 오피넷 미설정/실패 시 TMAP+추정가 폴백
@@ -653,7 +1167,16 @@ export async function searchNearbyPOIs(category, lat, lng, options = {}) {
     if (restStops.length > 0) return restStops
   }
 
-  const results = await searchPOI(category, lat, lng)
+  if (category === '음식점') {
+    const restaurants = await fetchRouteCorridorRestaurants(lat, lng, routePolyline).catch(() => [])
+    if (restaurants.length > 0) return restaurants
+  }
+
+  const results = await searchPOI(category, lat, lng, {
+    routePolyline,
+    includeRestaurantMeta: category === '음식점',
+    fuelSettings,
+  })
   if (results.length > 0) {
     const enriched = results
       .map((result) => ({
@@ -661,10 +1184,12 @@ export async function searchNearbyPOIs(category, lat, lng, options = {}) {
         distanceKm: Number(haversineKm(lat, lng, result.lat, result.lng).toFixed(1)),
       }))
       .sort((a, b) => a.distanceKm - b.distanceKm)
-    return category === '주유소' ? enrichFuelStops(enriched, routePolyline) : enriched
+    if (category === '주유소') return enrichFuelStops(enriched, routePolyline, fuelSettings)
+    if (category === '음식점') return enrichRestaurantPlaces(enriched, routePolyline)
+    return enriched
   }
   const fallback = buildNearbyFallback(category, lat, lng)
-  if (category === '주유소') return enrichFuelStops(fallback, routePolyline)
+  if (category === '주유소') return enrichFuelStops(fallback, routePolyline, fuelSettings)
   if (category === '주차장') return enrichParkingPlaces(fallback)
   return fallback
 }

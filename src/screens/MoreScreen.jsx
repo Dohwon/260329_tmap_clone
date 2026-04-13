@@ -396,6 +396,12 @@ export default function MoreScreen() {
           <ToggleRow label="내비 시점 확대" desc="안내 시작 시 운전자 시점으로 확대" value={settings.navigationLookAhead} onChange={(value) => updateSetting('navigationLookAhead', value)} />
           <ToggleRow label="내비 최소 지도" desc="경로 외 지도 색조를 줄여 시인성 강화" value={settings.navigationMinimalMap} onChange={(value) => updateSetting('navigationMinimalMap', value)} />
           <ToggleRow label="안전 운전 모드" desc="목적지 없이 위험요소 안내" value={settings.safetyModeEnabled} onChange={(value) => updateSetting('safetyModeEnabled', value)} />
+          <ToggleRow
+            label="주유 할인 반영"
+            desc={`${settings.fuelBenefitBrand ?? 'SK에너지'} ${settings.fuelBenefitPercent ?? 5}% 적용가로 최저가 순위 조정`}
+            value={settings.fuelBenefitEnabled}
+            onChange={(value) => updateSetting('fuelBenefitEnabled', value)}
+          />
 
           <div className="rounded-2xl border border-gray-100 p-4">
             <div className="text-sm font-black text-gray-900">지도 테마</div>
@@ -414,6 +420,15 @@ export default function MoreScreen() {
                   {option.label}
                 </button>
               ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-gray-100 p-4">
+            <div className="text-sm font-black text-gray-900">주유 할인 기준</div>
+            <div className="text-xs text-gray-500 mt-1">표시 유가는 그대로 두고, 추천 순서만 내 할인 적용가 기준으로 계산합니다.</div>
+            <div className="mt-3 inline-flex items-center gap-2 rounded-2xl bg-blue-50 px-3 py-2">
+              <span className="text-sm font-black text-blue-700">{settings.fuelBenefitBrand ?? 'SK에너지'}</span>
+              <span className="text-xs font-bold text-blue-500">{settings.fuelBenefitPercent ?? 5}% 할인</span>
             </div>
           </div>
         </BottomSheet>

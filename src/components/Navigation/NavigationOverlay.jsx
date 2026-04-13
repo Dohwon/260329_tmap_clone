@@ -4,7 +4,7 @@ import MergeOptionsSheet from './MergeOptionsSheet'
 import { formatEta } from '../Route/RouteCard'
 import { SCENIC_SEGMENTS } from '../../data/scenicRoads'
 import { PRESET_INFO } from '../../data/mockData'
-import { searchNearbyPOIs } from '../../services/tmapService'
+import { fetchUpcomingFuelContext, getDiscountedFuelPrice, searchNearbyPOIs } from '../../services/tmapService'
 import {
   formatGuidanceDistance,
   getGuidanceInstruction,
@@ -172,6 +172,13 @@ function buildHazardAlertSpeech(hazard, distanceM, threshold) {
     : `${roundedDistance}미터 앞 과속방지턱입니다. 감속하세요.`
 }
 
+function formatRestaurantMeta(poi = {}) {
+  const rating = Number(poi?.googleRating)
+  if (!Number.isFinite(rating) || rating <= 0) return '별점 정보 없음'
+  const reviewCount = Number(poi?.googleUserRatingCount)
+  return `Google ${rating.toFixed(1)}${Number.isFinite(reviewCount) && reviewCount > 0 ? ` · 리뷰 ${reviewCount.toLocaleString()}` : ''}`
+}
+
 export default function NavigationOverlay() {
   const {
     isNavigating, stopNavigation, destination, routes, selectedRouteId,
@@ -190,6 +197,9 @@ export default function NavigationOverlay() {
   const [nearbyCategory, setNearbyCategory] = useState('주유소')
   const [isRouteSheetCollapsed, setIsRouteSheetCollapsed] = useState(true)
   const [alertFlash, setAlertFlash] = useState(null)
+  const [upcomingFuelContext, setUpcomingFuelContext] = useState({ nextRouteFuel: null, nextRestFuelStops: [] })
+  const [restaurantCandidates, setRestaurantCandidates] = useState([])
+  const [restaurantLoading, setRestaurantLoading] = useState(false)
   const segmentRef = useRef(null)
   const wakeLockRef = useRef(null)
   const nearCameraNotifiedRef = useRef(new Set()) // 이미 알린 카메라 id
@@ -202,6 +212,10 @@ export default function NavigationOverlay() {
   const flashTimerRef = useRef(null)
   const speechQueueRef = useRef([])
   const speechBusyRef = useRef(false)
+  const lastFuelRefreshAtRef = useRef(0)
+  const lastFuelRefreshCoordRef = useRef(null)
+  const lastRestaurantRefreshAtRef = useRef(0)
+  const lastRestaurantRefreshCoordRef = useRef(null)
 
   // 화면 꺼짐 방지
   useEffect(() => {
@@ -337,10 +351,96 @@ export default function NavigationOverlay() {
   useEffect(() => {
     if (!isNavigating) {
       setIsRouteSheetCollapsed(true)
+      setUpcomingFuelContext({ nextRouteFuel: null, nextRestFuelStops: [] })
+      setRestaurantCandidates([])
       return
     }
     setIsRouteSheetCollapsed(true)
   }, [isNavigating, selectedRouteId])
+
+  useEffect(() => {
+    if (!isNavigating || !route?.polyline?.length || !userLocation) return
+    const now = Date.now()
+    const lastCoord = lastFuelRefreshCoordRef.current
+    const movedKm = lastCoord
+      ? haversineM(lastCoord.lat, lastCoord.lng, userLocation.lat, userLocation.lng) / 1000
+      : Infinity
+    const shouldRefresh = (
+      !lastCoord ||
+      movedKm >= 0.8 ||
+      now - lastFuelRefreshAtRef.current > 90000
+    )
+    if (!shouldRefresh) return
+
+    lastFuelRefreshAtRef.current = now
+    lastFuelRefreshCoordRef.current = { lat: userLocation.lat, lng: userLocation.lng }
+
+    let cancelled = false
+    fetchUpcomingFuelContext(route.polyline, userLocation, settings)
+      .then((context) => {
+        if (!cancelled) {
+          setUpcomingFuelContext(context ?? { nextRouteFuel: null, nextRestFuelStops: [] })
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setUpcomingFuelContext({ nextRouteFuel: null, nextRestFuelStops: [] })
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isNavigating, route?.id, route?.polyline, settings, userLocation])
+
+  useEffect(() => {
+    if (!isNavigating || !route?.polyline?.length || !userLocation) return
+    const now = Date.now()
+    const lastCoord = lastRestaurantRefreshCoordRef.current
+    const movedKm = lastCoord
+      ? haversineM(lastCoord.lat, lastCoord.lng, userLocation.lat, userLocation.lng) / 1000
+      : Infinity
+    const shouldRefresh = (
+      !lastCoord ||
+      movedKm >= 3 ||
+      now - lastRestaurantRefreshAtRef.current > 600000
+    )
+    if (!shouldRefresh) return
+
+    lastRestaurantRefreshAtRef.current = now
+    lastRestaurantRefreshCoordRef.current = { lat: userLocation.lat, lng: userLocation.lng }
+    setRestaurantLoading(true)
+
+    let cancelled = false
+    searchNearbyPOIs('음식점', userLocation.lat, userLocation.lng, {
+      routePolyline: route.polyline,
+    })
+      .then((pois) => {
+        if (cancelled) return
+        setRestaurantCandidates(
+          (pois ?? [])
+            .filter((poi) => poi.isRouteCorridor)
+            .sort((a, b) => {
+              const ratingDiff = (Number(b.googleRating) || -1) - (Number(a.googleRating) || -1)
+              if (ratingDiff !== 0) return ratingDiff
+              const reviewDiff = (Number(b.googleUserRatingCount) || -1) - (Number(a.googleUserRatingCount) || -1)
+              if (reviewDiff !== 0) return reviewDiff
+              return (a.routeDistanceKm ?? Infinity) - (b.routeDistanceKm ?? Infinity)
+            })
+            .slice(0, 3)
+        )
+        setRestaurantLoading(false)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setRestaurantCandidates([])
+        setRestaurantLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isNavigating, route?.id, route?.polyline, userLocation])
 
   useEffect(() => {
     if (!isNavigating || !route || !userLocation || isRefreshingNavigation || route.source === 'recorded') return
@@ -384,10 +484,10 @@ export default function NavigationOverlay() {
   const lanePattern = getLanePattern(laneSource)
   const nearbyFuelSummary = nearbyCategory === '주유소' && nearbyPOIs.length > 0
     ? {
-        nearbyLowestPoi: [...nearbyPOIs].sort((a, b) => (a.fuelPrice ?? Infinity) - (b.fuelPrice ?? Infinity))[0] ?? null,
+        nearbyLowestPoi: [...nearbyPOIs].sort((a, b) => getDiscountedFuelPrice(a, settings) - getDiscountedFuelPrice(b, settings))[0] ?? null,
         routeLowestPoi: nearbyPOIs
           .filter((poi) => poi.isRouteCorridor)
-          .sort((a, b) => (a.fuelPrice ?? Infinity) - (b.fuelPrice ?? Infinity))[0] ?? null,
+          .sort((a, b) => getDiscountedFuelPrice(a, settings) - getDiscountedFuelPrice(b, settings))[0] ?? null,
       }
     : null
 
@@ -484,6 +584,7 @@ export default function NavigationOverlay() {
       const lng = userLocation?.lng ?? 126.978
       const pois = await searchNearbyPOIs(category, lat, lng, {
         routePolyline: route?.polyline ?? [],
+        fuelSettings: settings,
       })
       setNearbyPOIs(pois.slice(0, 6))
     } catch {
@@ -541,6 +642,8 @@ export default function NavigationOverlay() {
   const routeSheetPeekMeta = nextMergeOpt
     ? `${Number(nextMergeOpt.remainingDistanceKm ?? nextMergeOpt.distanceFromCurrent).toFixed(2)}km 앞`
     : `${routeProgress.remainingKm != null ? Number(routeProgress.remainingKm).toFixed(2) : '--'}km 남음`
+  const nextRouteFuel = upcomingFuelContext?.nextRouteFuel ?? null
+  const nextRestFuelStop = upcomingFuelContext?.nextRestFuelStops?.[0] ?? null
 
   return (
     <>
@@ -720,6 +823,83 @@ export default function NavigationOverlay() {
               })}
             </div>
           </div>
+
+          <div className="px-4 py-3 border-b border-gray-100">
+            <div className="text-[11px] font-bold text-gray-400 mb-2">경로상 주유/휴게소</div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-2xl bg-orange-50 px-3 py-3">
+                <div className="text-[11px] font-bold text-orange-500">다음 경로상 주유소</div>
+                <div className="text-sm font-black text-gray-900 mt-1">
+                  {nextRouteFuel?.discountedFuelPrice != null
+                    ? `${nextRouteFuel.discountedFuelPrice.toLocaleString()}원/L`
+                    : nextRouteFuel?.fuelPrice != null
+                      ? `${nextRouteFuel.fuelPrice.toLocaleString()}원/L`
+                      : '정보없음'}
+                </div>
+                <div className="text-[11px] text-gray-500 mt-1 truncate">
+                  {nextRouteFuel?.name ?? '경로상 주유소 탐색 중'}
+                </div>
+                <div className="text-[10px] text-gray-400 mt-1">
+                  {nextRouteFuel?.fuelBenefitApplied
+                    ? nextRouteFuel.fuelBenefitLabel
+                    : nextRouteFuel?.routeDistanceKm != null ? `${nextRouteFuel.routeDistanceKm.toFixed(1)}km 앞` : '오피넷 기준'}
+                </div>
+              </div>
+              <div className="rounded-2xl bg-green-50 px-3 py-3">
+                <div className="text-[11px] font-bold text-green-600">다음 휴게소 유가</div>
+                <div className="text-sm font-black text-gray-900 mt-1">
+                  {nextRestFuelStop?.fuelStation?.discountedFuelPrice != null
+                    ? `${nextRestFuelStop.fuelStation.discountedFuelPrice.toLocaleString()}원/L`
+                    : nextRestFuelStop?.fuelStation?.fuelPrice != null
+                      ? `${nextRestFuelStop.fuelStation.fuelPrice.toLocaleString()}원/L`
+                      : '정보없음'}
+                </div>
+                <div className="text-[11px] text-gray-500 mt-1 truncate">
+                  {nextRestFuelStop?.name ?? '휴게소 탐색 중'}
+                </div>
+                <div className="text-[10px] text-gray-400 mt-1">
+                  {nextRestFuelStop?.fuelStation?.fuelBenefitApplied
+                    ? nextRestFuelStop.fuelStation.fuelBenefitLabel
+                    : nextRestFuelStop?.distanceFromCurrentKm != null
+                    ? `${nextRestFuelStop.distanceFromCurrentKm.toFixed(1)}km 앞`
+                    : '오피넷 기준'}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="px-4 py-3 border-b border-gray-100">
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <div className="text-[11px] font-bold text-gray-400">경로상 맛집 후보 10km</div>
+              <div className="text-[10px] text-gray-400">TMAP 후보 + Google 평점 보강</div>
+            </div>
+            {restaurantLoading ? (
+              <div className="text-xs text-gray-400 py-2">맛집 후보를 찾는 중</div>
+            ) : restaurantCandidates.length === 0 ? (
+              <div className="text-xs text-gray-400 py-2">경로 주변 10km 내 후보 없음</div>
+            ) : (
+              <div className="space-y-2">
+                {restaurantCandidates.slice(0, 2).map((poi) => (
+                  <div key={poi.id} className="rounded-2xl bg-gray-50 px-3 py-3 flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-black text-gray-900 truncate">{poi.name}</div>
+                      <div className="text-[11px] text-gray-500 mt-1 truncate">{formatRestaurantMeta(poi)}</div>
+                      <div className="text-[10px] text-gray-400 mt-1">
+                        {poi.routeDistanceKm != null ? `${poi.routeDistanceKm.toFixed(1)}km 옆` : '경로 인근'}
+                        {typeof poi.googleOpenNow === 'boolean' ? ` · ${poi.googleOpenNow ? '영업중' : '영업종료'}` : ''}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => addPoiAsWaypoint(poi)}
+                      className="px-3 py-2 rounded-xl bg-tmap-blue text-white text-xs font-bold flex-shrink-0"
+                    >
+                      경유
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
           <button
             className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 active:bg-gray-100"
             onClick={() => setShowMerge(true)}
@@ -888,7 +1068,9 @@ export default function NavigationOverlay() {
                   >
                     <div className="text-[11px] text-orange-500 font-bold">근방 최저</div>
                     <div className="text-sm font-black text-gray-900">
-                      {nearbyFuelSummary.nearbyLowestPoi?.fuelPrice != null ? `${nearbyFuelSummary.nearbyLowestPoi.fuelPrice.toLocaleString()}원/L` : '--'}
+                      {nearbyFuelSummary.nearbyLowestPoi?.discountedFuelPrice != null
+                        ? `${nearbyFuelSummary.nearbyLowestPoi.discountedFuelPrice.toLocaleString()}원/L`
+                        : '--'}
                     </div>
                     <div className="text-[11px] text-gray-500 mt-1 truncate">
                       {nearbyFuelSummary.nearbyLowestPoi?.name ?? '선택 불가'}
@@ -901,7 +1083,9 @@ export default function NavigationOverlay() {
                   >
                     <div className="text-[11px] text-blue-500 font-bold">경로상 최저</div>
                     <div className="text-sm font-black text-gray-900">
-                      {nearbyFuelSummary.routeLowestPoi?.fuelPrice != null ? `${nearbyFuelSummary.routeLowestPoi.fuelPrice.toLocaleString()}원/L` : '--'}
+                      {nearbyFuelSummary.routeLowestPoi?.discountedFuelPrice != null
+                        ? `${nearbyFuelSummary.routeLowestPoi.discountedFuelPrice.toLocaleString()}원/L`
+                        : '--'}
                     </div>
                     <div className="text-[11px] text-gray-500 mt-1 truncate">
                       {nearbyFuelSummary.routeLowestPoi?.name ?? '경로상 주유소 없음'}
@@ -927,8 +1111,15 @@ export default function NavigationOverlay() {
                             ? `${poi.fuelLabel ?? '휘발유'} ${poi.fuelPrice.toLocaleString()}원/L`
                             : '유가 정보 없음'}
                         </span>
+                        {poi.discountedFuelPrice != null && poi.fuelBenefitApplied && (
+                          <span className="font-bold text-blue-600">
+                            할인 적용 {poi.discountedFuelPrice.toLocaleString()}원/L
+                          </span>
+                        )}
                         {poi.isRouteCorridor && <span className="px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-bold">경로상</span>}
-                        <span className="text-gray-400">{poi.priceSource === 'opinet' ? '오피넷 실유가' : '유가 정보 없음'}</span>
+                        <span className="text-gray-400">
+                          {poi.priceSource === 'opinet' ? (poi.fuelBenefitLabel ?? '오피넷 실유가') : '유가 정보 없음'}
+                        </span>
                       </div>
                     )}
                   </div>
