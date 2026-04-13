@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import useAppStore from '../../store/appStore'
 import { searchInstantPlaceCandidates, searchPOI } from '../../services/tmapService'
 
@@ -24,6 +24,8 @@ export default function SearchSheet({ onClose, embedded = false }) {
     searchRoute,
     userLocation,
     destination,
+    routes,
+    selectedRouteId,
     isNavigating,
     addWaypoint,
     clearWaypoints,
@@ -38,6 +40,11 @@ export default function SearchSheet({ onClose, embedded = false }) {
     isLoadingNearby,
     setActiveTab,
   } = useAppStore()
+  const activeRoute = useMemo(
+    () => routes.find((route) => route.id === selectedRouteId) ?? routes[0] ?? null,
+    [routes, selectedRouteId]
+  )
+  const activeRoutePolyline = activeRoute?.polyline ?? []
 
   const closeSheet = () => {
     setPendingSelection(null)
@@ -78,7 +85,9 @@ export default function SearchSheet({ onClose, embedded = false }) {
     debounceRef.current = setTimeout(async () => {
       setIsLoading(true)
       try {
-        const pois = await searchPOI(query, userLocation?.lat, userLocation?.lng)
+        const pois = await searchPOI(query, userLocation?.lat, userLocation?.lng, {
+          routePolyline: activeRoutePolyline,
+        })
         if (requestIdRef.current !== requestId) return
         setResults(pois)
       } catch {
@@ -94,9 +103,36 @@ export default function SearchSheet({ onClose, embedded = false }) {
 
   const showNearby = !query.trim() && searchMode === 'nearby'
   const showRecent = !query.trim() && (searchMode === 'recent' || recentSearches.length > 0)
+  const isFuelSearch = query.trim().length >= 2 && results.some((item) => Number.isFinite(Number(item.fuelPrice)) && Number(item.fuelPrice) > 0)
+  const nearbyFuelSummary = useMemo(() => {
+    if (selectedNearbyCategory !== '주유소' || nearbyPlaces.length === 0) return null
+    return {
+      nearbyLowestPoi: [...nearbyPlaces].sort((a, b) => (a.fuelPrice ?? Infinity) - (b.fuelPrice ?? Infinity))[0] ?? null,
+      routeLowestPoi: nearbyPlaces
+        .filter((poi) => poi.isRouteCorridor)
+        .sort((a, b) => (a.fuelPrice ?? Infinity) - (b.fuelPrice ?? Infinity))[0] ?? null,
+    }
+  }, [nearbyPlaces, selectedNearbyCategory])
+  const fuelSearchSummary = useMemo(() => {
+    if (!isFuelSearch) return null
+    return {
+      nearbyLowestPoi: [...results].sort((a, b) => (a.fuelPrice ?? Infinity) - (b.fuelPrice ?? Infinity))[0] ?? null,
+      routeLowestPoi: results
+        .filter((poi) => poi.isRouteCorridor)
+        .sort((a, b) => (a.fuelPrice ?? Infinity) - (b.fuelPrice ?? Infinity))[0] ?? null,
+    }
+  }, [isFuelSearch, results])
   const containerClass = embedded
     ? 'absolute inset-x-0 top-0 bottom-16 z-20 bg-white flex flex-col'
     : 'absolute inset-0 z-30 bg-white flex flex-col'
+
+  const handleFuelQuickPick = (poi) => {
+    if (!poi) return
+    handleSelect({
+      ...poi,
+      address: poi.address,
+    })
+  }
 
   return (
     <div className={containerClass}>
@@ -143,9 +179,45 @@ export default function SearchSheet({ onClose, embedded = false }) {
             ) : query.trim().length < 2 ? (
               <div className="px-4 py-3 text-xs text-gray-400">두 글자 이상 입력하면 빠르게 후보를 보여줍니다.</div>
             ) : results.length > 0 ? (
-              results.map((destination) => (
-                <SearchResultRow key={destination.id} destination={destination} onSelect={handleSelect} />
-              ))
+              <div>
+                {fuelSearchSummary && (
+                  <div className="px-4 pt-3 pb-2 grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => handleFuelQuickPick(fuelSearchSummary.nearbyLowestPoi)}
+                      disabled={!fuelSearchSummary.nearbyLowestPoi}
+                      className="rounded-2xl bg-orange-50 px-3 py-3 text-left disabled:opacity-50"
+                    >
+                      <div className="text-[11px] font-bold text-orange-500">근방 최저</div>
+                      <div className="text-sm font-black text-gray-900 mt-0.5">
+                        {fuelSearchSummary.nearbyLowestPoi?.fuelPrice != null
+                          ? `${fuelSearchSummary.nearbyLowestPoi.fuelPrice.toLocaleString()}원/L`
+                          : '--'}
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-1 truncate">
+                        {fuelSearchSummary.nearbyLowestPoi?.name ?? '선택 불가'}
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => handleFuelQuickPick(fuelSearchSummary.routeLowestPoi)}
+                      disabled={!fuelSearchSummary.routeLowestPoi}
+                      className="rounded-2xl bg-blue-50 px-3 py-3 text-left disabled:opacity-50"
+                    >
+                      <div className="text-[11px] font-bold text-blue-500">경로상 최저</div>
+                      <div className="text-sm font-black text-gray-900 mt-0.5">
+                        {fuelSearchSummary.routeLowestPoi?.fuelPrice != null
+                          ? `${fuelSearchSummary.routeLowestPoi.fuelPrice.toLocaleString()}원/L`
+                          : '--'}
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-1 truncate">
+                        {fuelSearchSummary.routeLowestPoi?.name ?? '경로상 주유소 없음'}
+                      </div>
+                    </button>
+                  </div>
+                )}
+                {results.map((destination) => (
+                  <SearchResultRow key={destination.id} destination={destination} onSelect={handleSelect} />
+                ))}
+              </div>
             ) : (
               <div className="flex flex-col items-center py-16 text-gray-400">
                 <span className="text-4xl mb-3">🔍</span>
@@ -215,16 +287,52 @@ export default function SearchSheet({ onClose, embedded = false }) {
                 {isLoadingNearby ? (
                   <div className="text-sm text-gray-400 py-4">근처 장소를 찾는 중이에요</div>
                 ) : nearbyPlaces.length > 0 ? (
-                  nearbyPlaces.map((place) => (
-                    <SearchResultRow
-                      key={place.id}
-                      destination={{
-                        ...place,
-                        address: place.distanceKm != null ? `${place.address} · ${place.distanceKm}km` : place.address,
-                      }}
-                      onSelect={handleSelect}
-                    />
-                  ))
+                  <div>
+                    {nearbyFuelSummary && (
+                      <div className="grid grid-cols-2 gap-2 mb-3">
+                        <button
+                          onClick={() => handleFuelQuickPick(nearbyFuelSummary.routeLowestPoi)}
+                          disabled={!nearbyFuelSummary.routeLowestPoi}
+                          className="rounded-2xl bg-blue-50 px-3 py-3 text-left disabled:opacity-50"
+                        >
+                          <div className="text-[11px] font-bold text-blue-500">경로상 최저</div>
+                          <div className="text-sm font-black text-gray-900 mt-0.5">
+                            {nearbyFuelSummary.routeLowestPoi?.fuelPrice != null
+                              ? `${nearbyFuelSummary.routeLowestPoi.fuelPrice.toLocaleString()}원/L`
+                              : '--'}
+                          </div>
+                          <div className="text-[11px] text-gray-500 mt-1 truncate">
+                            {nearbyFuelSummary.routeLowestPoi?.name ?? '경로상 주유소 없음'}
+                          </div>
+                        </button>
+                        <button
+                          onClick={() => handleFuelQuickPick(nearbyFuelSummary.nearbyLowestPoi)}
+                          disabled={!nearbyFuelSummary.nearbyLowestPoi}
+                          className="rounded-2xl bg-orange-50 px-3 py-3 text-left disabled:opacity-50"
+                        >
+                          <div className="text-[11px] font-bold text-orange-500">반경내 최저</div>
+                          <div className="text-sm font-black text-gray-900 mt-0.5">
+                            {nearbyFuelSummary.nearbyLowestPoi?.fuelPrice != null
+                              ? `${nearbyFuelSummary.nearbyLowestPoi.fuelPrice.toLocaleString()}원/L`
+                              : '--'}
+                          </div>
+                          <div className="text-[11px] text-gray-500 mt-1 truncate">
+                            {nearbyFuelSummary.nearbyLowestPoi?.name ?? '선택 불가'}
+                          </div>
+                        </button>
+                      </div>
+                    )}
+                    {nearbyPlaces.map((place) => (
+                      <SearchResultRow
+                        key={place.id}
+                        destination={{
+                          ...place,
+                          address: place.distanceKm != null ? `${place.address} · ${place.distanceKm}km` : place.address,
+                        }}
+                        onSelect={handleSelect}
+                      />
+                    ))}
+                  </div>
                 ) : (
                   <div className="text-sm text-gray-400 py-4">주변 결과가 없어요.</div>
                 )}
@@ -327,6 +435,37 @@ function SearchResultRow({ destination, onSelect }) {
       <div className="flex-1 text-left min-w-0">
         <div className="text-sm font-semibold text-gray-900">{destination.name}</div>
         <div className="text-xs text-gray-400 truncate">{destination.address}</div>
+        {destination.fuelPrice != null ? (
+          <div className="mt-1 flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] font-bold text-orange-600">
+              {destination.fuelLabel ?? '휘발유'} {destination.fuelPrice.toLocaleString()}원/L
+            </span>
+            {destination.isRouteCorridor ? (
+              <span className="px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-bold">
+                경로상
+              </span>
+            ) : null}
+            {destination.priceSource ? (
+              <span className="text-[10px] text-gray-400">
+                {destination.priceSource === 'opinet' ? '오피넷 실유가' : '유가 정보 없음'}
+              </span>
+            ) : null}
+          </div>
+        ) : destination.fuelLabel ? (
+          <div className="mt-1 flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] font-bold text-gray-500">유가 정보 없음</span>
+          </div>
+        ) : null}
+        {destination.parkingFeeLabel ? (
+          <div className="mt-1 flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] font-bold text-indigo-600">
+              {destination.parkingFeeLabel}
+            </span>
+            <span className="text-[10px] text-gray-400">
+              {destination.parkingFeeSource === 'estimated' ? '표시용 추정가' : '요금 정보'}
+            </span>
+          </div>
+        ) : null}
       </div>
       <svg className="w-4 h-4 text-gray-300 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />

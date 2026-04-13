@@ -920,11 +920,15 @@ export default function NavigationOverlay() {
                     <div className="text-xs text-gray-400">
                       {poi.distanceKm != null ? `${poi.distanceKm.toFixed(1)}km` : ''} {poi.address ?? ''}
                     </div>
-                    {nearbyCategory === '주유소' && poi.fuelPrice && (
+                    {nearbyCategory === '주유소' && (
                       <div className="text-[11px] mt-1 flex items-center gap-2">
-                        <span className="font-bold text-orange-600">{poi.fuelLabel ?? '휘발유'} {poi.fuelPrice.toLocaleString()}원/L</span>
+                        <span className={`font-bold ${poi.fuelPrice != null ? 'text-orange-600' : 'text-gray-500'}`}>
+                          {poi.fuelPrice != null
+                            ? `${poi.fuelLabel ?? '휘발유'} ${poi.fuelPrice.toLocaleString()}원/L`
+                            : '유가 정보 없음'}
+                        </span>
                         {poi.isRouteCorridor && <span className="px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-bold">경로상</span>}
-                        <span className="text-gray-400">{poi.priceSource === 'opinet' ? '오피넷 실유가' : '표시용 추정가'}</span>
+                        <span className="text-gray-400">{poi.priceSource === 'opinet' ? '오피넷 실유가' : '유가 정보 없음'}</span>
                       </div>
                     )}
                   </div>

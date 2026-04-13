@@ -165,6 +165,14 @@ function getRouteLookAheadHeading(route, userLocation, fallbackHeading = 0) {
   for (let index = 0; index < polyline.length - 1; index += 1) {
     const start = polyline[index]
     const end = polyline[index + 1]
+    if (
+      !Array.isArray(start) || start.length < 2 ||
+      !Array.isArray(end) || end.length < 2 ||
+      !Number.isFinite(start[0]) || !Number.isFinite(start[1]) ||
+      !Number.isFinite(end[0]) || !Number.isFinite(end[1])
+    ) {
+      continue
+    }
     const segmentLengthM = haversineM(start[0], start[1], end[0], end[1])
     const projection = projectPointToSegment([userLocation.lat, userLocation.lng], start, end)
     if (projection.distanceM < bestDistanceM) {
@@ -180,6 +188,14 @@ function getRouteLookAheadHeading(route, userLocation, fallbackHeading = 0) {
   for (let index = 0; index < polyline.length - 1; index += 1) {
     const start = polyline[index]
     const end = polyline[index + 1]
+    if (
+      !Array.isArray(start) || start.length < 2 ||
+      !Array.isArray(end) || end.length < 2 ||
+      !Number.isFinite(start[0]) || !Number.isFinite(start[1]) ||
+      !Number.isFinite(end[0]) || !Number.isFinite(end[1])
+    ) {
+      continue
+    }
     const segmentLengthM = haversineM(start[0], start[1], end[0], end[1])
     if (traversedM + segmentLengthM >= lookAheadTargetM) {
       const remainM = Math.max(0, lookAheadTargetM - traversedM)
@@ -293,21 +309,27 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
       return
     }
 
-    const nextHeading = getRouteLookAheadHeading(
-      selectedRoute,
-      userLocation,
-      resolveDriverHeading(userLocation, locationHistory)
-    )
-    const previousHeading = smoothedHeadingRef.current
-    const headingDelta = getHeadingDelta(nextHeading, previousHeading)
-    const smoothing = Math.abs(headingDelta) >= 30 ? 0.9 : 0.72
-    const smoothedHeading = previousHeading + (headingDelta * smoothing)
-    smoothedHeadingRef.current = smoothedHeading
+    try {
+      const nextHeading = getRouteLookAheadHeading(
+        selectedRoute,
+        userLocation,
+        resolveDriverHeading(userLocation, locationHistory)
+      )
+      const previousHeading = smoothedHeadingRef.current
+      const headingDelta = getHeadingDelta(nextHeading, previousHeading)
+      const smoothing = Math.abs(headingDelta) >= 30 ? 0.9 : 0.72
+      const smoothedHeading = previousHeading + (headingDelta * smoothing)
+      smoothedHeadingRef.current = smoothedHeading
 
-    const rotationDeg = -smoothedHeading
-    rotationLayer.style.transformOrigin = '50% 50%'
-    rotationLayer.style.transform = `rotate(${rotationDeg}deg) scale(1.18)`
-    rotationLayer.style.setProperty('--driver-map-rotation', `${rotationDeg}deg`)
+      const rotationDeg = -smoothedHeading
+      rotationLayer.style.transformOrigin = '50% 50%'
+      rotationLayer.style.transform = `rotate(${rotationDeg}deg) scale(1.18)`
+      rotationLayer.style.setProperty('--driver-map-rotation', `${rotationDeg}deg`)
+    } catch {
+      rotationLayer.style.transformOrigin = '50% 50%'
+      rotationLayer.style.transform = 'none'
+      rotationLayer.style.setProperty('--driver-map-rotation', '0deg')
+    }
   }, [isNavigating, locationHistory, map, navAutoFollow, selectedRoute, userLocation])
 
   // 일반 지도 이동 (안내 중에는 무시)
@@ -501,15 +523,21 @@ export default function MapView({ darkMode = false }) {
     [userLocation]
   )
   const currentLocationIcon = useMemo(
-    () => makeCurrentLocationIcon(
-      driverFollowMode
-        ? getRouteLookAheadHeading(
+    () => {
+      const safeHeading = (() => {
+        if (!driverFollowMode) return userLocation?.heading ?? 0
+        try {
+          return getRouteLookAheadHeading(
             selectedRoute,
             userLocation,
             resolveDriverHeading(userLocation, locationHistory)
           )
-        : (userLocation?.heading ?? 0)
-    ),
+        } catch {
+          return userLocation?.heading ?? 0
+        }
+      })()
+      return makeCurrentLocationIcon(safeHeading)
+    },
     [driverFollowMode, locationHistory, selectedRoute, userLocation]
   )
 

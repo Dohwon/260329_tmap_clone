@@ -3,12 +3,14 @@ import useAppStore from '../../store/appStore'
 import { searchInstantPlaceCandidates, searchPOI } from '../../services/tmapService'
 
 export default function WaypointSheet({ onClose }) {
-  const { waypoints, addWaypoint, removeWaypoint, searchRoute, destination, userLocation } = useAppStore()
+  const { waypoints, addWaypoint, removeWaypoint, searchRoute, destination, userLocation, routes, selectedRouteId } = useAppStore()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
   const [isSearching, setIsSearching] = useState(false)
   const debounceRef = useRef(null)
   const isComposingRef = useRef(false)
+  const activeRoute = routes.find((route) => route.id === selectedRouteId) ?? routes[0] ?? null
+  const activeRoutePolyline = activeRoute?.polyline ?? []
 
   useEffect(() => {
     const trimmed = query.trim()
@@ -33,7 +35,9 @@ export default function WaypointSheet({ onClose }) {
     debounceRef.current = setTimeout(async () => {
       setIsSearching(true)
       try {
-        const pois = await searchPOI(trimmed, userLocation?.lat ?? destination?.lat, userLocation?.lng ?? destination?.lng)
+        const pois = await searchPOI(trimmed, userLocation?.lat ?? destination?.lat, userLocation?.lng ?? destination?.lng, {
+          routePolyline: activeRoutePolyline,
+        })
         setResults(pois.slice(0, 5))
       } catch {
         setResults([])
@@ -43,7 +47,7 @@ export default function WaypointSheet({ onClose }) {
     }, 120)
 
     return () => clearTimeout(debounceRef.current)
-  }, [query, userLocation?.lat, userLocation?.lng, destination?.lat, destination?.lng])
+  }, [activeRoutePolyline, query, userLocation?.lat, userLocation?.lng, destination?.lat, destination?.lng])
 
   function handleAdd(poi) {
     addWaypoint({ id: `wp-${poi.lat}-${poi.lng}`, name: poi.name, lat: poi.lat, lng: poi.lng, address: poi.address })

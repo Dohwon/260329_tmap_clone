@@ -81,6 +81,9 @@ const CATEGORY_META = {
   편의점: { key: 'convenience', seeds: ['CU', 'GS25', '세븐일레븐', '이마트24'] },
 }
 
+const FUEL_SEARCH_PATTERN = /(주유소|충전소|휘발유|경유|LPG|가스충전|gs칼텍스|sk에너지|s-oil|현대오일뱅크|알뜰주유소)/i
+const PARKING_SEARCH_PATTERN = /(주차장|공영주차장|민영주차장|환승주차장|타워주차장|공영|민영|주차타워)/i
+
 function normalizeSearchText(text) {
   return String(text ?? '').toLowerCase().replace(/[\s\-_/.,]/g, '')
 }
@@ -204,6 +207,14 @@ function getCachedSearch(keyword, nearLat, nearLng) {
 function setCachedSearch(keyword, nearLat, nearLng, results) {
   const key = `${normalizeSearchText(keyword)}:${nearLat ?? ''}:${nearLng ?? ''}`
   SEARCH_CACHE.set(key, { savedAt: Date.now(), results })
+}
+
+function isFuelSearchKeyword(keyword = '') {
+  return FUEL_SEARCH_PATTERN.test(String(keyword ?? '').trim())
+}
+
+function isParkingSearchKeyword(keyword = '') {
+  return PARKING_SEARCH_PATTERN.test(String(keyword ?? '').trim())
 }
 
 function mapRoadType(props = {}) {
@@ -343,17 +354,6 @@ function buildNearbyRestStopFallback(lat, lng, routePolyline = []) {
     .slice(0, 8)
 }
 
-function estimateFuelPrice(poi, index = 0) {
-  const name = String(poi?.name ?? '')
-  const base = name.includes('S-OIL') ? 1648
-    : name.includes('GS') ? 1659
-      : name.includes('SK') ? 1665
-        : name.includes('현대') ? 1654
-          : 1661
-  const variation = ((index * 7) % 17) - 8
-  return Math.max(1595, base + variation)
-}
-
 function distanceKmToPolyline(lat, lng, polyline = []) {
   if (!Array.isArray(polyline) || polyline.length === 0) return null
   let best = Infinity
@@ -366,26 +366,66 @@ function distanceKmToPolyline(lat, lng, polyline = []) {
 }
 
 function enrichFuelStops(results, routePolyline = []) {
-  const sorted = results.map((result, index) => {
+  const sorted = results.map((result) => {
     const fuelPrice = Number.isFinite(result.fuelPrice) && result.fuelPrice > 0
       ? result.fuelPrice
-      : estimateFuelPrice(result, index)
+      : null
     const routeDistanceKm = distanceKmToPolyline(result.lat, result.lng, routePolyline)
     return {
       ...result,
       fuelPrice,
       fuelLabel: result.fuelLabel ?? '휘발유',
-      priceSource: result.priceSource ?? (Number.isFinite(result.fuelPrice) && result.fuelPrice > 0 ? 'opinet' : 'estimated'),
+      priceSource: Number.isFinite(result.fuelPrice) && result.fuelPrice > 0
+        ? (result.priceSource ?? 'opinet')
+        : 'unknown',
       routeDistanceKm,
       isRouteCorridor: routeDistanceKm != null ? routeDistanceKm <= 1.5 : false,
     }
   })
-  const routeLowest = sorted.filter((item) => item.isRouteCorridor).sort((a, b) => a.fuelPrice - b.fuelPrice)[0] ?? null
-  const nearbyLowest = [...sorted].sort((a, b) => a.fuelPrice - b.fuelPrice)[0] ?? null
+  const routeLowest = sorted
+    .filter((item) => item.isRouteCorridor && Number.isFinite(item.fuelPrice))
+    .sort((a, b) => a.fuelPrice - b.fuelPrice)[0] ?? null
+  const nearbyLowest = [...sorted]
+    .filter((item) => Number.isFinite(item.fuelPrice))
+    .sort((a, b) => a.fuelPrice - b.fuelPrice)[0] ?? null
   return sorted.map((item) => ({
     ...item,
     nearbyLowestFuelPrice: nearbyLowest?.fuelPrice ?? null,
     routeLowestFuelPrice: routeLowest?.fuelPrice ?? nearbyLowest?.fuelPrice ?? null,
+  }))
+}
+
+function estimateParkingFee(poi, index = 0) {
+  const name = String(poi?.name ?? '')
+  const address = String(poi?.address ?? '')
+  const text = `${name} ${address}`
+
+  if (/무료|무료개방/.test(text)) {
+    return {
+      parkingFeeLabel: '무료',
+      parkingFeeSource: 'estimated',
+      parkingFeePerHour: 0,
+    }
+  }
+
+  const base = /공영|환승/.test(text)
+    ? 2200
+    : /민영|타워|백화점|복합몰/.test(text)
+      ? 4600
+      : 3200
+  const variation = ((index * 11) % 7) * 200
+  const perHour = base + variation
+  return {
+    parkingFeeLabel: `시간당 약 ${perHour.toLocaleString()}원`,
+    parkingFeeSource: 'estimated',
+    parkingFeePerHour: perHour,
+  }
+}
+
+function enrichParkingPlaces(results) {
+  return results.map((result, index) => ({
+    ...result,
+    ...estimateParkingFee(result, index),
   }))
 }
 
@@ -471,12 +511,31 @@ async function fetchFullAddrGeo(keyword) {
     .filter((poi) => Number.isFinite(poi.lat) && Number.isFinite(poi.lng))
 }
 
-export async function searchPOI(keyword, nearLat, nearLng) {
+export async function searchPOI(keyword, nearLat, nearLng, options = {}) {
   const trimmedKeyword = String(keyword ?? '').trim()
+  const routePolyline = options.routePolyline ?? []
+  const includeFuelMeta = options.includeFuelMeta ?? isFuelSearchKeyword(trimmedKeyword)
+  const includeParkingMeta = options.includeParkingMeta ?? isParkingSearchKeyword(trimmedKeyword)
   if (trimmedKeyword.length < 2) return []
 
   const cached = getCachedSearch(trimmedKeyword, nearLat, nearLng)
-  if (cached) return cached
+  if (cached) {
+    if (includeFuelMeta) {
+      return enrichFuelStops(
+        cached.map((item) => ({
+          ...item,
+          distanceKm: nearLat != null && nearLng != null
+            ? Number(haversineKm(nearLat, nearLng, item.lat, item.lng).toFixed(1))
+            : item.distanceKm,
+        })),
+        routePolyline
+      )
+    }
+    if (includeParkingMeta) {
+      return enrichParkingPlaces(cached)
+    }
+    return cached
+  }
 
   const localFastResults = searchFallbackPlaces(trimmedKeyword, nearLat, nearLng)
   const compactKeyword = normalizeSearchText(trimmedKeyword)
@@ -497,6 +556,20 @@ export async function searchPOI(keyword, nearLat, nearLng) {
   if (exactLocalResults.length >= 3 || hasExactLocalMatch || (exactLocalResults.length > 0 && trimmedKeyword.length <= 6)) {
     const fastResults = exactLocalResults.slice(0, 10)
     setCachedSearch(trimmedKeyword, nearLat, nearLng, fastResults)
+    if (includeFuelMeta) {
+      return enrichFuelStops(
+        fastResults.map((item) => ({
+          ...item,
+          distanceKm: nearLat != null && nearLng != null
+            ? Number(haversineKm(nearLat, nearLng, item.lat, item.lng).toFixed(1))
+            : item.distanceKm,
+        })),
+        routePolyline
+      )
+    }
+    if (includeParkingMeta) {
+      return enrichParkingPlaces(fastResults)
+    }
     return fastResults
   }
 
@@ -547,6 +620,20 @@ export async function searchPOI(keyword, nearLat, nearLng) {
 
   const finalResults = results.slice(0, 15)
   setCachedSearch(trimmedKeyword, nearLat, nearLng, finalResults)
+  if (includeFuelMeta) {
+    return enrichFuelStops(
+      finalResults.map((item) => ({
+        ...item,
+        distanceKm: nearLat != null && nearLng != null
+          ? Number(haversineKm(nearLat, nearLng, item.lat, item.lng).toFixed(1))
+          : item.distanceKm,
+      })),
+      routePolyline
+    )
+  }
+  if (includeParkingMeta) {
+    return enrichParkingPlaces(finalResults)
+  }
   return finalResults
 }
 
@@ -577,7 +664,9 @@ export async function searchNearbyPOIs(category, lat, lng, options = {}) {
     return category === '주유소' ? enrichFuelStops(enriched, routePolyline) : enriched
   }
   const fallback = buildNearbyFallback(category, lat, lng)
-  return category === '주유소' ? enrichFuelStops(fallback, routePolyline) : fallback
+  if (category === '주유소') return enrichFuelStops(fallback, routePolyline)
+  if (category === '주차장') return enrichParkingPlaces(fallback)
+  return fallback
 }
 
 export async function searchSafetyHazards(lat, lng) {
