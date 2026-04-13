@@ -71,7 +71,7 @@ function sanitizeSettings(settings) {
 }
 
 function buildLiveRouteRequestKey(origin, destination, waypoints = [], routePreferences = {}) {
-  const waypointKey = (waypoints ?? [])
+  const waypointKey = dedupeWaypoints(waypoints)
     .filter((point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lng))
     .map((point) => `${Number(point.lat).toFixed(5)},${Number(point.lng).toFixed(5)}`)
     .join('|')
@@ -151,6 +151,19 @@ function sanitizeSegmentStats(segments = []) {
       }
     })
     .filter(Boolean)
+}
+
+function dedupeWaypoints(waypoints = []) {
+  const unique = []
+  for (const point of waypoints ?? []) {
+    const lat = Number(point?.lat)
+    const lng = Number(point?.lng)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
+    const duplicated = unique.some((existing) => haversineKm(existing.lat, existing.lng, lat, lng) <= 0.08)
+    if (duplicated) continue
+    unique.push({ ...point, lat, lng })
+  }
+  return unique.slice(0, 3)
 }
 
 function getPolylineDistanceKm(polyline = []) {
@@ -947,7 +960,7 @@ async function loadLiveRoutes(origin, destination, waypoints = [], routePreferen
     return inflight.then((routes) => routes.map((route) => ({ ...route })))
   }
 
-  const validWaypoints = (waypoints ?? [])
+  const validWaypoints = dedupeWaypoints(waypoints)
     .filter((point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lng))
     .filter((point) => {
       const fromOriginKm = haversineKm(origin.lat, origin.lng, point.lat, point.lng)
@@ -1420,9 +1433,30 @@ const useAppStore = create((set, get) => ({
       // POI 검색 실패는 무시
     }
 
+    const snappedCandidates = []
+    for (const candidate of coordCandidates) {
+      try {
+        const snapped = await enrichDestinationTarget({
+          id: candidate.id,
+          name: candidate.name,
+          address: candidate.address ?? candidate.name ?? suggestion.name,
+          lat: candidate.lat,
+          lng: candidate.lng,
+        }, { preferRoadSnap: true })
+        if (!Number.isFinite(snapped?.lat) || !Number.isFinite(snapped?.lng)) continue
+        const duplicated = snappedCandidates.some((existing) =>
+          haversineKm(existing.lat, existing.lng, snapped.lat, snapped.lng) <= 0.08
+        )
+        if (duplicated) continue
+        snappedCandidates.push(snapped)
+      } catch {
+        // 다음 후보 계속
+      }
+    }
+
     // 모든 좌표 후보로 routeSequential30 순차 시도 (에러 종류와 무관하게 모두 시도)
     let viaRoute = null
-    for (const pt of coordCandidates) {
+    for (const pt of snappedCandidates) {
       try {
         viaRoute = await fetchRouteByWaypoints(start, destination, [pt], scenicRouteOpt)
         if (viaRoute) break
@@ -1463,7 +1497,7 @@ const useAppStore = create((set, get) => ({
     } else {
       set({
         isLoadingRoutes: false,
-        scenicRouteError: `${suggestion.name} 경로를 찾을 수 없습니다. 목적지까지 TMAP 경로 탐색에 실패했습니다.`,
+        scenicRouteError: `${suggestion.name} 경로를 찾을 수 없습니다. 경관 구간 후보를 실제 도로에 맞춰도 TMAP 경로 탐색에 실패했습니다.`,
       })
     }
   },

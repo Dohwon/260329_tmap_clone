@@ -230,6 +230,7 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
   const navZoom = cameraState.zoom
   const smoothedHeadingRef = useRef(0)
   const programmaticMotionRef = useRef(false)
+  const navStartFocusDoneRef = useRef(false)
 
   const runProgrammaticMotion = (fn) => {
     programmaticMotionRef.current = true
@@ -250,7 +251,11 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
 
   // 안내 시작 시 내 위치로 강제 포커스 (스토어에서 직접 읽어 stale closure 방지)
   useEffect(() => {
-    if (!isNavigating) return
+    if (!isNavigating) {
+      navStartFocusDoneRef.current = false
+      return
+    }
+    if (navStartFocusDoneRef.current) return
     const freshLoc = useAppStore.getState().userLocation
     const target = freshLoc
       ? getLookAheadCenter(map, freshLoc, navZoom, settings.navigationLookAhead, cameraState)
@@ -261,9 +266,8 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
         map.setView(target, navZoom, { animate: false })
       })
     }
-    // 시작 시 자동추적 활성화
-    useAppStore.getState().setNavAutoFollow(true)
-  }, [cameraState, isNavigating, navZoom, settings.navigationLookAhead]) // eslint-disable-line react-hooks/exhaustive-deps
+    navStartFocusDoneRef.current = true
+  }, [cameraState, center, isNavigating, map, navZoom, settings.navigationLookAhead])
 
   // 연속 auto-follow: 내비 시작 직후에는 확대 수준을 유지하고, 이후에는 부드럽게 중심만 이동
   useEffect(() => {

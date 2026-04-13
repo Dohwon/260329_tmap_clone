@@ -1170,6 +1170,8 @@ export async function searchNearbyPOIs(category, lat, lng, options = {}) {
   if (category === '음식점') {
     const restaurants = await fetchRouteCorridorRestaurants(lat, lng, routePolyline).catch(() => [])
     if (restaurants.length > 0) return restaurants
+    const fallbackRestaurants = buildNearbyFallback('음식점', lat, lng)
+    return enrichRestaurantPlaces(fallbackRestaurants, routePolyline)
   }
 
   const results = await searchPOI(category, lat, lng, {
