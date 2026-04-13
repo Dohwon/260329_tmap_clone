@@ -6,6 +6,7 @@ struct HomeMapView: View {
     @EnvironmentObject var mapVM: MapViewModel
     @State private var showNavigationMode: Bool = false
     @State private var showLayerSheet: Bool = false
+    @State private var routeRefreshTask: Task<Void, Never>?
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -18,16 +19,16 @@ struct HomeMapView: View {
             if showNavigationMode, let route = mapVM.selectedRoute {
                 NavigationOverlayView(
                     route: route,
-                    routeSummary: mapVM.routeSummaries.first(where: { $0.mkRoute == route }),
+                    routeSummary: mapVM.routeSummaries.first(where: { $0.routeID == route.id }),
                     mergeOptions: mapVM.mergeOptions
                 ) {
                     showNavigationMode = false
-                    mapVM.selectedRoute = nil
-                    mapVM.allRoutes = []
-                    mapVM.routeSummaries = []
-                    mapVM.mergeOptions = []
+                    appState.isNavigating = false
+                    mapVM.stopActiveNavigation()
+                    mapVM.clearRoutePreview()
                     mapVM.disable3DMode()
                 }
+                .environmentObject(mapVM)
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
 
@@ -42,6 +43,29 @@ struct HomeMapView: View {
 
                     Spacer()
                 }
+            }
+
+            if mapVM.routeState == .loading {
+                Color.black.opacity(0.15)
+                    .ignoresSafeArea()
+
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .tint(.white)
+                    Text("경로를 계산하고 있습니다")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.white)
+                    if let destination = appState.destination {
+                        Text(destination.name)
+                            .font(.system(size: 13))
+                            .foregroundColor(.white.opacity(0.85))
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 20)
+                .background(Color.black.opacity(0.72))
+                .cornerRadius(16)
             }
 
             // MARK: - Highway Mode Indicator
@@ -84,8 +108,16 @@ struct HomeMapView: View {
                     Spacer()
                     HomeBottomPanel(onDestinationSelected: { result in
                         Task {
-                            await mapVM.startNavigation(to: result, profile: appState.driverProfile)
-                            await MainActor.run { appState.showRouteSheet = true }
+                            appState.destination = result
+                            let didStart = await mapVM.startNavigation(
+                                to: result,
+                                profile: appState.driverProfile,
+                                preferences: appState.routePreferences,
+                                preferredHighway: mapVM.selectedHighway
+                            )
+                            await MainActor.run {
+                                appState.showRouteSheet = didStart
+                            }
                         }
                     })
                     .environmentObject(mapVM)
@@ -106,26 +138,43 @@ struct HomeMapView: View {
                         routes: mapVM.allRoutes,
                         routeSummaries: mapVM.routeSummaries,
                         mergeOptions: mapVM.mergeOptions,
-                        selectedRoute: $mapVM.selectedRoute,
+                        selectedRoute: Binding(
+                            get: { mapVM.selectedRoute },
+                            set: { newRoute in
+                                if let route = newRoute {
+                                    mapVM.selectRoute(route)
+                                } else { mapVM.selectedRoute = nil }
+                            }
+                        ),
                         driverProfile: $appState.driverProfile,
                         routePreferences: $appState.routePreferences,
+                        planningSummary: mapVM.preferredRoadPlan?.summary,
+                        preferredRoadLabel: mapVM.selectedHighway?.displayLabel,
                         onStart: {
                             appState.showRouteSheet = false
+                            appState.isNavigating = true
                             showNavigationMode = true
+                            mapVM.startActiveNavigation(
+                                profile: appState.driverProfile,
+                                preferences: appState.routePreferences,
+                                preferredHighway: mapVM.selectedHighway
+                            )
                             mapVM.enable3DMode()
                         },
                         onCancel: {
                             appState.showRouteSheet = false
-                            mapVM.selectedRoute = nil
-                            mapVM.allRoutes = []
-                            mapVM.routeSummaries = []
-                            mapVM.mergeOptions = []
+                            mapVM.clearRoutePreview()
                         },
                         onProfileChanged: { newProfile in
-                            // Recalculate summaries when driver profile changes
-                            mapVM.routeSummaries = mapVM.routeService.generateSummaries(
-                                from: mapVM.allRoutes,
-                                profile: newProfile
+                            scheduleRouteRefresh(
+                                profile: newProfile,
+                                preferences: appState.routePreferences
+                            )
+                        },
+                        onPreferencesChanged: { newPreferences in
+                            scheduleRouteRefresh(
+                                profile: appState.driverProfile,
+                                preferences: newPreferences
                             )
                         }
                     )
@@ -137,6 +186,43 @@ struct HomeMapView: View {
         .animation(.easeInOut(duration: 0.3), value: showNavigationMode)
         .sheet(isPresented: $showLayerSheet) {
             LayerToggleSheet(layerVisibility: $mapVM.layerVisibility)
+        }
+        .alert(
+            "경로 안내",
+            isPresented: Binding(
+                get: { mapVM.alertMessage != nil },
+                set: { if !$0 { mapVM.dismissAlert() } }
+            )
+        ) {
+            Button("확인", role: .cancel) {}
+        } message: {
+            Text(mapVM.alertMessage ?? "")
+        }
+    }
+
+    private func scheduleRouteRefresh(
+        profile: DriverProfile,
+        preferences: RoutePreferences
+    ) {
+        routeRefreshTask?.cancel()
+        routeRefreshTask = Task {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+
+            let didRefresh = await mapVM.refreshRoutePreview(
+                profile: profile,
+                preferences: preferences,
+                preferredHighway: mapVM.selectedHighway
+            )
+
+            guard !Task.isCancelled else { return }
+            if !didRefresh {
+                mapVM.updateRouteSummaries(
+                    profile: profile,
+                    preferences: preferences,
+                    preferredHighway: mapVM.selectedHighway
+                )
+            }
         }
     }
 }

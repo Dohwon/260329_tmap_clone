@@ -2,15 +2,18 @@ import SwiftUI
 import MapKit
 
 struct RoutePreviewPanel: View {
-    let routes: [MKRoute]
+    let routes: [AppRoute]
     let routeSummaries: [RouteSummary]
     let mergeOptions: [MergeOption]
-    @Binding var selectedRoute: MKRoute?
+    @Binding var selectedRoute: AppRoute?
     @Binding var driverProfile: DriverProfile
     @Binding var routePreferences: RoutePreferences
+    let planningSummary: String?
+    let preferredRoadLabel: String?
     let onStart: () -> Void
     let onCancel: () -> Void
     var onProfileChanged: ((DriverProfile) -> Void)? = nil
+    var onPreferencesChanged: ((RoutePreferences) -> Void)? = nil
 
     @State private var showMergeOptions = false
 
@@ -24,6 +27,34 @@ struct RoutePreviewPanel: View {
 
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 12) {
+                    if let preferredRoadLabel {
+                        HStack(spacing: 8) {
+                            Image(systemName: "road.lanes")
+                                .foregroundColor(TmapColor.primary)
+                            Text("선호 도로 반영: \(preferredRoadLabel)")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.primary)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(12)
+                        .padding(.horizontal, 16)
+                    }
+
+                    if let planningSummary {
+                        HStack(spacing: 8) {
+                            Image(systemName: "arrow.triangle.swap")
+                                .foregroundColor(.secondary)
+                            Text(planningSummary)
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 16)
+                    }
+
                     DriverProfilePickerView(selected: $driverProfile)
                         .padding(.horizontal, 16)
 
@@ -39,7 +70,7 @@ struct RoutePreviewPanel: View {
                                 RouteOptionRow(
                                     route: route,
                                     label: index == 0 ? "빠른길" : "대안\(index)",
-                                    isSelected: selectedRoute == route,
+                                    isSelected: selectedRoute?.id == route.id,
                                     isBest: index == 0
                                 )
                                 .onTapGesture { selectedRoute = route }
@@ -48,10 +79,10 @@ struct RoutePreviewPanel: View {
                             ForEach(routeSummaries) { summary in
                                 RouteSummaryCard(
                                     summary: summary,
-                                    isSelected: selectedRoute == summary.mkRoute
+                                    isSelected: selectedRoute?.id == summary.routeID
                                 )
                                 .onTapGesture {
-                                    if let route = summary.mkRoute {
+                                    if let route = routes.first(where: { $0.id == summary.routeID }) {
                                         selectedRoute = route
                                     }
                                 }
@@ -128,6 +159,9 @@ struct RoutePreviewPanel: View {
         .shadow(color: .black.opacity(0.12), radius: 16, y: -4)
         .onChange(of: driverProfile) { _, newProfile in
             onProfileChanged?(newProfile)
+        }
+        .onChange(of: routePreferences) { _, newPreferences in
+            onPreferencesChanged?(newPreferences)
         }
     }
 }
@@ -234,7 +268,7 @@ struct RouteSummaryCard: View {
                         Text(summary.title)
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundColor(isSelected ? TmapColor.primary : .primary)
-                        if summary.routeIndex == 0 {
+                        if summary.isRecommended {
                             Text("추천")
                                 .font(.system(size: 11, weight: .bold))
                                 .foregroundColor(.white)
@@ -264,6 +298,12 @@ struct RouteSummaryCard: View {
             Text(summary.explanation)
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
+
+            if let preferredRoadLabel = summary.preferredRoadLabel {
+                Label(preferredRoadLabel, systemImage: "star.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(TmapColor.primary)
+            }
 
             HStack(spacing: 6) {
                 StatBadge(
@@ -374,7 +414,7 @@ struct MergeOptionCard: View {
 // MARK: - Legacy Route Option Row (fallback)
 
 struct RouteOptionRow: View {
-    let route: MKRoute
+    let route: AppRoute
     let label: String
     let isSelected: Bool
     let isBest: Bool

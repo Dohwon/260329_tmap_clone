@@ -40,6 +40,23 @@ struct MoreView: View {
                 } header: {
                     Text("설정")
                 }
+
+                Section {
+                    HStack {
+                        MoreMenuItem(
+                            icon: TmapConfiguration.isConfigured ? "checkmark.shield.fill" : "exclamationmark.triangle.fill",
+                            color: TmapConfiguration.isConfigured ? .green : .orange,
+                            title: "TMAP 연동 상태"
+                        )
+                        Text(TmapConfiguration.isConfigured ? "설정됨" : "앱 키 필요")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(TmapConfiguration.isConfigured ? .green : .orange)
+                    }
+                } header: {
+                    Text("개발 진단")
+                } footer: {
+                    Text("실서비스 전에는 Info.plist의 TMAPAppKey를 설정해야 합니다.")
+                }
             }
             .listStyle(.insetGrouped)
             .navigationTitle("더보기")

@@ -21,7 +21,7 @@ struct SearchMainView: View {
                     if !query.isEmpty {
                         Button {
                             query = ""
-                            mapVM.searchService.results = []
+                            mapVM.searchService.clearResults()
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundColor(.secondary)
@@ -37,7 +37,7 @@ struct SearchMainView: View {
                     Button("취소") {
                         query = ""
                         searchFocused = false
-                        mapVM.searchService.results = []
+                        mapVM.searchService.clearResults()
                     }
                     .foregroundColor(TmapColor.primary)
                     .font(.system(size: 15))
@@ -53,6 +53,8 @@ struct SearchMainView: View {
                 if mapVM.searchService.isLoading {
                     ProgressView()
                         .padding(.top, 40)
+                } else if let errorMessage = mapVM.searchService.errorMessage {
+                    SearchErrorView(message: errorMessage)
                 } else if !mapVM.searchService.results.isEmpty {
                     SearchResultsList(
                         results: mapVM.searchService.results,
@@ -67,7 +69,7 @@ struct SearchMainView: View {
         }
         .onChange(of: query) { _, newVal in
             guard !newVal.isEmpty else {
-                mapVM.searchService.results = []
+                mapVM.searchService.clearResults()
                 return
             }
             mapVM.searchService.searchWithDebounce(
@@ -91,8 +93,15 @@ struct SearchMainView: View {
         appState.destination = result
         appState.selectedTab = .home
         Task {
-            await mapVM.startNavigation(to: result, profile: appState.driverProfile)
-            await MainActor.run { appState.showRouteSheet = true }
+            let didStart = await mapVM.startNavigation(
+                to: result,
+                profile: appState.driverProfile,
+                preferences: appState.routePreferences,
+                preferredHighway: mapVM.selectedHighway
+            )
+            await MainActor.run {
+                appState.showRouteSheet = didStart
+            }
         }
     }
 }
@@ -308,6 +317,26 @@ struct EmptySearchView: View {
             Text("'\(query)'에 대한 결과가 없어요")
                 .font(.system(size: 15))
                 .foregroundColor(.secondary)
+        }
+        .padding(.top, 80)
+    }
+}
+
+struct SearchErrorView: View {
+    let message: String
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 44))
+                .foregroundColor(.secondary.opacity(0.5))
+            Text("검색을 완료하지 못했습니다")
+                .font(.system(size: 16, weight: .semibold))
+            Text(message)
+                .font(.system(size: 13))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
         }
         .padding(.top, 80)
     }

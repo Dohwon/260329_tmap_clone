@@ -48,7 +48,9 @@ struct HomeBottomPanel: View {
                                 name: home.name,
                                 address: home.address,
                                 coordinate: home.coordinate,
-                                category: .other
+                                category: .other,
+                                poiID: nil,
+                                source: .mapKit
                             )
                             onDestinationSelected(result)
                         } else {
@@ -63,7 +65,9 @@ struct HomeBottomPanel: View {
                                 name: work.name,
                                 address: work.address,
                                 coordinate: work.coordinate,
-                                category: .other
+                                category: .other,
+                                poiID: nil,
+                                source: .mapKit
                             )
                             onDestinationSelected(result)
                         } else {
@@ -117,7 +121,7 @@ struct HomeBottomPanel: View {
                             highway: highway,
                             isSelected: mapVM.selectedHighway?.id == highway.id
                         ) {
-                            mapVM.selectHighway(highway)
+                            mapVM.togglePreferredHighway(highway)
                         }
                     }
                 }

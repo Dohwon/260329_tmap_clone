@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RoadPick Web Lab</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="panel">
+        <header class="hero">
+          <p class="eyebrow">RoadPick Web Lab</p>
+          <h1>웹 기반 TMAP 검증 페이지</h1>
+          <p class="subtext">검색, 경로, nearToRoad, matchToRoads, 선호 도로 판정을 브라우저에서 확인합니다.</p>
+        </header>
+
+        <section class="card">
+          <h2>기준 좌표</h2>
+          <div class="inline action-row">
+            <button id="useCurrentLocationButton" class="primary">현재 위치로 시작</button>
+            <button id="pickStartButton">지도에서 출발지 선택</button>
+            <button id="pickEndButton">지도에서 도착지 선택</button>
+          </div>
+          <div id="selectionStatus" class="summary muted">출발지는 현재 위치나 지도 탭으로 설정할 수 있습니다.</div>
+          <div class="grid two">
+            <label>
+              <span>출발 위도</span>
+              <input id="startLat" value="37.4979" />
+            </label>
+            <label>
+              <span>출발 경도</span>
+              <input id="startLon" value="127.0276" />
+            </label>
+          </div>
+          <div class="grid two">
+            <label>
+              <span>도착 위도</span>
+              <input id="endLat" value="37.5547" />
+            </label>
+            <label>
+              <span>도착 경도</span>
+              <input id="endLon" value="126.9707" />
+            </label>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>검색</h2>
+          <div class="inline">
+            <input id="searchKeyword" value="서울역" placeholder="목적지 검색어" />
+            <button id="searchButton">POI 검색</button>
+          </div>
+          <div id="searchResults" class="list"></div>
+        </section>
+
+        <section class="card">
+          <h2>선호 도로</h2>
+          <label>
+            <span>고속도로</span>
+            <select id="highwaySelect"></select>
+          </label>
+          <div class="toggle-row">
+            <label><input type="checkbox" id="preferHighway" checked /> 해당도로 선호</label>
+            <label><input type="checkbox" id="allowNarrowRoad" /> 좁은 길 포함</label>
+          </div>
+          <div class="toggle-row">
+            <label><input type="checkbox" id="preferMountainRoad" /> 산길도로 선호</label>
+          </div>
+          <div class="inline">
+            <button id="routeButton" class="primary">경로 요청</button>
+            <button id="sampleTraceButton">샘플 점열 생성</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>도로 판정</h2>
+          <div class="inline">
+            <button id="nearRoadButton">nearToRoad</button>
+            <button id="matchRoadsButton">matchToRoads</button>
+          </div>
+          <textarea id="traceCoords" rows="4" placeholder="127.0276,37.4979|127.03,37.50|..."></textarea>
+          <div id="adherenceSummary" class="summary muted">아직 판정 전</div>
+        </section>
+
+        <section class="card">
+          <h2>로그</h2>
+          <pre id="logOutput" class="log"></pre>
+        </section>
+      </aside>
+
+      <main class="map-shell">
+        <div id="map"></div>
+        <div class="map-hud">
+          <section class="trip-strip">
+            <div class="trip-strip-top">
+              <span id="roadStatePill" class="chip">선호 도로 없음</span>
+              <span id="serviceModePill" class="chip subtle">Road-first navigation</span>
+            </div>
+            <div class="trip-strip-main">
+              <strong id="tripEtaLabel">도착 정보 없음</strong>
+              <span id="tripDistanceLabel">경로를 선택하면 ETA와 잔여 거리를 표시합니다.</span>
+            </div>
+            <div id="tripInstructionMini" class="trip-instruction-mini">목적지와 선호 도로를 고르면 실제 안내 흐름을 테스트할 수 있습니다.</div>
+          </section>
+          <div class="map-rail">
+            <button id="centerOriginButton" class="round-button" title="출발지 중심">출발</button>
+            <button id="fitRouteButton" class="round-button" title="선택 경로 보기">경로</button>
+            <button id="rerouteButton" class="round-button primary" title="다시 경로 계산">재탐색</button>
+          </div>
+        </div>
+        <div id="mapHint" class="map-hint hidden">지도에서 출발지를 탭하세요.</div>
+        <div class="floating-card">
+          <div id="routeCards" class="route-cards"></div>
+          <div id="guidancePanel" class="guidance-panel">
+            <div class="guidance-head">
+              <strong id="guidanceTitle">안내 전</strong>
+              <span id="guidanceBadge" class="pill hidden">안내 중</span>
+            </div>
+            <div id="guidanceSummary" class="muted">경로를 하나 선택한 뒤 안내를 시작하세요.</div>
+            <div class="guidance-metrics">
+              <div class="metric-card">
+                <span>진행률</span>
+                <strong id="guidanceProgressLabel">0%</strong>
+              </div>
+              <div class="metric-card">
+                <span>남은 거리</span>
+                <strong id="guidanceRemainingDistance">-</strong>
+              </div>
+              <div class="metric-card">
+                <span>남은 시간</span>
+                <strong id="guidanceRemainingEta">-</strong>
+              </div>
+            </div>
+            <div class="guidance-progress">
+              <div id="guidanceProgressFill" class="guidance-progress-fill"></div>
+            </div>
+            <div id="guidanceInstruction" class="guidance-instruction">다음 안내가 없습니다.</div>
+            <div id="guidanceStepList" class="guidance-step-list"></div>
+            <div class="inline guidance-actions">
+              <button id="startGuidanceButton" class="primary">선택 경로로 안내 시작</button>
+              <button id="refreshGuidanceButton">현재 위치 기준 갱신</button>
+              <button id="nextGuidanceButton">다음 안내</button>
+              <button id="autoGuidanceButton">자동 진행</button>
+              <button id="liveTrackingButton">실시간 추적</button>
+              <button id="stopGuidanceButton">안내 종료</button>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="./app.js"></script>
+  </body>
+  </html>

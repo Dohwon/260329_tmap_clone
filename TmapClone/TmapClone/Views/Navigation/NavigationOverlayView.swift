@@ -2,21 +2,33 @@ import SwiftUI
 import MapKit
 
 struct NavigationOverlayView: View {
-    let route: MKRoute
+    @EnvironmentObject var mapVM: MapViewModel
+    let route: AppRoute
     let routeSummary: RouteSummary?
     let mergeOptions: [MergeOption]
     let onEnd: () -> Void
 
     @State private var currentStepIndex: Int = 0
-    @StateObject private var locationService = LocationService()
 
-    private var currentStep: MKRoute.Step? {
+    private var currentStep: AppRouteStep? {
         guard currentStepIndex < route.steps.count else { return nil }
         return route.steps[currentStepIndex]
     }
 
     private var speedLimit: Int {
         routeSummary?.dominantSpeedLimit ?? 100
+    }
+
+    private var remainingDistance: Double {
+        mapVM.navigationProgress?.remainingDistance ?? route.distance
+    }
+
+    private var remainingTime: Double {
+        mapVM.navigationProgress?.remainingTime ?? route.expectedTravelTime
+    }
+
+    private var preferredRoadLabel: String? {
+        route.preferredRoadLabel
     }
 
     var body: some View {
@@ -34,7 +46,7 @@ struct NavigationOverlayView: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     if let step = currentStep {
-                        Text(step.notice ?? step.instructions)
+                        Text(step.instruction)
                             .font(.system(size: 20, weight: .bold))
                             .foregroundColor(.white)
                             .lineLimit(2)
@@ -72,7 +84,7 @@ struct NavigationOverlayView: View {
             HStack {
                 NavigationStatItem(
                     title: "남은거리",
-                    value: formatDistance(route.distance),
+                    value: formatDistance(remainingDistance),
                     icon: "road.lanes"
                 )
                 Divider().frame(height: 32)
@@ -84,16 +96,15 @@ struct NavigationOverlayView: View {
                 Divider().frame(height: 32)
                 NavigationStatItem(
                     title: "남은시간",
-                    value: formatDuration(route.expectedTravelTime),
+                    value: formatDuration(remainingTime),
                     icon: "timer"
                 )
 
                 Spacer()
 
-                if let speed = locationService.currentLocation.map({ max(0, $0.speed * 3.6) }),
-                   speed > 0 {
+                if mapVM.locationService.speed > 0 {
                     VStack(spacing: 2) {
-                        Text("\(Int(speed))")
+                        Text("\(Int(mapVM.locationService.speed))")
                             .font(.system(size: 22, weight: .bold))
                             .foregroundColor(TmapColor.primary)
                         Text("km/h")
@@ -107,6 +118,41 @@ struct NavigationOverlayView: View {
             .padding(.vertical, 10)
             .background(Color.white)
             .shadow(color: .black.opacity(0.08), radius: 4, y: 2)
+
+            HStack {
+                Label(mapVM.isRerouting ? "실시간 재탐색 중" : mapVM.navigationStatusMessage, systemImage: "dot.radiowaves.left.and.right")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(mapVM.navigationProgress?.isOffRoute == true ? .orange : TmapColor.primary)
+                Spacer()
+                if let preferredRoadLabel {
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text("\(preferredRoadLabel) • \(mapVM.preferredRoadAdherence.shortLabel)")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(preferredRoadColor)
+                        if let currentRoadName = mapVM.preferredRoadAdherence.currentRoadName {
+                            Text(currentRoadName)
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        } else if let distance = mapVM.preferredRoadAdherence.distanceToPreferredRoad {
+                            Text("도로 축 \(formatDistance(distance))")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                } else if let progress = mapVM.navigationProgress {
+                    Text("이탈 \(Int(progress.distanceFromRoute))m")
+                        .font(.system(size: 11))
+                        .foregroundColor(progress.isOffRoute ? .orange : .secondary)
+                } else {
+                    Text("현재는 경로 미리보기 기반 안내")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Color(.systemGray6))
 
             // MARK: - Camera & Speed Limit Info Bar
             HStack(spacing: 0) {
@@ -192,8 +238,6 @@ struct NavigationOverlayView: View {
                 .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
             }
         }
-        .onAppear { locationService.startUpdating() }
-        .onDisappear { locationService.stopUpdating() }
     }
 
     private func formatDistance(_ meters: Double) -> String {
@@ -212,10 +256,25 @@ struct NavigationOverlayView: View {
     }
 
     private func arrivalTime() -> String {
-        let arrival = Date().addingTimeInterval(route.expectedTravelTime)
+        let arrival = Date().addingTimeInterval(remainingTime)
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
         return formatter.string(from: arrival)
+    }
+
+    private var preferredRoadColor: Color {
+        switch mapVM.preferredRoadAdherence.state {
+        case .onPreferredRoad:
+            return .green
+        case .approaching:
+            return .blue
+        case .leavingPreferredRoad, .offPreferredRoad:
+            return .orange
+        case .evaluating:
+            return TmapColor.primary
+        case .inactive:
+            return .secondary
+        }
     }
 }
 

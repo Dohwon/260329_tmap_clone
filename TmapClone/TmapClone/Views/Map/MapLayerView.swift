@@ -22,21 +22,18 @@ struct MapLayerView: View {
 
             // Selected route
             if let route = mapVM.selectedRoute {
-                MapPolyline(route.polyline)
+                MapPolyline(coordinates: route.coordinates)
                     .stroke(TmapColor.primary, lineWidth: 6)
             }
 
             // Alternative routes
-            ForEach(mapVM.allRoutes.dropFirst(), id: \.self) { route in
-                MapPolyline(route.polyline)
+            ForEach(mapVM.allRoutes.dropFirst(), id: \.id) { route in
+                MapPolyline(coordinates: route.coordinates)
                     .stroke(Color.gray.opacity(0.5), lineWidth: 4)
             }
 
-            // Highway mode: dashed line between start and end
+            // Preferred road context: show endpoints and planned waypoints instead of a fake straight line
             if let highway = mapVM.selectedHighway {
-                MapPolyline(coordinates: [highway.start, highway.end])
-                    .stroke(Color.green.opacity(0.7), lineWidth: 4)
-
                 // Highway start annotation
                 Annotation(highway.startAddress, coordinate: highway.start) {
                     HighwayEndpointView(label: "기점", color: .green)
@@ -47,6 +44,14 @@ struct MapLayerView: View {
                    highway.start.longitude != highway.end.longitude {
                     Annotation(highway.endAddress, coordinate: highway.end) {
                         HighwayEndpointView(label: "종점", color: .red)
+                    }
+                }
+            }
+
+            if let plan = mapVM.preferredRoadPlan {
+                ForEach(plan.waypoints) { waypoint in
+                    Annotation(waypoint.name, coordinate: waypoint.coordinate) {
+                        PreferredRoadWaypointView(waypoint: waypoint)
                     }
                 }
             }
@@ -155,6 +160,34 @@ struct POIAnnotationView: View {
             Image(systemName: poi.category.icon)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.white)
+        }
+    }
+}
+
+struct PreferredRoadWaypointView: View {
+    let waypoint: RouteWaypoint
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ZStack {
+                Circle()
+                    .fill(TmapColor.primary.opacity(0.15))
+                    .frame(width: 34, height: 34)
+                Circle()
+                    .stroke(TmapColor.primary, lineWidth: 1.5)
+                    .frame(width: 34, height: 34)
+                Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(TmapColor.primary)
+            }
+
+            Text(waypoint.name)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.primary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color(.systemBackground))
+                .cornerRadius(6)
         }
     }
 }

@@ -26,6 +26,12 @@
 		A017 /* FavoritesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F017 /* FavoritesView.swift */; };
 		A018 /* MoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F018 /* MoreView.swift */; };
 		A019 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F019 /* Assets.xcassets */; };
+		A020 /* PreferredRoadPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = F021 /* PreferredRoadPlan.swift */; };
+		A021 /* TmapModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F022 /* TmapModels.swift */; };
+		A022 /* PreferredRoadPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F023 /* PreferredRoadPlanner.swift */; };
+		A023 /* TmapConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = F024 /* TmapConfiguration.swift */; };
+		A024 /* TmapAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F025 /* TmapAPIClient.swift */; };
+		A025 /* TmapRouteService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F026 /* TmapRouteService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -49,6 +55,12 @@
 		F018 /* MoreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Home/MoreView.swift"; sourceTree = "<group>"; };
 		F019 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Assets.xcassets"; sourceTree = "<group>"; };
 		F020 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F021 /* PreferredRoadPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Models/PreferredRoadPlan.swift"; sourceTree = "<group>"; };
+		F022 /* TmapModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Models/TmapModels.swift"; sourceTree = "<group>"; };
+		F023 /* PreferredRoadPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Services/PreferredRoadPlanner.swift"; sourceTree = "<group>"; };
+		F024 /* TmapConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Services/TmapConfiguration.swift"; sourceTree = "<group>"; };
+		F025 /* TmapAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Services/TmapAPIClient.swift"; sourceTree = "<group>"; };
+		F026 /* TmapRouteService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Services/TmapRouteService.swift"; sourceTree = "<group>"; };
 		FAPP /* TmapClone.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TmapClone.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -84,7 +96,7 @@
 			children = (
 				F001, F002, F003,
 				F004, F005, F006,
-				F007, F008, F009, F010,
+				F007, F021, F022, F008, F009, F010, F023, F024, F025, F026,
 				F011, F012, F013,
 				F014, F015, F016, F017, F018,
 				F019, F020,
@@ -165,7 +177,8 @@
 				A001, A002, A003, A004, A005,
 				A006, A007, A008, A009, A010,
 				A011, A012, A013, A014, A015,
-				A016, A017, A018,
+				A016, A017, A018, A020, A021,
+				A022, A023, A024, A025,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

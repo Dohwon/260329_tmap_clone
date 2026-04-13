@@ -7,6 +7,8 @@ struct SearchResult: Identifiable, Hashable {
     let address: String
     let coordinate: CLLocationCoordinate2D
     let category: PlaceCategory
+    let poiID: String?
+    let source: SearchSource
 
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
@@ -46,6 +48,11 @@ struct SearchResult: Identifiable, Hashable {
             case .other: return "mappin"
             }
         }
+    }
+
+    enum SearchSource: String, Hashable {
+        case mapKit
+        case tmap
     }
 }
 
