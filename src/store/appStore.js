@@ -1,4 +1,7 @@
 import { create } from 'zustand'
+
+// 시뮬레이션 인터벌 ID (스토어 외부에 보관)
+let _simIntervalId = null
 import { HIGHWAYS } from '../data/highwayData'
 import { SCENIC_SEGMENTS_SORTED } from '../data/scenicRoads'
 import { PRESET_INFO, MOCK_RECENT_SEARCHES } from '../data/mockData'
@@ -1384,23 +1387,120 @@ const useAppStore = create((set, get) => ({
     })
     return true
   },
-  stopNavigation: () => set({
-    isNavigating: false,
-    navAutoFollow: false,
-    isSearchOverlayOpen: false,
-    destination: null,
-    routes: [],
-    selectedRouteId: null,
-    routePanelMode: 'full',
-    isRefreshingNavigation: false,
-    navigationLastRefreshedAt: 0,
-    drivePathHistory: [],
-    driveSampleHistory: [],
-    driveRouteSnapshot: null,
-    navigationMatchedLocation: null,
-    navigationProgressKm: 0,
-    scenicReferencePolyline: [],
-  }),
+  stopNavigation: () => {
+    // 내비 종료 시 시뮬레이션도 같이 정지
+    if (_simIntervalId != null) {
+      clearInterval(_simIntervalId)
+      _simIntervalId = null
+    }
+    set({
+      isNavigating: false,
+      isDriveSimulation: false,
+      navAutoFollow: false,
+      isSearchOverlayOpen: false,
+      destination: null,
+      routes: [],
+      selectedRouteId: null,
+      routePanelMode: 'full',
+      isRefreshingNavigation: false,
+      navigationLastRefreshedAt: 0,
+      drivePathHistory: [],
+      driveSampleHistory: [],
+      driveRouteSnapshot: null,
+      navigationMatchedLocation: null,
+      navigationProgressKm: 0,
+      scenicReferencePolyline: [],
+    })
+  },
+
+  // ── 주행 시뮬레이터 ─────────────────────────────────
+  isDriveSimulation: false,
+
+  startDriveSimulation: (speedKmh = 60) => {
+    const { routes, selectedRouteId } = get()
+    const route = routes.find((r) => r.id === selectedRouteId) ?? routes[0] ?? null
+    const polyline = route?.polyline ?? []
+    if (polyline.length < 2) return
+
+    // 이미 실행 중이면 정지 후 재시작
+    if (_simIntervalId != null) {
+      clearInterval(_simIntervalId)
+      _simIntervalId = null
+    }
+    set({ isDriveSimulation: true })
+
+    const INTERVAL_MS = 1000
+    const metersPerStep = (speedKmh * 1000) / 3600
+
+    // 폴리라인 세그먼트 길이 사전 계산
+    const segLengths = []
+    for (let i = 0; i < polyline.length - 1; i++) {
+      segLengths.push(haversineKm(polyline[i][0], polyline[i][1], polyline[i + 1][0], polyline[i + 1][1]) * 1000)
+    }
+
+    let segIdx = 0
+    let offsetM = 0 // 현재 세그먼트 내 진행 거리(m)
+
+    _simIntervalId = setInterval(() => {
+      if (!get().isDriveSimulation) {
+        clearInterval(_simIntervalId)
+        _simIntervalId = null
+        return
+      }
+
+      // 이번 스텝만큼 전진
+      let remaining = metersPerStep
+      while (remaining > 0 && segIdx < segLengths.length) {
+        const segLen = segLengths[segIdx]
+        if (offsetM + remaining < segLen) {
+          offsetM += remaining
+          remaining = 0
+        } else {
+          remaining -= (segLen - offsetM)
+          segIdx += 1
+          offsetM = 0
+        }
+      }
+
+      // 경로 끝 도달 시 시뮬레이션 종료
+      if (segIdx >= segLengths.length) {
+        clearInterval(_simIntervalId)
+        _simIntervalId = null
+        set({ isDriveSimulation: false })
+        return
+      }
+
+      // 현재 세그먼트에서 보간 위치 계산
+      const segLen = segLengths[segIdx]
+      const ratio = segLen > 0 ? Math.min(1, offsetM / segLen) : 0
+      const p0 = polyline[segIdx]
+      const p1 = polyline[segIdx + 1]
+      const lat = p0[0] + (p1[0] - p0[0]) * ratio
+      const lng = p0[1] + (p1[1] - p0[1]) * ratio
+
+      // 헤딩 계산
+      const dLat = p1[0] - p0[0]
+      const dLng = p1[1] - p0[1]
+      const heading = (Math.atan2(dLng, dLat) * 180) / Math.PI
+      const normalizedHeading = (heading + 360) % 360
+
+      get().setUserLocation({
+        lat,
+        lng,
+        speedKmh,
+        heading: normalizedHeading,
+        accuracy: 5,
+      })
+    }, INTERVAL_MS)
+  },
+
+  stopDriveSimulation: () => {
+    if (_simIntervalId != null) {
+      clearInterval(_simIntervalId)
+      _simIntervalId = null
+    }
+    set({ isDriveSimulation: false })
+  },
 
   // ── 경로 저장 ──────────────────────────────────────
   savedRoutes: readStorage(STORAGE_KEYS.savedRoutes, []),
