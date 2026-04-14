@@ -162,3 +162,31 @@
   - `src/store/appStore.js`
   - `src/components/Navigation/ScenicRoadDialog.jsx`
   - `src/services/tmapService.js`
+
+### 2026-04-14 웹 실시간 위치 추종/실주행 기록 한계
+
+- 상태: `mitigated`
+- 증상:
+  - 내 위치가 경로를 즉시 따라가지 못해 지나간 구간이 지워지지 않고 전체 경로가 남아 보였음
+  - 실제 주행 저장용 샘플이 너무 듬성해서 안내 경로와 다른 실제 이동을 충분히 기록하지 못했음
+- 원인:
+  - 진행률 계산과 지도 표시가 raw GPS 기준으로 느슨하게 연결돼 있었고, 경로에 투영한 matched 위치를 별도 상태로 관리하지 않았음
+  - 주행 기록 샘플 기준이 8m~15m 수준이라 저속/도심 구간에서 실제 움직임을 놓치기 쉬웠음
+- 현재 대응:
+  - 현재 경로에 투영한 `navigationMatchedLocation`, `navigationProgressKm`를 별도 상태로 관리
+  - 지도에는 남은 경로만 표시하고, 실제 지나간 구간은 별도 실주행 궤적으로 표시
+  - 실주행 저장 샘플 간격을 더 촘촘하게 조정
+  - off-route 재탐색은 raw GPS 기준으로 유지
+- 남은 한계:
+  - 브라우저 geolocation 자체가 OS 절전, 기기 센서, 권한 상태에 따라 업데이트 주기가 흔들릴 수 있음
+  - matched 위치는 앱 내부 map-matching 엔진이 아니라 polyline 투영 기반이라, 복층도로/근접 평행도로에서는 native SDK보다 부정확할 수 있음
+- 해결 방향:
+  - 웹은 최소 내비 복구 수준까지만 유지
+  - 실제 안내 엔진은 native SDK로 전환
+  - 상세 설계는 `docs/tmap-sdk-migration-plan-2026-04-14.md` 참고
+- 관련 파일:
+  - `src/store/appStore.js`
+  - `src/components/Map/MapView.jsx`
+  - `src/components/Navigation/NavigationOverlay.jsx`
+  - `src/hooks/useGeolocation.js`
+  - `src/utils/navigationLogic.js`

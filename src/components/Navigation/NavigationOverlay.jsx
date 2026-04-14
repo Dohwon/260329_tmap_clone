@@ -6,6 +6,7 @@ import { SCENIC_SEGMENTS } from '../../data/scenicRoads'
 import { PRESET_INFO } from '../../data/mockData'
 import { fetchUpcomingFuelContext, getDiscountedFuelPrice, searchNearbyPOIs } from '../../services/tmapService'
 import {
+  analyzeRouteProgress,
   formatGuidanceDistance,
   getGuidanceInstruction,
   getGuidancePriority,
@@ -189,7 +190,7 @@ function hasValidCoordPair(coord) {
 export default function NavigationOverlay() {
   const {
     isNavigating, stopNavigation, destination, routes, selectedRouteId,
-    mergeOptions, userLocation, saveRoute, savedRoutes, drivePathHistory, cameraReports, reportCamera,
+    mergeOptions, userLocation, navigationMatchedLocation, saveRoute, savedRoutes, drivePathHistory, cameraReports, reportCamera,
     navAutoFollow, setNavAutoFollow, addWaypoint, searchRoute, waypoints,
     refreshNavigationRoute, navigationLastRefreshedAt, isRefreshingNavigation,
     settings, driverPreset, setDriverPreset, showRoutePanel, openSearchOverlay, safetyHazards, refreshSafetyHazards,
@@ -280,8 +281,10 @@ export default function NavigationOverlay() {
   }, [userLocation, isNavigating])
 
   const route = routes.find(r => r.id === selectedRouteId)
-  const { progress: routeProgress, nextAction } = getGuidancePriority(route, userLocation, mergeOptions)
-  const currentRouteSegment = getCurrentRouteSegment(route, userLocation)
+  const guidanceLocation = navigationMatchedLocation ?? userLocation
+  const { progress: routeProgress, nextAction } = getGuidancePriority(route, guidanceLocation, mergeOptions)
+  const offRouteProgress = analyzeRouteProgress(route, userLocation)
+  const currentRouteSegment = getCurrentRouteSegment(route, guidanceLocation)
   const liveMergeOptions = getUpcomingMergeOptions(mergeOptions, routeProgress.progressKm)
   const nextMergeOpt = liveMergeOptions.find((option) => option.remainingDistanceKm > 0.03) ?? liveMergeOptions[0]
   const remainingEta = getRemainingEta(route, routeProgress.remainingKm)
@@ -454,7 +457,7 @@ export default function NavigationOverlay() {
     if (!isNavigating || !route || !userLocation || isRefreshingNavigation || route.source === 'recorded') return
     const cooldownPassed = Date.now() - navigationLastRefreshedAt > 15000
     const shouldRefreshForFallback = route.source !== 'live' && cooldownPassed
-    const shouldRefreshForOffRoute = routeProgress.distanceToRouteM != null && routeProgress.distanceToRouteM > 180 && cooldownPassed
+    const shouldRefreshForOffRoute = offRouteProgress.distanceToRouteM != null && offRouteProgress.distanceToRouteM > 180 && cooldownPassed
 
     if (shouldRefreshForFallback || shouldRefreshForOffRoute) {
       refreshNavigationRoute(shouldRefreshForOffRoute ? 'off-route' : 'live-retry')
@@ -465,7 +468,7 @@ export default function NavigationOverlay() {
     navigationLastRefreshedAt,
     refreshNavigationRoute,
     route,
-    routeProgress.distanceToRouteM,
+    offRouteProgress.distanceToRouteM,
     userLocation,
   ])
 

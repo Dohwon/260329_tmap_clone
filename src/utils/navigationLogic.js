@@ -242,12 +242,16 @@ export function analyzeRouteProgress(route, userLocation) {
       progressKm: 0,
       remainingKm: route?.distance ?? 0,
       distanceToRouteM: null,
+      matchedLocation: null,
+      matchedSegmentIndex: -1,
     }
   }
 
   let travelledM = 0
   let bestDistanceM = Infinity
   let bestProgressKm = 0
+  let bestMatchedLocation = null
+  let bestSegmentIndex = -1
 
   for (let index = 0; index < polyline.length - 1; index += 1) {
     const start = polyline[index]
@@ -258,6 +262,11 @@ export function analyzeRouteProgress(route, userLocation) {
     if (projection.distanceM < bestDistanceM) {
       bestDistanceM = projection.distanceM
       bestProgressKm = (travelledM + (segmentLengthM * projection.ratio)) / 1000
+      bestMatchedLocation = {
+        lat: start[0] + ((end[0] - start[0]) * projection.ratio),
+        lng: start[1] + ((end[1] - start[1]) * projection.ratio),
+      }
+      bestSegmentIndex = index
     }
     travelledM += segmentLengthM
   }
@@ -266,7 +275,44 @@ export function analyzeRouteProgress(route, userLocation) {
     progressKm: bestProgressKm,
     remainingKm: Math.max(0, (route?.distance ?? 0) - bestProgressKm),
     distanceToRouteM: Number.isFinite(bestDistanceM) ? bestDistanceM : null,
+    matchedLocation: bestMatchedLocation,
+    matchedSegmentIndex: bestSegmentIndex,
   }
+}
+
+export function buildRemainingRoutePolyline(route, progressKm = 0, matchedLocation = null) {
+  const polyline = route?.polyline ?? []
+  if (!Array.isArray(polyline) || polyline.length < 2) return polyline ?? []
+  if (!Number.isFinite(Number(progressKm)) || Number(progressKm) <= 0) return polyline
+
+  const targetProgressM = Number(progressKm) * 1000
+  let travelledM = 0
+
+  for (let index = 0; index < polyline.length - 1; index += 1) {
+    const start = toPoint(polyline[index])
+    const end = toPoint(polyline[index + 1])
+    if (!start || !end) continue
+
+    const segmentLengthM = haversineM(start.lat, start.lng, end.lat, end.lng)
+    const nextTravelledM = travelledM + segmentLengthM
+
+    if (targetProgressM <= nextTravelledM) {
+      const remainM = Math.max(0, targetProgressM - travelledM)
+      const ratio = segmentLengthM > 0 ? Math.min(1, Math.max(0, remainM / segmentLengthM)) : 0
+      const snappedPoint = matchedLocation && Number.isFinite(Number(matchedLocation.lat)) && Number.isFinite(Number(matchedLocation.lng))
+        ? [Number(matchedLocation.lat), Number(matchedLocation.lng)]
+        : [
+            start.lat + ((end.lat - start.lat) * ratio),
+            start.lng + ((end.lng - start.lng) * ratio),
+          ]
+      return [snappedPoint, ...polyline.slice(index + 1)]
+    }
+
+    travelledM = nextTravelledM
+  }
+
+  const tail = polyline[polyline.length - 1]
+  return tail ? [tail] : []
 }
 
 export function getCurrentRouteSegment(route, userLocation) {

@@ -6,6 +6,7 @@ export default function useGeolocation() {
   const { setUserLocation, setMapCenter, setUserAddress } = useAppStore()
   const firstFix = useRef(false)
   const addressTimer = useRef(null)
+  const watchIdRef = useRef(null)
 
   useEffect(() => {
     if (!navigator.geolocation) {
@@ -42,6 +43,18 @@ export default function useGeolocation() {
       }
     }
 
+    const restartWatch = (navigating) => {
+      if (watchIdRef.current != null) {
+        navigator.geolocation.clearWatch(watchIdRef.current)
+      }
+      watchIdRef.current = navigator.geolocation.watchPosition(success, error, {
+        enableHighAccuracy: true,
+        // 내비 중에는 캐시 없이 항상 최신 GPS 값 사용, 일반 모드는 1초 캐시 허용
+        maximumAge: navigating ? 0 : 1000,
+        timeout: 8000,
+      })
+    }
+
     // 빠른 응답을 위해 low accuracy 먼저, 이후 high accuracy watch
     navigator.geolocation.getCurrentPosition(success, error, {
       enableHighAccuracy: false,
@@ -49,15 +62,21 @@ export default function useGeolocation() {
       maximumAge: 30000,
     })
 
-    const watchId = navigator.geolocation.watchPosition(success, error, {
-      enableHighAccuracy: true,
-      maximumAge: 5000,
-      timeout: 10000,
-    })
+    restartWatch(false)
+
+    // 내비 시작/종료 시 GPS 수신 주기 전환
+    const unsubscribe = useAppStore.subscribe(
+      (state, prevState) => {
+        if (state.isNavigating !== prevState.isNavigating) {
+          restartWatch(state.isNavigating)
+        }
+      },
+    )
 
     return () => {
       clearTimeout(addressTimer.current)
-      navigator.geolocation.clearWatch(watchId)
+      if (watchIdRef.current != null) navigator.geolocation.clearWatch(watchIdRef.current)
+      unsubscribe()
     }
   }, [])
 }

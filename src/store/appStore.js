@@ -3,7 +3,7 @@ import { HIGHWAYS } from '../data/highwayData'
 import { SCENIC_SEGMENTS_SORTED } from '../data/scenicRoads'
 import { PRESET_INFO, MOCK_RECENT_SEARCHES } from '../data/mockData'
 import { enrichDestinationTarget, fetchDirectRoute, fetchRouteByWaypoints, fetchRoutes, fetchTmapStatus, searchNearbyPOIs, searchPOI, searchSafetyHazards } from '../services/tmapService'
-import { analyzeRecordedDrive, ensureLiveRouteSource, isUsableLiveRoute } from '../utils/navigationLogic'
+import { analyzeRecordedDrive, analyzeRouteProgress, ensureLiveRouteSource, isUsableLiveRoute } from '../utils/navigationLogic'
 
 const DEFAULT_CENTER = [37.5665, 126.978]
 const DEFAULT_ORIGIN = { lat: 37.5665, lng: 126.978, speedKmh: 0, heading: 0, accuracy: null }
@@ -1161,13 +1161,39 @@ const useAppStore = create((set, get) => ({
   drivePathHistory: [],
   driveSampleHistory: [],
   driveRouteSnapshot: null,
+  navigationMatchedLocation: null,
+  navigationProgressKm: 0,
   setUserLocation: (location) =>
     set((state) => {
       const nextPoint = [location.lat, location.lng]
+      const activeRoute = state.isNavigating
+        ? (state.routes.find((route) => route.id === state.selectedRouteId) ?? state.routes[0] ?? null)
+        : null
+      const routeProgress = activeRoute ? analyzeRouteProgress(activeRoute, location) : null
+      const snapDistanceLimitM = Math.max(28, Math.min(85, Number(location.accuracy ?? 45)))
+      const matchedLocation = routeProgress?.matchedLocation && routeProgress.distanceToRouteM != null && routeProgress.distanceToRouteM <= snapDistanceLimitM
+        ? {
+            ...location,
+            lat: routeProgress.matchedLocation.lat,
+            lng: routeProgress.matchedLocation.lng,
+            rawLat: location.lat,
+            rawLng: location.lng,
+            snappedToRoute: true,
+          }
+        : null
       const latestDrivePoint = state.drivePathHistory[state.drivePathHistory.length - 1]
       const latestDriveSample = state.driveSampleHistory[state.driveSampleHistory.length - 1]
+      const elapsedSinceLastSampleSec = latestDriveSample?.capturedAt
+        ? (Date.now() - Date.parse(latestDriveSample.capturedAt)) / 1000
+        : Infinity
+      const currentSpeedKmh = Number.isFinite(Number(location.speedKmh)) ? Number(location.speedKmh) : 0
+      const movedSinceLastDrivePointKm = latestDrivePoint
+        ? haversineKm(latestDrivePoint[0], latestDrivePoint[1], location.lat, location.lng)
+        : Infinity
       const shouldAppendDrivePoint = !latestDrivePoint
-        || haversineKm(latestDrivePoint[0], latestDrivePoint[1], location.lat, location.lng) >= 0.015
+        || movedSinceLastDrivePointKm >= 0.004
+        || (currentSpeedKmh >= 4 && elapsedSinceLastSampleSec >= 2)
+        || (currentSpeedKmh < 4 && movedSinceLastDrivePointKm >= 0.0015 && elapsedSinceLastSampleSec >= 4)
       const sampleCapturedAt = new Date().toISOString()
       const speedDelta = latestDriveSample
         ? Math.abs((location.speedKmh ?? 0) - (latestDriveSample.speedKmh ?? 0))
@@ -1175,22 +1201,18 @@ const useAppStore = create((set, get) => ({
       const movedSinceLastSampleKm = latestDriveSample
         ? haversineKm(latestDriveSample.lat, latestDriveSample.lng, location.lat, location.lng)
         : Infinity
-      const elapsedSinceLastSampleSec = latestDriveSample?.capturedAt
-        ? (Date.now() - Date.parse(latestDriveSample.capturedAt)) / 1000
-        : Infinity
       const shouldAppendDriveSample = !latestDriveSample
-        || movedSinceLastSampleKm >= 0.008
-        || speedDelta >= 8
-        || elapsedSinceLastSampleSec >= 5
+        || movedSinceLastSampleKm >= 0.003
+        || speedDelta >= 4
+        || elapsedSinceLastSampleSec >= 2
       const nextDriveSample = {
         lat: location.lat,
         lng: location.lng,
-        speedKmh: Number.isFinite(Number(location.speedKmh)) ? Number(location.speedKmh) : 0,
+        speedKmh: currentSpeedKmh,
         heading: Number.isFinite(Number(location.heading)) ? Number(location.heading) : null,
         capturedAt: sampleCapturedAt,
       }
       const currentStationary = state.stationaryVisitState
-      const currentSpeedKmh = Number.isFinite(Number(location.speedKmh)) ? Number(location.speedKmh) : 0
       const isSlowEnough = currentSpeedKmh <= 8
       const nextStationary = !isSlowEnough
         ? null
@@ -1225,6 +1247,8 @@ const useAppStore = create((set, get) => ({
         driveSampleHistory: state.isNavigating && shouldAppendDriveSample
           ? [...state.driveSampleHistory.slice(-1499), nextDriveSample]
           : state.driveSampleHistory,
+        navigationMatchedLocation: state.isNavigating ? matchedLocation : null,
+        navigationProgressKm: state.isNavigating ? Number(routeProgress?.progressKm ?? 0) : 0,
         stationaryVisitState: nextStationary,
       }
     }),
@@ -1266,11 +1290,22 @@ const useAppStore = create((set, get) => ({
   selectedRouteId: null,
   setSelectedRouteId: (selectedRouteId) => {
     const route = get().routes.find((item) => item.id === selectedRouteId)
+    const userLocation = get().userLocation
+    const routeProgress = route && userLocation ? analyzeRouteProgress(route, userLocation) : null
     set({
       selectedRouteId,
       mergeOptions: route ? buildMergeOptions(route, get().selectedMergeOptionId, get().driverPreset) : [],
       mapCenter: route?.polyline?.[Math.floor(route.polyline.length / 2)] ?? get().mapCenter,
       mapZoom: route ? 9 : get().mapZoom,
+      navigationMatchedLocation: get().isNavigating && routeProgress?.matchedLocation ? {
+        ...userLocation,
+        lat: routeProgress.matchedLocation.lat,
+        lng: routeProgress.matchedLocation.lng,
+        rawLat: userLocation.lat,
+        rawLng: userLocation.lng,
+        snappedToRoute: true,
+      } : get().navigationMatchedLocation,
+      navigationProgressKm: get().isNavigating ? Number(routeProgress?.progressKm ?? 0) : get().navigationProgressKm,
     })
   },
   isLoadingRoutes: false,
@@ -1307,6 +1342,21 @@ const useAppStore = create((set, get) => ({
     }
 
     set({
+      navigationMatchedLocation: userLocation && selectedRoute ? (() => {
+        const routeProgress = analyzeRouteProgress(selectedRoute, userLocation)
+        if (!routeProgress?.matchedLocation) return null
+        return {
+          ...userLocation,
+          lat: routeProgress.matchedLocation.lat,
+          lng: routeProgress.matchedLocation.lng,
+          rawLat: userLocation.lat,
+          rawLng: userLocation.lng,
+          snappedToRoute: true,
+        }
+      })() : null,
+      navigationProgressKm: userLocation && selectedRoute
+        ? Number(analyzeRouteProgress(selectedRoute, userLocation).progressKm ?? 0)
+        : 0,
       isNavigating: true,
       navAutoFollow: true,
       isSearchOverlayOpen: false,
@@ -1347,6 +1397,8 @@ const useAppStore = create((set, get) => ({
     drivePathHistory: [],
     driveSampleHistory: [],
     driveRouteSnapshot: null,
+    navigationMatchedLocation: null,
+    navigationProgressKm: 0,
     scenicReferencePolyline: [],
   }),
 

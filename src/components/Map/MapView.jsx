@@ -3,7 +3,7 @@ import { CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, useMapE
 import L from 'leaflet'
 import useAppStore from '../../store/appStore'
 import { HIGHWAYS } from '../../data/highwayData'
-import { getCurrentRouteSegment, getGuidancePriority, getNavigationCameraState, shouldUseRawRoutePolyline } from '../../utils/navigationLogic'
+import { buildRemainingRoutePolyline, getCurrentRouteSegment, getGuidancePriority, getNavigationCameraState, shouldUseRawRoutePolyline } from '../../utils/navigationLogic'
 
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -218,13 +218,15 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
   const navAutoFollow = useAppStore((s) => s.navAutoFollow)
   const setNavAutoFollow = useAppStore((s) => s.setNavAutoFollow)
   const userLocation = useAppStore((s) => s.userLocation)
+  const navigationMatchedLocation = useAppStore((s) => s.navigationMatchedLocation)
   const locationHistory = useAppStore((s) => s.locationHistory)
   const settings = useAppStore((s) => s.settings)
   const routes = useAppStore((s) => s.routes)
   const mergeOptions = useAppStore((s) => s.mergeOptions)
   const selectedRouteId = useAppStore((s) => s.selectedRouteId)
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
-  const { nextAction } = getGuidancePriority(selectedRoute, userLocation, mergeOptions)
+  const guidanceLocation = isNavigating ? (navigationMatchedLocation ?? userLocation) : userLocation
+  const { nextAction } = getGuidancePriority(selectedRoute, guidanceLocation, mergeOptions)
   const nextGuidance = nextAction
   const cameraState = getNavigationCameraState(nextGuidance)
   const navZoom = cameraState.zoom
@@ -256,7 +258,8 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
       return
     }
     if (navStartFocusDoneRef.current) return
-    const freshLoc = useAppStore.getState().userLocation
+    const freshState = useAppStore.getState()
+    const freshLoc = freshState.navigationMatchedLocation ?? freshState.userLocation
     const target = freshLoc
       ? getLookAheadCenter(map, freshLoc, navZoom, settings.navigationLookAhead, cameraState)
       : (Array.isArray(center) ? center : null)
@@ -271,8 +274,9 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
 
   // 연속 auto-follow: 내비 시작 직후에는 확대 수준을 유지하고, 이후에는 부드럽게 중심만 이동
   useEffect(() => {
-    if (!isNavigating || !navAutoFollow || !userLocation) return
-    const target = getLookAheadCenter(map, userLocation, navZoom, settings.navigationLookAhead, cameraState) ?? L.latLng(userLocation.lat, userLocation.lng)
+    const followLocation = navigationMatchedLocation ?? userLocation
+    if (!isNavigating || !navAutoFollow || !followLocation) return
+    const target = getLookAheadCenter(map, followLocation, navZoom, settings.navigationLookAhead, cameraState) ?? L.latLng(followLocation.lat, followLocation.lng)
     const centerDistance = map.distance(map.getCenter(), target)
     if (Math.abs(map.getZoom() - navZoom) > 0.08 || centerDistance > (cameraState.recenterThresholdM ?? 28)) {
       runProgrammaticMotion(() => {
@@ -284,7 +288,7 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
     runProgrammaticMotion(() => {
       map.panTo(target, { animate: false })
     })
-  }, [cameraState, userLocation, navAutoFollow, isNavigating, navZoom, settings.navigationLookAhead]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [cameraState, navigationMatchedLocation, userLocation, navAutoFollow, isNavigating, navZoom, settings.navigationLookAhead]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const tilePane = map.getPane('tilePane')
@@ -318,7 +322,7 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
     try {
       const nextHeading = getRouteLookAheadHeading(
         selectedRoute,
-        userLocation,
+        guidanceLocation,
         resolveDriverHeading(userLocation, locationHistory)
       )
       const previousHeading = smoothedHeadingRef.current
@@ -336,7 +340,7 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
       rotationLayer.style.transform = 'none'
       rotationLayer.style.setProperty('--driver-map-rotation', '0deg')
     }
-  }, [isNavigating, locationHistory, map, navAutoFollow, selectedRoute, userLocation])
+  }, [guidanceLocation, isNavigating, locationHistory, map, navAutoFollow, selectedRoute, userLocation])
 
   // 일반 지도 이동 (안내 중에는 무시)
   useEffect(() => {
@@ -494,6 +498,9 @@ export default function MapView({ darkMode = false }) {
     userLocation,
     userAddress,
     locationHistory,
+    drivePathHistory,
+    navigationMatchedLocation,
+    navigationProgressKm,
     selectedRoadId,
     getSelectedRoadDetail,
     cameraReports,
@@ -514,9 +521,10 @@ export default function MapView({ darkMode = false }) {
   const hasRealRouteSegments = Array.isArray(selectedRoute?.segmentStats) && selectedRoute.segmentStats.length > 0
   const showMinimalNavigationMap = isNavigating && settings.navigationMinimalMap
   const driverFollowMode = isNavigating && navAutoFollow
+  const guidanceLocation = isNavigating ? (navigationMatchedLocation ?? userLocation) : userLocation
   const currentRouteSegment = useMemo(
-    () => getCurrentRouteSegment(selectedRoute, userLocation),
-    [selectedRoute, userLocation]
+    () => getCurrentRouteSegment(selectedRoute, guidanceLocation),
+    [guidanceLocation, selectedRoute]
   )
   const currentSegmentIndex = useMemo(() => {
     if (!selectedRoute?.segmentStats?.length || !currentRouteSegment?.id) return -1
@@ -524,10 +532,23 @@ export default function MapView({ darkMode = false }) {
   }, [currentRouteSegment?.id, selectedRoute?.segmentStats])
   const visibleNavigationSegments = useMemo(() => {
     const segments = selectedRoute?.segmentStats ?? []
-    if (!driverFollowMode || segments.length === 0) return segments
+    if (segments.length === 0) return segments
     const startIndex = Math.max(0, currentSegmentIndex)
-    return segments.slice(startIndex, startIndex + 8)
-  }, [currentSegmentIndex, driverFollowMode, selectedRoute?.segmentStats])
+    if (!isNavigating) return segments
+    if (driverFollowMode) return segments.slice(startIndex, startIndex + 8)
+    return segments.slice(startIndex)
+  }, [currentSegmentIndex, driverFollowMode, isNavigating, selectedRoute?.segmentStats])
+  const remainingRoutePath = useMemo(() => {
+    if (!selectedRoute) return []
+    if (!isNavigating) return getRoutePath(selectedRoute, 0.1)
+    const trimmed = buildRemainingRoutePolyline(
+      selectedRoute,
+      navigationProgressKm,
+      navigationMatchedLocation ?? userLocation
+    )
+    if (trimmed.length < 2) return trimmed
+    return shouldUseRawRoutePolyline(selectedRoute) ? trimmed : smoothPath(trimmed, 0.1)
+  }, [isNavigating, navigationMatchedLocation, navigationProgressKm, selectedRoute, userLocation])
 
   const routeSpeedMarkers = useMemo(
     () => (selectedRoute ? buildSpeedMarkers(selectedRoute.segmentStats ?? []) : []),
@@ -548,20 +569,20 @@ export default function MapView({ darkMode = false }) {
   const currentLocationIcon = useMemo(
     () => {
       const safeHeading = (() => {
-        if (!driverFollowMode) return userLocation?.heading ?? 0
+        if (!driverFollowMode) return guidanceLocation?.heading ?? userLocation?.heading ?? 0
         try {
           return getRouteLookAheadHeading(
             selectedRoute,
-            userLocation,
+            guidanceLocation,
             resolveDriverHeading(userLocation, locationHistory)
           )
         } catch {
-          return userLocation?.heading ?? 0
+          return guidanceLocation?.heading ?? userLocation?.heading ?? 0
         }
       })()
       return makeCurrentLocationIcon(safeHeading)
     },
-    [driverFollowMode, locationHistory, selectedRoute, userLocation]
+    [driverFollowMode, guidanceLocation, locationHistory, selectedRoute, userLocation]
   )
 
   // OSM Korea HOT 타일은 현재 유효한 한국어 라벨 베이스맵을 제공한다.
@@ -791,16 +812,23 @@ export default function MapView({ darkMode = false }) {
                   }}
                 />
               ))
-          ) : (
+          ) : remainingRoutePath.length > 1 ? (
             <Polyline
-              positions={getRoutePath(selectedRoute, 0.1)}
+              positions={remainingRoutePath}
               pathOptions={{ color: selectedRoute.routeColor ?? COLORS.selectedRoute, weight: showMinimalNavigationMap ? 10 : 8, opacity: 0.9 }}
+            />
+          ) : null}
+
+          {isNavigating && drivePathHistory.length > 1 && (
+            <Polyline
+              positions={drivePathHistory}
+              pathOptions={{ color: '#FFFFFF', weight: showMinimalNavigationMap ? 4 : 3, opacity: 0.45 }}
             />
           )}
 
-          {isNavigating && (
+          {isNavigating && remainingRoutePath.length > 1 && (
             <Polyline
-              positions={getRoutePath(selectedRoute, 0.1)}
+              positions={remainingRoutePath}
               pathOptions={{ color: COLORS.navigationGuide, weight: showMinimalNavigationMap ? 6 : 5, opacity: 0.98 }}
             />
           )}
