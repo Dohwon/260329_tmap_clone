@@ -1422,7 +1422,6 @@ const useAppStore = create((set, get) => ({
     const polyline = route?.polyline ?? []
     if (polyline.length < 2) return
 
-    // 이미 실행 중이면 정지 후 재시작
     if (_simIntervalId != null) {
       clearInterval(_simIntervalId)
       _simIntervalId = null
@@ -1430,7 +1429,7 @@ const useAppStore = create((set, get) => ({
     set({ isDriveSimulation: true })
 
     const INTERVAL_MS = 1000
-    const metersPerStep = (speedKmh * 1000) / 3600
+    const cruiseSpeedKmh = speedKmh
 
     // 폴리라인 세그먼트 길이 사전 계산
     const segLengths = []
@@ -1438,8 +1437,24 @@ const useAppStore = create((set, get) => ({
       segLengths.push(haversineKm(polyline[i][0], polyline[i][1], polyline[i + 1][0], polyline[i + 1][1]) * 1000)
     }
 
+    // ── 시뮬레이션 상태 ──
     let segIdx = 0
-    let offsetM = 0 // 현재 세그먼트 내 진행 거리(m)
+    let offsetM = 0
+    let currentSpeedKmh = 0           // 출발 시 0에서 가속
+    let targetSpeedKmh = cruiseSpeedKmh
+    let brakingStepsLeft = 0          // 급정거 지속 스텝
+    let laneChangeStepsLeft = 0       // 차선변경 지속 스텝
+    let laneOffsetM = 0               // 측면 오프셋(m)
+
+    // 측면 오프셋 → 위도/경도 변환
+    const applyLateralOffset = (lat, lng, headingDeg, offsetM) => {
+      if (Math.abs(offsetM) < 0.01) return { lat, lng }
+      const perpRad = ((headingDeg + 90) % 360) * Math.PI / 180
+      return {
+        lat: lat + Math.cos(perpRad) * offsetM / 111320,
+        lng: lng + Math.sin(perpRad) * offsetM / (111320 * Math.cos(lat * Math.PI / 180)),
+      }
+    }
 
     _simIntervalId = setInterval(() => {
       if (!get().isDriveSimulation) {
@@ -1448,9 +1463,40 @@ const useAppStore = create((set, get) => ({
         return
       }
 
-      // 이번 스텝만큼 전진
-      let remaining = metersPerStep
-      while (remaining > 0 && segIdx < segLengths.length) {
+      // ── 속도 이벤트 ──
+      if (brakingStepsLeft > 0) {
+        brakingStepsLeft -= 1
+        targetSpeedKmh = brakingStepsLeft === 0 ? cruiseSpeedKmh : 5
+      } else if (Math.random() < 0.04) {
+        // 4% 확률 급정거 (2~4스텝)
+        brakingStepsLeft = 2 + Math.floor(Math.random() * 3)
+        targetSpeedKmh = 5
+      } else {
+        // 크루즈 ±15% 랜덤 변동
+        targetSpeedKmh = cruiseSpeedKmh * (0.85 + Math.random() * 0.3)
+      }
+
+      const maxChange = brakingStepsLeft > 0 ? 40 : 15
+      currentSpeedKmh = brakingStepsLeft > 0
+        ? Math.max(targetSpeedKmh, currentSpeedKmh - maxChange)
+        : Math.min(targetSpeedKmh, currentSpeedKmh + maxChange)
+      currentSpeedKmh = Math.max(0, currentSpeedKmh)
+
+      // ── 차선변경 이벤트 ──
+      if (laneChangeStepsLeft > 0) {
+        laneChangeStepsLeft -= 1
+        laneOffsetM *= 0.6
+      } else if (Math.random() < 0.03) {
+        // 3% 확률 차선변경 (3~4스텝, 2~3.5m 측면 이동)
+        laneChangeStepsLeft = 3 + Math.floor(Math.random() * 2)
+        laneOffsetM = (Math.random() > 0.5 ? 1 : -1) * (2 + Math.random() * 1.5)
+      } else {
+        laneOffsetM *= 0.8
+      }
+
+      // ── 이동 거리 계산 ──
+      let remaining = (currentSpeedKmh * 1000) / 3600
+      while (remaining > 0.001 && segIdx < segLengths.length) {
         const segLen = segLengths[segIdx]
         if (offsetM + remaining < segLen) {
           offsetM += remaining
@@ -1462,7 +1508,6 @@ const useAppStore = create((set, get) => ({
         }
       }
 
-      // 경로 끝 도달 시 시뮬레이션 종료
       if (segIdx >= segLengths.length) {
         clearInterval(_simIntervalId)
         _simIntervalId = null
@@ -1470,26 +1515,28 @@ const useAppStore = create((set, get) => ({
         return
       }
 
-      // 현재 세그먼트에서 보간 위치 계산
       const segLen = segLengths[segIdx]
       const ratio = segLen > 0 ? Math.min(1, offsetM / segLen) : 0
       const p0 = polyline[segIdx]
       const p1 = polyline[segIdx + 1]
-      const lat = p0[0] + (p1[0] - p0[0]) * ratio
-      const lng = p0[1] + (p1[1] - p0[1]) * ratio
+      const baseLat = p0[0] + (p1[0] - p0[0]) * ratio
+      const baseLng = p0[1] + (p1[1] - p0[1]) * ratio
 
-      // 헤딩 계산
-      const dLat = p1[0] - p0[0]
-      const dLng = p1[1] - p0[1]
-      const heading = (Math.atan2(dLng, dLat) * 180) / Math.PI
-      const normalizedHeading = (heading + 360) % 360
+      const headingDeg = ((Math.atan2(p1[1] - p0[1], p1[0] - p0[0]) * 180) / Math.PI + 360) % 360
+
+      // GPS 노이즈 ±2m
+      const noise = 2 / 111320
+      const noisedLat = baseLat + (Math.random() - 0.5) * noise
+      const noisedLng = baseLng + (Math.random() - 0.5) * noise
+
+      const { lat, lng } = applyLateralOffset(noisedLat, noisedLng, headingDeg, laneOffsetM)
 
       get().setUserLocation({
         lat,
         lng,
-        speedKmh,
-        heading: normalizedHeading,
-        accuracy: 5,
+        speedKmh: Math.round(currentSpeedKmh),
+        heading: headingDeg,
+        accuracy: 5 + Math.random() * 8,
       })
     }, INTERVAL_MS)
   },
