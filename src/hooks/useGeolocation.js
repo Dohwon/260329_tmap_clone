@@ -2,11 +2,21 @@ import { useEffect, useRef } from 'react'
 import useAppStore from '../store/appStore'
 import { reverseGeocode } from '../services/tmapService'
 
+// 하버사인 거리 계산 (미터 단위)
+function distanceM(lat1, lng1, lat2, lng2) {
+  const R = 6371000
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLng = (lng2 - lng1) * Math.PI / 180
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
 export default function useGeolocation() {
   const { setUserLocation, setMapCenter, setUserAddress } = useAppStore()
   const firstFix = useRef(false)
   const addressTimer = useRef(null)
   const watchIdRef = useRef(null)
+  const lastGeocodedRef = useRef(null) // { lat, lng, time }
 
   useEffect(() => {
     if (!navigator.geolocation) {
@@ -24,11 +34,18 @@ export default function useGeolocation() {
         accuracy: pos.coords.accuracy ?? null,
       }
       setUserLocation(loc)
-      clearTimeout(addressTimer.current)
-      addressTimer.current = setTimeout(async () => {
-        const address = await reverseGeocode(loc.lat, loc.lng)
-        if (address) setUserAddress(address)
-      }, 300)
+      // 역지오코딩: 50m 이상 이동 + 마지막 호출 후 5초 이상 경과한 경우에만 호출
+      const prev = lastGeocodedRef.current
+      const movedFar = !prev || distanceM(prev.lat, prev.lng, loc.lat, loc.lng) >= 50
+      const longEnough = !prev || (Date.now() - prev.time) >= 5000
+      if (movedFar || longEnough) {
+        clearTimeout(addressTimer.current)
+        lastGeocodedRef.current = { lat: loc.lat, lng: loc.lng, time: Date.now() }
+        addressTimer.current = setTimeout(async () => {
+          const address = await reverseGeocode(loc.lat, loc.lng)
+          if (address) setUserAddress(address)
+        }, 800)
+      }
       // 첫 위치 확정 시에만 지도 중심 이동
       if (!firstFix.current) {
         firstFix.current = true
