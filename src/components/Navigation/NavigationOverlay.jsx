@@ -1021,33 +1021,35 @@ export default function NavigationOverlay() {
         </button>
       )}
 
-      {/* 주행 시뮬레이터 버튼 */}
-      <div className="absolute right-4 bottom-64 z-20 flex flex-col gap-1 items-end">
-        {isDriveSimulation ? (
-          <button
-            onClick={stopDriveSimulation}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 text-white text-xs font-bold rounded-full shadow-lg active:bg-red-600"
-          >
-            <span className="w-2 h-2 bg-white rounded-sm inline-block" />
-            시뮬 정지
-          </button>
-        ) : (
-          <div className="flex gap-1">
+      {/* 주행 시뮬레이터 버튼 — 개발 환경에서만 표시 */}
+      {import.meta.env.VITE_SHOW_SIM_CONTROLS === 'true' && (
+        <div className="absolute right-4 bottom-64 z-20 flex flex-col gap-1 items-end">
+          {isDriveSimulation ? (
             <button
-              onClick={() => startDriveSimulation(60)}
-              className="px-2.5 py-1.5 bg-gray-800 text-white text-[11px] font-bold rounded-full shadow-lg active:bg-gray-700"
+              onClick={stopDriveSimulation}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 text-white text-xs font-bold rounded-full shadow-lg active:bg-red-600"
             >
-              시뮬 60
+              <span className="w-2 h-2 bg-white rounded-sm inline-block" />
+              시뮬 정지
             </button>
-            <button
-              onClick={() => startDriveSimulation(100)}
-              className="px-2.5 py-1.5 bg-gray-800 text-white text-[11px] font-bold rounded-full shadow-lg active:bg-gray-700"
-            >
-              100
-            </button>
-          </div>
-        )}
-      </div>
+          ) : (
+            <div className="flex gap-1">
+              <button
+                onClick={() => startDriveSimulation(60)}
+                className="px-2.5 py-1.5 bg-gray-800 text-white text-[11px] font-bold rounded-full shadow-lg active:bg-gray-700"
+              >
+                시뮬 60
+              </button>
+              <button
+                onClick={() => startDriveSimulation(100)}
+                className="px-2.5 py-1.5 bg-gray-800 text-white text-[11px] font-bold rounded-full shadow-lg active:bg-gray-700"
+              >
+                100
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 경관 구간 진입 토스트 */}
       {scenicToast && (

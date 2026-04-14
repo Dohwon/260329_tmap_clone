@@ -1931,14 +1931,16 @@ const useAppStore = create((set, get) => ({
   safetyLastLoadedAt: 0,
   refreshSafetyHazards: async () => {
     const state = get()
+    // 60초 이내 중복 호출 방지
+    if (Date.now() - state.safetyLastLoadedAt < 60000) return state.safetyHazards
     const origin = state.userLocation ?? DEFAULT_ORIGIN
     try {
       const hazards = await searchSafetyHazards(origin.lat, origin.lng)
       set({ safetyHazards: hazards, safetyLastLoadedAt: Date.now() })
       return hazards
     } catch {
-      set({ safetyHazards: [], safetyLastLoadedAt: Date.now() })
-      return []
+      set({ safetyLastLoadedAt: Date.now() })
+      return state.safetyHazards
     }
   },
 
