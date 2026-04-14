@@ -105,6 +105,7 @@ export default function HomeScreen() {
   } = useAppStore()
   const [showLayerMenu, setShowLayerMenu] = useState(false)
   const [showHighwayExplorer, setShowHighwayExplorer] = useState(false)
+  const [isSafetyBannerCollapsed, setIsSafetyBannerCollapsed] = useState(false)
   const safetySpeechRef = useRef('')
   const restaurantRefreshCoordRef = useRef(null)
 
@@ -168,6 +169,12 @@ export default function HomeScreen() {
     setShowLayerMenu(false)
     setShowHighwayExplorer(false)
   }, [showRoutePanel])
+
+  useEffect(() => {
+    if (isNavigating || !settings.safetyModeEnabled) {
+      setIsSafetyBannerCollapsed(false)
+    }
+  }, [isNavigating, settings.safetyModeEnabled])
 
   return (
     <div className="relative w-full h-full overflow-hidden">
@@ -233,7 +240,13 @@ export default function HomeScreen() {
         {showLayerMenu && (
           <>
             <div className="absolute inset-0 z-10" onClick={() => setShowLayerMenu(false)}/>
-            <div className="absolute right-4 z-40 bg-white rounded-2xl shadow-xl p-4 w-52" style={{ bottom: '540px' }}>
+            <div
+              className="absolute right-4 z-40 bg-white rounded-2xl shadow-xl p-4 w-52 overflow-y-auto"
+              style={{
+                top: 'calc(env(safe-area-inset-top, 0px) + 92px)',
+                maxHeight: 'calc(100vh - env(safe-area-inset-top, 0px) - 140px)',
+              }}
+            >
               <div className="text-xs font-bold text-gray-400 mb-3 tracking-wide">지도 레이어</div>
               {[
                 { key: 'speedCameras', label: '📷 과속카메라' },
@@ -259,7 +272,14 @@ export default function HomeScreen() {
         )}
 
         <NavigationOverlay />
-        {settings.safetyModeEnabled && !isNavigating && <SafetyModeBanner safetyHazards={getHazardsAhead(safetyHazards, userLocation)} />}
+        {settings.safetyModeEnabled && !isNavigating && (
+          <SafetyModeBanner
+            safetyHazards={getHazardsAhead(safetyHazards, userLocation)}
+            collapsed={isSafetyBannerCollapsed}
+            onCollapse={() => setIsSafetyBannerCollapsed(true)}
+            onExpand={() => setIsSafetyBannerCollapsed(false)}
+          />
+        )}
         <RoutePreviewPanel />
         {!isSearchOverlayOpen && !showRoutePanel && !isNavigating && <HomeBottomPanel />}
 
@@ -284,15 +304,52 @@ function FloatButton({ children, onClick }) {
   )
 }
 
-function SafetyModeBanner({ safetyHazards }) {
+function SafetyModeBanner({ safetyHazards, collapsed = false, onCollapse, onExpand }) {
+  const touchStartRef = useRef(null)
   const nextHazard = (safetyHazards ?? []).find((hazard) => hazard.distanceKm != null && hazard.distanceKm <= 1.2) ?? safetyHazards?.[0]
+
+  const handleTouchStart = (e) => {
+    touchStartRef.current = e.touches?.[0]?.clientY ?? null
+  }
+
+  const handleTouchEnd = (e) => {
+    const startY = touchStartRef.current
+    const endY = e.changedTouches?.[0]?.clientY ?? null
+    touchStartRef.current = null
+    if (startY == null || endY == null) return
+    if (endY - startY >= 28) onCollapse?.()
+    if (startY - endY >= 28) onExpand?.()
+  }
+
+  if (collapsed) {
+    return (
+      <div className="absolute top-40 left-4 right-4 z-20">
+        <button
+          type="button"
+          onClick={onExpand}
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+          className="rounded-full bg-white/92 backdrop-blur-md shadow-lg px-4 py-2 border border-emerald-100 flex items-center gap-2"
+        >
+          <div className="w-2 h-2 rounded-full bg-emerald-500" />
+          <div className="text-xs font-bold text-emerald-700">안전 운전 모드</div>
+          <div className="text-[11px] text-gray-400">위로 밀어 펼치기</div>
+        </button>
+      </div>
+    )
+  }
 
   if (!nextHazard) {
     return (
       <div className="absolute top-40 left-4 right-4 z-20">
-        <div className="rounded-2xl bg-white/92 backdrop-blur-md shadow-lg px-4 py-3 border border-emerald-100">
+        <div
+          className="rounded-2xl bg-white/92 backdrop-blur-md shadow-lg px-4 py-3 border border-emerald-100"
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+        >
           <div className="text-[11px] font-bold text-emerald-600">안전 운전 모드</div>
           <div className="text-sm font-semibold text-gray-900 mt-0.5">주변 위험요소를 확인하는 중입니다</div>
+          <div className="text-[11px] text-gray-400 mt-1">아래로 밀어 접기</div>
         </div>
       </div>
     )
@@ -300,7 +357,11 @@ function SafetyModeBanner({ safetyHazards }) {
 
   return (
     <div className="absolute top-40 left-4 right-4 z-20">
-      <div className="rounded-2xl bg-white/92 backdrop-blur-md shadow-lg px-4 py-3 border border-emerald-100">
+      <div
+        className="rounded-2xl bg-white/92 backdrop-blur-md shadow-lg px-4 py-3 border border-emerald-100"
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+      >
         <div className="flex items-center gap-3">
           <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-lg ${nextHazard.type === 'school_zone' ? 'bg-amber-100' : 'bg-sky-100'}`}>
             {nextHazard.type === 'school_zone' ? '🚸' : '턱'}
@@ -313,6 +374,7 @@ function SafetyModeBanner({ safetyHazards }) {
             <div className="text-xs text-gray-500 truncate">{nextHazard.name}</div>
           </div>
         </div>
+        <div className="text-[11px] text-gray-400 mt-2">아래로 밀어 접기</div>
       </div>
     </div>
   )
