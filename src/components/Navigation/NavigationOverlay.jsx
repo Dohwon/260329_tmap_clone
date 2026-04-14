@@ -217,6 +217,7 @@ export default function NavigationOverlay() {
   const overSpeedAlertedAtRef = useRef(0)
   const startedVoiceRef = useRef(false)
   const routeSheetTouchStartRef = useRef(null)
+  const routeSheetTouchHandledRef = useRef(false)
   const flashTimerRef = useRef(null)
   const speechQueueRef = useRef([])
   const speechBusyRef = useRef(false)
@@ -633,6 +634,7 @@ export default function NavigationOverlay() {
   }
 
   const handleRouteSheetTouchStart = (e) => {
+    routeSheetTouchHandledRef.current = false
     routeSheetTouchStartRef.current = e.touches?.[0]?.clientY ?? null
   }
 
@@ -644,10 +646,20 @@ export default function NavigationOverlay() {
 
     const deltaY = endY - startY
     if (deltaY <= -28) {
+      routeSheetTouchHandledRef.current = true
       setIsRouteSheetCollapsed(false)
     } else if (deltaY >= 36) {
+      routeSheetTouchHandledRef.current = true
       setIsRouteSheetCollapsed(true)
     }
+  }
+
+  const handleRouteSheetToggle = () => {
+    if (routeSheetTouchHandledRef.current) {
+      routeSheetTouchHandledRef.current = false
+      return
+    }
+    setIsRouteSheetCollapsed((prev) => !prev)
   }
 
   const routeSheetPeekTitle = nextMergeOpt?.name ?? '현재 경로 유지'
@@ -780,12 +792,12 @@ export default function NavigationOverlay() {
         <div
           className="pointer-events-auto bg-white rounded-2xl shadow-lg overflow-hidden transition-transform duration-300 ease-out"
           style={{ transform: isRouteSheetCollapsed ? 'translateY(calc(100% - 18px))' : 'translateY(0)' }}
+          onTouchStart={handleRouteSheetTouchStart}
+          onTouchEnd={handleRouteSheetTouchEnd}
         >
           <button
             type="button"
-            onClick={() => setIsRouteSheetCollapsed((prev) => !prev)}
-            onTouchStart={handleRouteSheetTouchStart}
-            onTouchEnd={handleRouteSheetTouchEnd}
+            onClick={handleRouteSheetToggle}
             className={`w-full bg-white/95 active:bg-gray-50 ${isRouteSheetCollapsed ? 'px-4 pt-2 pb-2' : 'px-4 pt-3 pb-3 border-b border-gray-100'}`}
             aria-label={isRouteSheetCollapsed ? '경로 패널 펼치기' : '경로 패널 접기'}
           >
