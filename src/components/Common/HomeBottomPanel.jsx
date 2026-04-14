@@ -77,7 +77,7 @@ export default function HomeBottomPanel() {
               <button
                 key={road.id}
                 onClick={() => selectRoad(road.id)}
-                className="flex-shrink-0 rounded-2xl px-3 py-2.5 border bg-gray-50 border-gray-100 min-w-[138px] text-left"
+                className="flex-shrink-0 rounded-2xl px-3 py-2.5 border bg-gray-50 border-gray-100 w-[138px] text-left"
               >
                 <div className="flex items-center gap-2">
                   <div className="w-7 h-7 rounded-lg text-white text-xs font-black flex items-center justify-center" style={{ backgroundColor: road.color }}>
