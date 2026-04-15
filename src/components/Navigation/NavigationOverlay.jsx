@@ -283,15 +283,35 @@ export default function NavigationOverlay() {
     }
   }, [userLocation, isNavigating])
 
-  const route = routes.find(r => r.id === selectedRouteId)
+  const route = routes.find(r => r.id === selectedRouteId) ?? null
+  const hasActiveRoute = Array.isArray(route?.polyline) && route.polyline.length > 1
   const guidanceLocation = navigationMatchedLocation ?? userLocation
-  const { progress: routeProgress, nextAction } = getGuidancePriority(route, guidanceLocation, mergeOptions)
-  const guidanceList = getUpcomingGuidanceList(route, guidanceLocation, mergeOptions, 5)
-  const offRouteProgress = analyzeRouteProgress(route, userLocation)
-  const currentRouteSegment = getCurrentRouteSegment(route, guidanceLocation)
+  const { progress: routeProgress, nextAction } = hasActiveRoute
+    ? getGuidancePriority(route, guidanceLocation, mergeOptions)
+    : {
+        progress: {
+          progressKm: 0,
+          remainingKm: Number(route?.distance ?? 0),
+          distanceToRouteM: null,
+          matchedLocation: null,
+          matchedSegmentIndex: -1,
+        },
+        nextAction: null,
+      }
+  const guidanceList = hasActiveRoute ? getUpcomingGuidanceList(route, guidanceLocation, mergeOptions, 5) : []
+  const offRouteProgress = hasActiveRoute
+    ? analyzeRouteProgress(route, userLocation)
+    : {
+        progressKm: 0,
+        remainingKm: Number(route?.distance ?? 0),
+        distanceToRouteM: null,
+        matchedLocation: null,
+        matchedSegmentIndex: -1,
+      }
+  const currentRouteSegment = hasActiveRoute ? getCurrentRouteSegment(route, guidanceLocation) : null
   const liveMergeOptions = getUpcomingMergeOptions(mergeOptions, routeProgress.progressKm)
   const nextMergeOpt = liveMergeOptions.find((option) => option.remainingDistanceKm > 0.03) ?? liveMergeOptions[0]
-  const remainingEta = getRemainingEta(route, routeProgress.remainingKm)
+  const remainingEta = hasActiveRoute ? getRemainingEta(route, routeProgress.remainingKm) : null
   const nextCameraInfo = useMemo(() => {
     if (!userLocation) return null
     const nearest = (route?.cameras ?? [])
@@ -427,6 +447,16 @@ export default function NavigationOverlay() {
     stopActiveAudio()
     if (window.speechSynthesis) window.speechSynthesis.cancel()
   }, [isNavigating])
+
+  useEffect(() => {
+    if (!isNavigating || showRoutePanel || hasActiveRoute) return
+    const timer = window.setTimeout(() => {
+      const state = useAppStore.getState()
+      if (!state.isNavigating || state.showRoutePanel) return
+      state.stopNavigation()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [hasActiveRoute, isNavigating, showRoutePanel])
 
   useEffect(() => {
     if (!isNavigating) {
@@ -727,7 +757,7 @@ export default function NavigationOverlay() {
     })
   }, [isNavigating, safetyHazards, settings.voiceGuidance, userLocation])
 
-  if (!isNavigating || showRoutePanel) return null
+  if (!isNavigating || showRoutePanel || !hasActiveRoute) return null
 
   async function searchNearby(category) {
     setNearbyCategory(category)

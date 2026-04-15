@@ -227,20 +227,53 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
   const selectedRouteId = useAppStore((s) => s.selectedRouteId)
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
   const guidanceLocation = isNavigating ? (navigationMatchedLocation ?? userLocation) : userLocation
-  const { nextAction } = getGuidancePriority(selectedRoute, guidanceLocation, mergeOptions)
-  const nextGuidance = nextAction
-  const cameraState = getNavigationCameraState(nextGuidance)
+  const nextGuidance = useMemo(() => {
+    return getGuidancePriority(selectedRoute, guidanceLocation, mergeOptions).nextAction ?? null
+  }, [
+    mergeOptions,
+    guidanceLocation?.heading,
+    guidanceLocation?.lat,
+    guidanceLocation?.lng,
+    selectedRoute,
+  ])
+  const cameraState = useMemo(() => getNavigationCameraState(nextGuidance), [
+    nextGuidance?.id,
+    nextGuidance?.remainingDistanceKm,
+    nextGuidance?.turnType,
+  ])
   const navZoom = cameraState.zoom
   const smoothedHeadingRef = useRef(0)
   const programmaticMotionRef = useRef(false)
   const navStartFocusDoneRef = useRef(false)
+  const programmaticMotionTimerRef = useRef(null)
+  const lastAutoFollowTargetRef = useRef(null)
 
   const runProgrammaticMotion = (fn) => {
     programmaticMotionRef.current = true
+    if (programmaticMotionTimerRef.current) {
+      window.clearTimeout(programmaticMotionTimerRef.current)
+    }
     fn()
-    window.setTimeout(() => {
+    programmaticMotionTimerRef.current = window.setTimeout(() => {
       programmaticMotionRef.current = false
     }, 260)
+  }
+
+  const isSameFollowTarget = (target, targetZoom, toleranceM = 4) => {
+    const prev = lastAutoFollowTargetRef.current
+    if (!prev || !target) return false
+    const prevLatLng = L.latLng(prev.lat, prev.lng)
+    const nextLatLng = L.latLng(target.lat, target.lng)
+    return Math.abs((prev.zoom ?? 0) - targetZoom) <= 0.01 && map.distance(prevLatLng, nextLatLng) <= toleranceM
+  }
+
+  const rememberFollowTarget = (target, targetZoom) => {
+    if (!target) return
+    lastAutoFollowTargetRef.current = {
+      lat: target.lat,
+      lng: target.lng,
+      zoom: targetZoom,
+    }
   }
 
   const map = useMapEvents({
@@ -263,6 +296,7 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
   useEffect(() => {
     if (!isNavigating) {
       navStartFocusDoneRef.current = false
+      lastAutoFollowTargetRef.current = null
       return
     }
     if (navStartFocusDoneRef.current) return
@@ -272,31 +306,53 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
       ? getLookAheadCenter(map, freshLoc, navZoom, settings.navigationLookAhead, cameraState)
       : (Array.isArray(center) ? center : null)
     if (target) {
+      const nextTarget = Array.isArray(target) ? L.latLng(target[0], target[1]) : target
+      rememberFollowTarget(nextTarget, navZoom)
       runProgrammaticMotion(() => {
         map.stop()
-        map.setView(target, navZoom, { animate: false })
+        map.setView(nextTarget, navZoom, { animate: false })
       })
     }
     navStartFocusDoneRef.current = true
-  }, [cameraState, center, isNavigating, map, navZoom, settings.navigationLookAhead])
+  }, [
+    cameraState.lookAheadOffsetY,
+    center,
+    isNavigating,
+    map,
+    navZoom,
+    settings.navigationLookAhead,
+  ])
 
   // 연속 auto-follow: 내비 시작 직후에는 확대 수준을 유지하고, 이후에는 부드럽게 중심만 이동
   useEffect(() => {
     const followLocation = navigationMatchedLocation ?? userLocation
     if (!isNavigating || !navAutoFollow || !followLocation) return
     const target = getLookAheadCenter(map, followLocation, navZoom, settings.navigationLookAhead, cameraState) ?? L.latLng(followLocation.lat, followLocation.lng)
+    if (isSameFollowTarget(target, navZoom)) return
     const centerDistance = map.distance(map.getCenter(), target)
     if (Math.abs(map.getZoom() - navZoom) > 0.08 || centerDistance > (cameraState.recenterThresholdM ?? 28)) {
+      rememberFollowTarget(target, navZoom)
       runProgrammaticMotion(() => {
         map.stop()
         map.setView(target, navZoom, { animate: false })
       })
       return
     }
+    rememberFollowTarget(target, navZoom)
     runProgrammaticMotion(() => {
       map.panTo(target, { animate: false })
     })
-  }, [cameraState, navigationMatchedLocation, userLocation, navAutoFollow, isNavigating, navZoom, settings.navigationLookAhead]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    cameraState.lookAheadOffsetY,
+    cameraState.recenterThresholdM,
+    navigationMatchedLocation,
+    userLocation,
+    navAutoFollow,
+    isNavigating,
+    map,
+    navZoom,
+    settings.navigationLookAhead,
+  ]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const tilePane = map.getPane('tilePane')
@@ -349,6 +405,14 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
       rotationLayer.style.setProperty('--driver-map-rotation', '0deg')
     }
   }, [guidanceLocation, isNavigating, locationHistory, map, navAutoFollow, selectedRoute, userLocation])
+
+  useEffect(() => {
+    return () => {
+      if (programmaticMotionTimerRef.current) {
+        window.clearTimeout(programmaticMotionTimerRef.current)
+      }
+    }
+  }, [])
 
   // 일반 지도 이동 (안내 중에는 무시)
   useEffect(() => {
