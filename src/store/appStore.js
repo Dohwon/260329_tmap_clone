@@ -41,6 +41,8 @@ const LEGACY_FAVORITE_ADDRESSES = new Set(['서울시 강남구 테헤란로', '
 const liveRouteRequestCache = new Map()
 const liveRouteInflightRequests = new Map()
 const MAP_CENTER_EPSILON = 0.000001
+const USER_ACTIVITY_WAKE_MS = 2 * 60 * 1000
+const MOVEMENT_WAKE_MS = 2 * 60 * 1000
 
 function readStorage(key, fallback) {
   try {
@@ -115,6 +117,16 @@ function areSameCenter(prevCenter, nextCenter) {
     Math.abs(prevLat - nextLat) <= MAP_CENTER_EPSILON &&
     Math.abs(prevLng - nextLng) <= MAP_CENTER_EPSILON
   )
+}
+
+function shouldAllowBackgroundApi(state, options = {}) {
+  if (!state) return false
+  if (state.isNavigating && options.allowDuringNavigation !== false) return true
+  const now = Date.now()
+  const activeByUser = Number.isFinite(Number(state.lastUserActivityAt)) && (now - Number(state.lastUserActivityAt) <= USER_ACTIVITY_WAKE_MS)
+  const activeByMovement = Number.isFinite(Number(state.lastMovementAt)) && (now - Number(state.lastMovementAt) <= MOVEMENT_WAKE_MS)
+  if (options.requireMovement) return activeByMovement
+  return activeByUser || activeByMovement
 }
 
 function normalizeCoordPair(coord) {
@@ -1214,6 +1226,9 @@ const useAppStore = create((set, get) => ({
   setActiveTab: (tab) => set({ activeTab: tab }),
   openSearchHome: () => set({ activeTab: 'search', searchMode: 'default', selectedNearbyCategory: null, nearbyPlaces: [], routeSearchTarget: 'destination' }),
   isSearchOverlayOpen: false,
+  lastUserActivityAt: 0,
+  lastMovementAt: 0,
+  markUserActivity: () => set({ lastUserActivityAt: Date.now() }),
   openSearchOverlay: (target = 'destination') => set({
     activeTab: 'home',
     isSearchOverlayOpen: true,
@@ -1221,6 +1236,7 @@ const useAppStore = create((set, get) => ({
     selectedNearbyCategory: null,
     nearbyPlaces: [],
     routeSearchTarget: target,
+    lastUserActivityAt: Date.now(),
   }),
   closeSearchOverlay: () => set({ isSearchOverlayOpen: false }),
 
@@ -1373,6 +1389,7 @@ const useAppStore = create((set, get) => ({
       }
       const currentStationary = state.stationaryVisitState
       const isSlowEnough = currentSpeedKmh <= 8
+      const movementDetected = movedSinceLastSampleKm >= 0.01 || currentSpeedKmh >= 6
       const nextStationary = !isSlowEnough
         ? null
         : !currentStationary
@@ -1416,6 +1433,7 @@ const useAppStore = create((set, get) => ({
         navigationMatchedSegmentIndex: state.isNavigating ? stableMatchedSegmentIndex : -1,
         navigationProgressKm: state.isNavigating ? stableProgressKm : 0,
         stationaryVisitState: nextStationary,
+        lastMovementAt: movementDetected ? Date.now() : state.lastMovementAt,
       }
     }),
   setUserAddress: (userAddress) => set({ userAddress }),
@@ -2114,7 +2132,7 @@ const useAppStore = create((set, get) => ({
   isLoadingNearby: false,
   homeRestaurantPins: [],
   homeRestaurantPinsLoadedAt: 0,
-  showRecentSearches: () => set({ activeTab: 'search', searchMode: 'recent' }),
+  showRecentSearches: () => set({ activeTab: 'search', searchMode: 'recent', lastUserActivityAt: Date.now() }),
   openNearbyCategory: async (category) => {
     const origin = get().userLocation ?? DEFAULT_ORIGIN
     const selectedRoute = get().routes.find((route) => route.id === get().selectedRouteId) ?? null
@@ -2125,6 +2143,7 @@ const useAppStore = create((set, get) => ({
       selectedNearbyCategory: category,
       nearbyPlaces: [],
       isLoadingNearby: true,
+      lastUserActivityAt: Date.now(),
     })
     try {
       const nearbyPlaces = await searchNearbyPOIs(category, origin.lat, origin.lng, {
@@ -2137,6 +2156,7 @@ const useAppStore = create((set, get) => ({
     }
   },
   refreshHomeRestaurantPins: async (center = null) => {
+    set({ lastUserActivityAt: Date.now() })
     const fallbackCenter = normalizeCoordPair(get().mapCenter)
     const origin = center
       ? { lat: Number(center.lat), lng: Number(center.lng) }
@@ -2194,6 +2214,7 @@ const useAppStore = create((set, get) => ({
   safetyLastLoadedAt: 0,
   refreshSafetyHazards: async () => {
     const state = get()
+    if (!shouldAllowBackgroundApi(state)) return state.safetyHazards
     // 60초 이내 중복 호출 방지
     if (Date.now() - state.safetyLastLoadedAt < 60000) return state.safetyHazards
     const origin = state.userLocation ?? DEFAULT_ORIGIN
@@ -2220,6 +2241,7 @@ const useAppStore = create((set, get) => ({
       mapZoom: 7,
       showRoutePanel: false,
       routePanelMode: 'full',
+      lastUserActivityAt: Date.now(),
     })
   },
   clearSelectedRoad: () => set({ selectedRoadId: null }),
@@ -2264,6 +2286,7 @@ const useAppStore = create((set, get) => ({
       routes: [],
       selectedRouteId: null,
       selectedRoadId: null,
+      lastUserActivityAt: Date.now(),
     })
     get().addRecentSearch(normalizedDestination)
 
@@ -2325,6 +2348,9 @@ const useAppStore = create((set, get) => ({
   refreshNavigationRoute: async (reason = 'manual') => {
     const state = get()
     if (state.isRefreshingNavigation || !state.destination) return null
+    if ((reason === 'traffic-refresh' || reason === 'live-retry') && !shouldAllowBackgroundApi(state, { requireMovement: true, allowDuringNavigation: false })) {
+      return null
+    }
 
     const origin = await resolveRoutingOrigin(getActiveRoutingOrigin(state))
     set({ isRefreshingNavigation: true })
