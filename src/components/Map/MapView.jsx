@@ -371,22 +371,57 @@ function haversineM(lat1, lng1, lat2, lng2) {
   return 2 * R * Math.asin(Math.sqrt(a))
 }
 
+function getRoadCoordByKm(road, targetKm) {
+  const km = Number(targetKm)
+  if (!road || !Number.isFinite(km)) return null
+  const nodes = [
+    { km: 0, coord: road.startCoord },
+    ...((road.majorJunctions ?? [])
+      .filter((junction) => Number.isFinite(Number(junction?.km)) && Array.isArray(junction?.coord) && junction.coord.length >= 2)
+      .map((junction) => ({
+        km: Number(junction.km),
+        coord: junction.coord,
+      }))),
+    { km: Number(road.totalKm ?? 0), coord: road.endCoord },
+  ]
+    .filter((node) => Number.isFinite(node.km) && Array.isArray(node.coord) && node.coord.length >= 2)
+    .sort((a, b) => a.km - b.km)
+
+  if (nodes.length < 2) return null
+  if (km <= nodes[0].km) return nodes[0].coord
+  if (km >= nodes[nodes.length - 1].km) return nodes[nodes.length - 1].coord
+
+  for (let index = 0; index < nodes.length - 1; index += 1) {
+    const start = nodes[index]
+    const end = nodes[index + 1]
+    if (km < start.km || km > end.km) continue
+    const span = Math.max(0.0001, end.km - start.km)
+    const ratio = Math.max(0, Math.min(1, (km - start.km) / span))
+    return [
+      Number((start.coord[0] + ((end.coord[0] - start.coord[0]) * ratio)).toFixed(6)),
+      Number((start.coord[1] + ((end.coord[1] - start.coord[1]) * ratio)).toFixed(6)),
+    ]
+  }
+
+  return null
+}
+
 function buildNearbyRoadCameras(userLocation) {
   if (!userLocation) return []
 
   return HIGHWAYS.flatMap((road) => {
-    const points = [road.startCoord, ...road.majorJunctions.map((junction) => junction.coord), road.endCoord]
-    return points.slice(1).map((coord, index) => {
-      const previous = points[index]
-      const mid = [(previous[0] + coord[0]) / 2, (previous[1] + coord[1]) / 2]
-      const speedLimit = road.id === 'sejongPocheon' ? 110 : 100
+    return (road.cameras ?? []).flatMap((camera, index) => {
+      const coord = Array.isArray(camera?.coord) && camera.coord.length >= 2
+        ? camera.coord
+        : getRoadCoordByKm(road, camera?.km)
+      if (!coord) return []
       return {
-        id: `${road.id}-nearby-cam-${index}`,
-        coord: mid,
-        type: 'fixed',
-        label: `${road.shortName} 지점단속`,
-        speedLimit,
-        distanceM: haversineM(userLocation.lat, userLocation.lng, mid[0], mid[1]),
+        id: camera.id ?? `${road.id}-nearby-cam-${index}`,
+        coord,
+        type: camera.type ?? 'fixed',
+        label: camera.label ?? `${road.shortName} 카메라`,
+        speedLimit: Number.isFinite(Number(camera?.speedLimit)) ? Number(camera.speedLimit) : null,
+        distanceM: haversineM(userLocation.lat, userLocation.lng, coord[0], coord[1]),
       }
     })
   })

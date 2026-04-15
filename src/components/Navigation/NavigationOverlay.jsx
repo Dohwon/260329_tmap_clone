@@ -292,6 +292,28 @@ export default function NavigationOverlay() {
   const liveMergeOptions = getUpcomingMergeOptions(mergeOptions, routeProgress.progressKm)
   const nextMergeOpt = liveMergeOptions.find((option) => option.remainingDistanceKm > 0.03) ?? liveMergeOptions[0]
   const remainingEta = getRemainingEta(route, routeProgress.remainingKm)
+  const nextCameraInfo = useMemo(() => {
+    if (!userLocation) return null
+    const nearest = (route?.cameras ?? [])
+      .filter((camera) => hasValidCoordPair(camera?.coord))
+      .map((camera) => ({
+        ...camera,
+        distanceM: haversineM(userLocation.lat, userLocation.lng, camera.coord[0], camera.coord[1]),
+      }))
+      .filter((camera) => camera.distanceM >= 0 && camera.distanceM <= 8000)
+      .sort((a, b) => a.distanceM - b.distanceM)[0]
+    if (!nearest) return null
+    return {
+      ...nearest,
+      distanceLabel: nearest.distanceM < 1000
+        ? `${Math.max(50, Math.round(nearest.distanceM / 10) * 10)}m`
+        : `${Number((nearest.distanceM / 1000).toFixed(1))}km`,
+    }
+  }, [route?.cameras, userLocation])
+  const nextSectionInfo = useMemo(
+    () => (nextCameraInfo?.type === 'section_start' ? nextCameraInfo : null),
+    [nextCameraInfo]
+  )
 
   const triggerAlertFlash = (tone = 'red') => {
     if (flashTimerRef.current) window.clearTimeout(flashTimerRef.current)
@@ -1083,14 +1105,22 @@ export default function NavigationOverlay() {
           )}
 
           <div className="flex items-center gap-4 px-4 pb-3">
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm">📷</span>
-              <span className="text-xs text-gray-500">다음 카메라 <strong className="text-red-500">{Math.max(4, Math.round((route?.distance ?? 0) / 6))}km</strong> 앞</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm">🚧</span>
-              <span className="text-xs text-gray-500">구간단속 <strong className="text-orange-500">{Math.max(8, Math.round((route?.distance ?? 0) / 4))}km</strong> 앞</span>
-            </div>
+            {nextCameraInfo && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm">📷</span>
+                <span className="text-xs text-gray-500">
+                  다음 카메라 <strong className="text-red-500">{nextCameraInfo.distanceLabel}</strong> 앞
+                </span>
+              </div>
+            )}
+            {nextSectionInfo && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm">🚧</span>
+                <span className="text-xs text-gray-500">
+                  구간단속 <strong className="text-orange-500">{nextSectionInfo.distanceLabel}</strong> 앞
+                </span>
+              </div>
+            )}
             {isRefreshingNavigation && (
               <div className="ml-auto text-[11px] font-semibold text-tmap-blue">실시간 재탐색 중</div>
             )}

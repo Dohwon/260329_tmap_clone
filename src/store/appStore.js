@@ -273,6 +273,39 @@ function getRoadPath(road) {
   return [road.startCoord, ...road.majorJunctions.map((junction) => junction.coord), road.endCoord]
 }
 
+function getCoordByRoadKm(road, targetKm) {
+  const km = Number(targetKm)
+  if (!road || !Number.isFinite(km)) return null
+  const nodes = [
+    { km: 0, coord: road.startCoord },
+    ...(road.majorJunctions ?? []).filter((junction) => Number.isFinite(Number(junction?.km)) && Array.isArray(junction?.coord)).map((junction) => ({
+      km: Number(junction.km),
+      coord: junction.coord,
+    })),
+    { km: Number(road.totalKm ?? 0), coord: road.endCoord },
+  ]
+    .filter((node) => Array.isArray(node.coord) && node.coord.length >= 2 && Number.isFinite(node.km))
+    .sort((a, b) => a.km - b.km)
+
+  if (nodes.length < 2) return null
+  if (km <= nodes[0].km) return nodes[0].coord
+  if (km >= nodes[nodes.length - 1].km) return nodes[nodes.length - 1].coord
+
+  for (let index = 0; index < nodes.length - 1; index += 1) {
+    const start = nodes[index]
+    const end = nodes[index + 1]
+    if (km < start.km || km > end.km) continue
+    const span = Math.max(0.0001, end.km - start.km)
+    const ratio = Math.max(0, Math.min(1, (km - start.km) / span))
+    return [
+      Number((start.coord[0] + ((end.coord[0] - start.coord[0]) * ratio)).toFixed(6)),
+      Number((start.coord[1] + ((end.coord[1] - start.coord[1]) * ratio)).toFixed(6)),
+    ]
+  }
+
+  return null
+}
+
 function projectPointToSegment(point, start, end) {
   const latFactor = 111320
   const lngFactor = 111320 * Math.cos((((point[0] + start[0] + end[0]) / 3) * Math.PI) / 180)
@@ -495,69 +528,35 @@ function buildRoadSegments(road) {
 }
 
 function buildRoadCameras(road) {
-  const path = getRoadPath(road)
-  return path.slice(1).flatMap((coord, index) => {
-    const previous = path[index]
-    const mid = [(previous[0] + coord[0]) / 2, (previous[1] + coord[1]) / 2]
-    const speedLimit = road.id === 'sejongPocheon'
-      ? (index === 0 ? 120 : 110)
-      : road.number === '1' || road.number === '50'
-        ? (index % 2 === 0 ? 110 : 100)
-        : 100
-    const cameras = [
-      {
-        id: `${road.id}-fixed-${index}`,
-        coord: mid,
-        type: 'fixed',
-        speedLimit,
-        label: '지점 단속',
-      },
-    ]
-
-    if (index % 2 === 1) {
-      cameras.push(
-        {
-          id: `${road.id}-section-start-${index}`,
-          coord: previous,
-          type: 'section_start',
-          speedLimit,
-          label: '구간단속 시작',
-          sectionLength: Number(haversineKm(previous[0], previous[1], coord[0], coord[1]).toFixed(1)),
-        },
-        {
-          id: `${road.id}-section-end-${index}`,
-          coord,
-          type: 'section_end',
-          speedLimit,
-          label: '구간단속 종료',
-        }
-      )
-    }
-    return cameras
-  })
+  return (road.cameras ?? [])
+    .map((camera, index) => {
+      const coord = Array.isArray(camera?.coord) && camera.coord.length >= 2
+        ? camera.coord
+        : getCoordByRoadKm(road, camera?.km)
+      if (!coord) return null
+      return {
+        id: camera.id ?? `${road.id}-camera-${index}`,
+        coord,
+        type: camera.type ?? 'fixed',
+        speedLimit: Number.isFinite(Number(camera.speedLimit)) ? Number(camera.speedLimit) : null,
+        label: camera.label ?? '지점 단속',
+        sectionLength: Number.isFinite(Number(camera.sectionLength)) ? Number(camera.sectionLength) : null,
+      }
+    })
+    .filter(Boolean)
 }
 
 function buildRoadRestStops(road) {
-  // 실제 휴게소 데이터가 있으면 그대로 사용
-  if (road.restStops && road.restStops.length > 0) {
-    return road.restStops.map((stop) => ({
-      id: stop.id ?? `${road.id}-rest-${stop.km}`,
-      name: stop.name,
-      coord: stop.coord,
-      type: stop.type,
-      km: stop.km,
-    }))
-  }
-  if (road.disableRestStopFallback) return []
-  // 폴백: 분기점 좌표 기반 생성 (국도 등)
-  const path = getRoadPath(road)
-  return path.slice(1, -1).map((coord, index) => ({
-    id: `${road.id}-rest-${index}`,
-    name: index % 2 === 0 ? `${road.shortName} 휴게소` : `${road.shortName} 졸음쉼터`,
-    coord,
-    type: index % 2 === 0 ? 'service' : 'drowsy',
-    km: road.majorJunctions[index]?.km ?? Math.round((road.totalKm / Math.max(1, path.length - 1)) * (index + 1)),
+  if (!Array.isArray(road?.restStops) || road.restStops.length === 0) return []
+  return road.restStops.map((stop) => ({
+    id: stop.id ?? `${road.id}-rest-${stop.km}`,
+    name: stop.name,
+    coord: stop.coord ?? getCoordByRoadKm(road, stop.km),
+    type: stop.type,
+    km: stop.km,
+    address: stop.address ?? null,
   }))
+    .filter((stop) => Array.isArray(stop.coord) && stop.coord.length >= 2)
 }
 
 function buildRoadSummary(road) {

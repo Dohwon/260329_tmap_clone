@@ -190,3 +190,26 @@
   - `src/components/Navigation/NavigationOverlay.jsx`
   - `src/hooks/useGeolocation.js`
   - `src/utils/navigationLogic.js`
+
+### 2026-04-15 도로 탐색 휴게소/카메라 마스터 데이터 정확도
+
+- 상태: `mitigated`
+- 증상:
+  - 특정 고속도로를 실제 주행했을 때 휴게소가 누락되거나, 홈/도로 탐색 화면 카메라 위치가 실제와 다르게 보일 수 있었음
+  - 특히 도로 탐색용 카메라는 실제 개수/위치가 아니라 분기점 사이 중간점 보간으로 생성되던 구간이 있었음
+- 원인:
+  - `도로 탐색/추천` 계층은 일부 수동 휴게소 데이터와 synthetic camera fallback이 섞여 있었음
+  - 휴게소 검색도 실제 데이터가 비면 generic seed fallback으로 가짜 후보를 만들 수 있었음
+- 해결 기록:
+  - 2026-04-15: 도로 탐색 카메라는 `road.cameras` 명시 데이터 또는 실제 경로 `safetyFacilityList`가 있을 때만 노출하도록 변경
+  - 2026-04-15: 휴게소는 명시 데이터 + km 앵커 보간만 허용하고, generic 휴게소 fallback은 제거
+  - 2026-04-15: 서해안고속도로 휴게소 마스터 데이터를 `행담도/서산/홍성/대천/서천/군산/고창고인돌/함평천지` 기준으로 보강
+- 남은 한계:
+  - 아직 모든 도로의 휴게소/카메라 마스터 데이터가 완전한 것은 아니며, 데이터가 없는 노선은 비어 보일 수 있음
+  - 도로 탐색용 혼잡/속도 요약에는 일부 추정 로직이 남아 있어, 휴게소/카메라처럼 전 구간 actual-only로 정리하는 추가 작업이 필요함
+- 관련 파일:
+  - `src/data/highwayData.js`
+  - `src/services/tmapService.js`
+  - `src/store/appStore.js`
+  - `src/components/Map/MapView.jsx`
+  - `src/components/Navigation/NavigationOverlay.jsx`

@@ -175,6 +175,49 @@ function normalizeFuelText(value) {
     .replace(/[-_/.,]/g, '')
 }
 
+function getRoadAnchorNodes(road) {
+  return [
+    { km: 0, coord: road?.startCoord },
+    ...((road?.majorJunctions ?? [])
+      .filter((junction) => Number.isFinite(Number(junction?.km)) && Array.isArray(junction?.coord) && junction.coord.length >= 2)
+      .map((junction) => ({
+        km: Number(junction.km),
+        coord: junction.coord,
+      }))),
+    { km: Number(road?.totalKm ?? 0), coord: road?.endCoord },
+  ]
+    .filter((node) => Number.isFinite(node.km) && Array.isArray(node.coord) && node.coord.length >= 2)
+    .sort((a, b) => a.km - b.km)
+}
+
+function getRoadCoordByKm(road, targetKm) {
+  const km = Number(targetKm)
+  if (!Number.isFinite(km)) return null
+  const nodes = getRoadAnchorNodes(road)
+  if (nodes.length < 2) return null
+  if (km <= nodes[0].km) return nodes[0].coord
+  if (km >= nodes[nodes.length - 1].km) return nodes[nodes.length - 1].coord
+
+  for (let index = 0; index < nodes.length - 1; index += 1) {
+    const start = nodes[index]
+    const end = nodes[index + 1]
+    if (km < start.km || km > end.km) continue
+    const span = Math.max(0.0001, end.km - start.km)
+    const ratio = Math.max(0, Math.min(1, (km - start.km) / span))
+    return [
+      Number((start.coord[0] + ((end.coord[0] - start.coord[0]) * ratio)).toFixed(6)),
+      Number((start.coord[1] + ((end.coord[1] - start.coord[1]) * ratio)).toFixed(6)),
+    ]
+  }
+
+  return null
+}
+
+function resolveRoadStopCoord(road, stop) {
+  if (Array.isArray(stop?.coord) && stop.coord.length >= 2) return stop.coord
+  return getRoadCoordByKm(road, stop?.km)
+}
+
 function buildRoadSearchPlaces() {
   return HIGHWAYS.flatMap((road) => [
     {
@@ -204,15 +247,19 @@ function buildRoadSearchPlaces() {
       category: '분기점',
       aliases: [...(road.aliases ?? []), junction.name, `${road.name} ${junction.name}`],
     })),
-    ...(road.restStops ?? []).map((stop) => ({
-      id: stop.id,
-      name: stop.name,
-      address: `${road.name} ${stop.name}`,
-      lat: stop.coord[0],
-      lng: stop.coord[1],
-      category: stop.type === 'service' ? '휴게소' : '졸음쉼터',
-      aliases: [...(road.aliases ?? []), stop.name, `${road.name} ${stop.name}`],
-    })),
+    ...(road.restStops ?? []).flatMap((stop) => {
+      const coord = resolveRoadStopCoord(road, stop)
+      if (!coord) return []
+      return [{
+        id: stop.id,
+        name: stop.name,
+        address: stop.address ?? `${road.name} ${stop.name}`,
+        lat: coord[0],
+        lng: coord[1],
+        category: stop.type === 'service' ? '휴게소' : '졸음쉼터',
+        aliases: [...(road.aliases ?? []), stop.name, `${road.name} ${stop.name}`],
+      }]
+    }),
   ])
 }
 
@@ -462,15 +509,17 @@ function buildNearbyFallback(category, lat, lng) {
 
 function buildNearbyRestStopFallback(lat, lng, routePolyline = []) {
   return HIGHWAYS.flatMap((road) =>
-    (road.restStops ?? []).map((stop) => {
-      const routeDistanceKm = distanceKmToPolyline(stop.coord[0], stop.coord[1], routePolyline)
-      const distanceKm = Number(haversineKm(lat, lng, stop.coord[0], stop.coord[1]).toFixed(1))
+    (road.restStops ?? []).flatMap((stop) => {
+      const coord = resolveRoadStopCoord(road, stop)
+      if (!coord) return []
+      const routeDistanceKm = distanceKmToPolyline(coord[0], coord[1], routePolyline)
+      const distanceKm = Number(haversineKm(lat, lng, coord[0], coord[1]).toFixed(1))
       return {
         id: stop.id,
         name: stop.name,
-        address: `${road.name} · ${stop.type === 'service' ? '휴게소' : '졸음쉼터'}`,
-        lat: stop.coord[0],
-        lng: stop.coord[1],
+        address: stop.address ?? `${road.name} · ${stop.type === 'service' ? '휴게소' : '졸음쉼터'}`,
+        lat: coord[0],
+        lng: coord[1],
         category: stop.type === 'service' ? '휴게소' : '졸음쉼터',
         roadName: road.name,
         kmMarker: stop.km ?? null,
@@ -825,8 +874,10 @@ function getUpcomingRouteRestStops(routePolyline = [], userLocation = null, limi
   if (currentProjection.index < 0) return []
 
   return HIGHWAYS.flatMap((road) =>
-    (road.restStops ?? []).map((stop) => {
-      const stopProjection = getNearestPolylinePointIndex(stop.coord[0], stop.coord[1], routePolyline)
+    (road.restStops ?? []).flatMap((stop) => {
+      const coord = resolveRoadStopCoord(road, stop)
+      if (!coord) return []
+      const stopProjection = getNearestPolylinePointIndex(coord[0], coord[1], routePolyline)
       if (stopProjection.index < 0) return null
       if (stopProjection.distanceKm > 1.8) return null
       if (stopProjection.index <= currentProjection.index + 2) return null
@@ -836,8 +887,8 @@ function getUpcomingRouteRestStops(routePolyline = [], userLocation = null, limi
         roadName: road.name,
         type: stop.type,
         kmMarker: stop.km ?? null,
-        lat: stop.coord[0],
-        lng: stop.coord[1],
+        lat: coord[0],
+        lng: coord[1],
         distanceFromCurrentKm: getPolylineDistanceBetweenIndices(routePolyline, currentProjection.index, stopProjection.index),
       }
     })
@@ -1213,6 +1264,7 @@ export async function searchNearbyPOIs(category, lat, lng, options = {}) {
     if (category === '음식점') return enrichRestaurantPlaces(enriched, routePolyline)
     return enriched
   }
+  if (category === '휴게소') return []
   const fallback = buildNearbyFallback(category, lat, lng)
   if (category === '주유소') return enrichFuelStops(fallback, routePolyline, fuelSettings)
   if (category === '주차장') return enrichParkingPlaces(fallback)
