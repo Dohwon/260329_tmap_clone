@@ -259,7 +259,7 @@ export function haversineM(lat1, lng1, lat2, lng2) {
   return 2 * R * Math.asin(Math.sqrt(a))
 }
 
-export function analyzeRouteProgress(route, userLocation) {
+export function analyzeRouteProgress(route, userLocation, options = {}) {
   const polyline = route?.polyline ?? []
   if (!userLocation || polyline.length < 2) {
     return {
@@ -271,8 +271,18 @@ export function analyzeRouteProgress(route, userLocation) {
     }
   }
 
+  const hintProgressKm = Number(options?.nearProgressKm)
+  const progressWindowKm = Number(options?.progressWindowKm)
+  const hintSegmentIndex = Number(options?.nearSegmentIndex)
+  const segmentWindow = Number(options?.segmentWindow)
+  const hasHintProgress = Number.isFinite(hintProgressKm)
+  const hasProgressWindow = hasHintProgress && Number.isFinite(progressWindowKm) && progressWindowKm > 0
+  const hasHintSegment = Number.isFinite(hintSegmentIndex)
+  const hasSegmentWindow = hasHintSegment && Number.isFinite(segmentWindow) && segmentWindow >= 1
+
   let travelledM = 0
   let bestDistanceM = Infinity
+  let bestScore = Infinity
   let bestProgressKm = 0
   let bestMatchedLocation = null
   let bestSegmentIndex = -1
@@ -282,10 +292,22 @@ export function analyzeRouteProgress(route, userLocation) {
     const end = polyline[index + 1]
     const segmentLengthM = haversineM(start[0], start[1], end[0], end[1])
     const projection = projectPointToSegment([userLocation.lat, userLocation.lng], start, end)
+    const candidateProgressKm = (travelledM + (segmentLengthM * projection.ratio)) / 1000
+    const segmentPenalty = hasSegmentWindow
+      ? Math.max(0, Math.abs(index - hintSegmentIndex) - segmentWindow) * 18
+      : 0
+    const progressPenalty = hasProgressWindow
+      ? Math.max(0, Math.abs(candidateProgressKm - hintProgressKm) - progressWindowKm) * 220
+      : 0
+    const backwardPenalty = hasHintProgress && candidateProgressKm + 0.06 < hintProgressKm
+      ? (hintProgressKm - candidateProgressKm) * 240
+      : 0
+    const score = projection.distanceM + segmentPenalty + progressPenalty + backwardPenalty
 
-    if (projection.distanceM < bestDistanceM) {
+    if (score < bestScore || (Math.abs(score - bestScore) <= 6 && projection.distanceM < bestDistanceM)) {
+      bestScore = score
       bestDistanceM = projection.distanceM
-      bestProgressKm = (travelledM + (segmentLengthM * projection.ratio)) / 1000
+      bestProgressKm = candidateProgressKm
       bestMatchedLocation = {
         lat: start[0] + ((end[0] - start[0]) * projection.ratio),
         lng: start[1] + ((end[1] - start[1]) * projection.ratio),
@@ -786,7 +808,10 @@ export function buildDrivingHabitSummary(savedRoutes = []) {
 export function getGuidancePriority(route, userLocation, mergeOptions = []) {
   const { progress } = getUpcomingJunction(route, userLocation)
   const actions = getUpcomingGuidanceList(route, userLocation, mergeOptions, 4)
-  const nextAction = actions[0] ?? null
+  const nextAction = actions.find((action) => {
+    const priority = getGuidanceActionPriority(action)
+    return priority <= 3 && Number(action?.remainingDistanceKm) <= 1.6
+  }) ?? actions[0] ?? null
   const nextManeuver = actions.find((action) => action.source === 'maneuver') ?? null
   const nextJunction = actions.find((action) => action.source === 'junction') ?? null
   const nextMergeOption = actions.find((action) => action.source === 'merge') ?? null

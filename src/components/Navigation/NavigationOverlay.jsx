@@ -508,7 +508,12 @@ export default function NavigationOverlay() {
       if (!currentRoute || currentRoute.source === 'recorded' || s.isRefreshingNavigation || !s.userLocation) return
 
       const probeLocation = s.navigationMatchedLocation ?? s.userLocation
-      const progress = analyzeRouteProgress(currentRoute, probeLocation)
+      const progress = analyzeRouteProgress(currentRoute, probeLocation, {
+        nearProgressKm: s.navigationProgressKm,
+        progressWindowKm: 1.2,
+        nearSegmentIndex: s.navigationMatchedSegmentIndex,
+        segmentWindow: 220,
+      })
       const distM = s.navigationMatchedLocation ? 0 : progress.distanceToRouteM
 
       // 헤딩 이탈 감지: GPS 방향 vs 매칭된 경로 세그먼트 방향 차이
@@ -639,7 +644,7 @@ export default function NavigationOverlay() {
   useEffect(() => {
     if (!isNavigating || !settings.voiceGuidance || !nextGuidance || !window.speechSynthesis) return
     const remainingM = Math.round((nextGuidance.remainingDistanceKm ?? 0) * 1000)
-    const threshold = remainingM <= 120 ? '100m' : remainingM <= 350 ? '300m' : null
+    const threshold = remainingM <= 120 ? '100m' : remainingM <= 350 ? '300m' : remainingM <= 750 ? '700m' : null
     if (!threshold) return
 
     const key = `${nextGuidance.id}:${threshold}`
@@ -649,7 +654,9 @@ export default function NavigationOverlay() {
     const guidanceText = getGuidanceInstruction(nextGuidance)
     const speech = threshold === '100m'
       ? `100미터 후 ${guidanceText}입니다.`
-      : `${Math.max(100, remainingM)}미터 후 ${guidanceText}입니다.`
+      : threshold === '300m'
+        ? `${Math.max(200, remainingM)}미터 후 ${guidanceText}입니다.`
+        : `${Math.max(500, Math.round(remainingM / 10) * 10)}미터 앞 ${guidanceText}입니다.`
 
     enqueueSpeech(speech)
   }, [isNavigating, nextGuidance, settings.voiceGuidance])
