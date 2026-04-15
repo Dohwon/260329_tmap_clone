@@ -1,41 +1,41 @@
 name: Dev → Prod 배포 파이프라인
 
+# development 브랜치 푸시 시 실행
+# development → (헬스체크) → (수동 승인) → main 머지 → Railway prod 자동 배포
 on:
   push:
     branches:
-      - main   # main 푸시 시 dev 자동 배포 + prod 승인 대기
+      - development
 
 jobs:
-  # ── 1단계: dev 헬스체크 ─────────────────────────────
+  # ── 1단계: dev Railway 배포 확인 ───────────────────
   health-check-dev:
-    name: Dev 배포 확인
+    name: Dev 헬스체크
     runs-on: ubuntu-latest
     steps:
       - name: Railway dev 배포 대기 (90초)
         run: sleep 90
 
-      - name: Dev 헬스체크
+      - name: Dev URL 응답 확인
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.DEV_URL }}/")
-          echo "Dev 응답 상태: $STATUS"
+          echo "Dev 응답: $STATUS"
           if [ "$STATUS" != "200" ]; then
-            echo "Dev 헬스체크 실패 (HTTP $STATUS)" && exit 1
+            echo "헬스체크 실패 (HTTP $STATUS)" && exit 1
           fi
-          echo "Dev 헬스체크 통과"
 
-  # ── 2단계: 운영 배포 승인 대기 ──────────────────────
+  # ── 2단계: 수동 승인 대기 ───────────────────────────
   await-approval:
     name: 운영 배포 승인 대기
     needs: health-check-dev
     runs-on: ubuntu-latest
     environment: production   # GitHub Environment 보호 규칙 — 수동 승인 필요
     steps:
-      - name: 승인됨
-        run: echo "운영 배포 승인 완료"
+      - run: echo "승인 완료 — main 머지 진행"
 
-  # ── 3단계: production 브랜치로 승격 ─────────────────
-  promote-to-production:
-    name: Production 브랜치 승격
+  # ── 3단계: development → main 머지 ──────────────────
+  merge-to-main:
+    name: development → main 머지
     needs: await-approval
     runs-on: ubuntu-latest
     steps:
@@ -44,11 +44,11 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: main → production 브랜치 fast-forward
+      - name: development를 main에 fast-forward 머지
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout production 2>/dev/null || git checkout -b production
-          git merge --ff-only origin/main
-          git push origin production
-          echo "production 브랜치가 main으로 업데이트되었습니다"
+          git checkout main
+          git merge --ff-only origin/development
+          git push origin main
+          echo "main이 development로 업데이트됨 → Railway prod 자동 배포 시작"
