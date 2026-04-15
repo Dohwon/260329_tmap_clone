@@ -226,6 +226,7 @@ export default function NavigationOverlay() {
   const lastFuelRefreshCoordRef = useRef(null)
   const lastRestaurantRefreshAtRef = useRef(0)
   const lastRestaurantRefreshCoordRef = useRef(null)
+  const arrivedRef = useRef(false) // 도착 중복 발동 방지
 
   // 화면 꺼짐 방지
   useEffect(() => {
@@ -455,24 +456,89 @@ export default function NavigationOverlay() {
     }
   }, [isNavigating, route?.id, route?.polyline, userLocation])
 
+  // 경로 이탈 감지 — 3초마다 폴링
+  // useEffect 의존성 기반은 distanceToRouteM 고정 시 cooldown이 지나도 재실행 안 되는 버그 있어 폴링으로 대체
   useEffect(() => {
-    if (!isNavigating || !route || !userLocation || isRefreshingNavigation || route.source === 'recorded') return
-    const cooldownPassed = Date.now() - navigationLastRefreshedAt > 15000
-    const shouldRefreshForFallback = route.source !== 'live' && cooldownPassed
-    const shouldRefreshForOffRoute = offRouteProgress.distanceToRouteM != null && offRouteProgress.distanceToRouteM > 180 && cooldownPassed
+    if (!isNavigating) return
+    const id = window.setInterval(() => {
+      const s = useAppStore.getState()
+      const currentRoute = s.routes.find((r) => r.id === s.selectedRouteId)
+      if (!currentRoute || currentRoute.source === 'recorded' || s.isRefreshingNavigation || !s.userLocation) return
 
-    if (shouldRefreshForFallback || shouldRefreshForOffRoute) {
-      refreshNavigationRoute(shouldRefreshForOffRoute ? 'off-route' : 'live-retry')
+      const progress = analyzeRouteProgress(currentRoute, s.userLocation)
+      const distM = progress.distanceToRouteM
+
+      // 헤딩 이탈 감지: GPS 방향 vs 매칭된 경로 세그먼트 방향 차이
+      let headingDeviation = 0
+      const segIdx = progress.matchedSegmentIndex
+      const polyline = currentRoute.polyline ?? []
+      if (segIdx >= 0 && segIdx < polyline.length - 1 && s.userLocation.heading != null) {
+        const p0 = polyline[segIdx]
+        const p1 = polyline[segIdx + 1]
+        const routeHeading = ((Math.atan2(p1[1] - p0[1], p1[0] - p0[0]) * 180) / Math.PI + 360) % 360
+        const diff = Math.abs(s.userLocation.heading - routeHeading)
+        headingDeviation = diff > 180 ? 360 - diff : diff
+      }
+
+      // 방향 이탈(60° 초과 + 30m): 쿨다운 8초로 빠른 재탐색
+      // 거리 이탈(180m 초과): 쿨다운 15초
+      const isHeadingOff = headingDeviation > 60 && distM != null && distM > 30
+      const isDistanceOff = distM != null && distM > 180
+      const cooldownMs = isHeadingOff ? 8000 : 15000
+      const cooldownPassed = Date.now() - s.navigationLastRefreshedAt > cooldownMs
+
+      if (!cooldownPassed) return
+
+      if (isHeadingOff || isDistanceOff) {
+        // TTS 먼저 발화
+        if (window.speechSynthesis && s.settings?.voiceGuidance !== false) {
+          window.speechSynthesis.cancel()
+          const utt = new SpeechSynthesisUtterance('경로를 다시 탐색합니다')
+          utt.lang = 'ko-KR'
+          utt.rate = 1
+          window.speechSynthesis.speak(utt)
+        }
+        s.refreshNavigationRoute('off-route')
+      } else if (currentRoute.source !== 'live' && Date.now() - s.navigationLastRefreshedAt > 15000) {
+        s.refreshNavigationRoute('live-retry')
+      }
+    }, 3000)
+    return () => window.clearInterval(id)
+  }, [isNavigating])
+
+  // 목적지 도착 감지 — 1초마다 체크 (60km/h = 초당 17m, 3초면 50m 이미 지나침)
+  useEffect(() => {
+    if (!isNavigating) {
+      arrivedRef.current = false
+      return
     }
-  }, [
-    isNavigating,
-    isRefreshingNavigation,
-    navigationLastRefreshedAt,
-    refreshNavigationRoute,
-    route,
-    offRouteProgress.distanceToRouteM,
-    userLocation,
-  ])
+    const id = window.setInterval(() => {
+      if (arrivedRef.current) return
+      const s = useAppStore.getState()
+      if (!s.destination || !s.userLocation) return
+      const distM = haversineM(s.userLocation.lat, s.userLocation.lng, s.destination.lat, s.destination.lng)
+      if (distM > 50) return
+
+      arrivedRef.current = true
+      // 시뮬레이션 중이면 정지
+      if (s.isDriveSimulation) s.stopDriveSimulation()
+      // TTS
+      if (window.speechSynthesis && s.settings?.voiceGuidance !== false) {
+        window.speechSynthesis.cancel()
+        const utt = new SpeechSynthesisUtterance('목적지에 도착했습니다')
+        utt.lang = 'ko-KR'
+        window.speechSynthesis.speak(utt)
+      }
+      // 저장 다이얼로그 표시 (drivePathHistory 있으면) 또는 바로 종료
+      const movedPolyline = s.drivePathHistory ?? []
+      if (movedPolyline.length > 1) {
+        setShowSaveDialog(true)
+      } else {
+        s.stopNavigation()
+      }
+    }, 1000)
+    return () => window.clearInterval(id)
+  }, [isNavigating])
 
   // 상단 배너: 다음 조작을 목적지보다 우선 표시
   const nextGuidance = nextAction
@@ -1022,7 +1088,7 @@ export default function NavigationOverlay() {
       )}
 
       {/* 주행 시뮬레이터 버튼 — 개발 환경에서만 표시 */}
-      {import.meta.env.VITE_SHOW_SIM_CONTROLS === 'true' && (
+      {(import.meta.env.VITE_SHOW_SIM_CONTROLS === 'true' || new URLSearchParams(window.location.search).get('dev') === '1') && (
         <div className="absolute right-4 bottom-64 z-20 flex flex-col gap-1 items-end">
           {isDriveSimulation ? (
             <button

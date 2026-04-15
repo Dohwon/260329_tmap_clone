@@ -272,16 +272,21 @@ export default function HomeScreen() {
         )}
 
         <NavigationOverlay />
-        {settings.safetyModeEnabled && !isNavigating && (
-          <SafetyModeBanner
-            safetyHazards={getHazardsAhead(safetyHazards, userLocation)}
-            collapsed={isSafetyBannerCollapsed}
-            onCollapse={() => setIsSafetyBannerCollapsed(true)}
-            onExpand={() => setIsSafetyBannerCollapsed(false)}
-          />
-        )}
         <RoutePreviewPanel />
-        {!isSearchOverlayOpen && !showRoutePanel && !isNavigating && <HomeBottomPanel />}
+        {/* 알림창 + 홈패널을 하나의 bottom 컨테이너로 묶어 항상 붙어있게 */}
+        {!isSearchOverlayOpen && !showRoutePanel && !isNavigating && (
+          <div className="absolute bottom-0 left-0 right-0 z-20 flex flex-col">
+            {settings.safetyModeEnabled && (
+              <SafetyModeBanner
+                safetyHazards={getHazardsAhead(safetyHazards, userLocation)}
+                collapsed={isSafetyBannerCollapsed}
+                onCollapse={() => setIsSafetyBannerCollapsed(true)}
+                onExpand={() => setIsSafetyBannerCollapsed(false)}
+              />
+            )}
+            <HomeBottomPanel />
+          </div>
+        )}
 
         {/* 해안/산악도로 경유 제안 다이얼로그 (경로 패널 위에 표시) */}
         {scenicRoadSuggestions.length > 0 && showRoutePanel && !isNavigating && <ScenicRoadDialog />}
@@ -312,28 +317,34 @@ function SafetyModeBanner({ safetyHazards, collapsed = false, onCollapse, onExpa
     touchStartRef.current = e.touches?.[0]?.clientY ?? null
   }
 
+  const handleTouchMove = (e) => {
+    // 부모 스크롤이 터치를 가로채지 못하도록 방지
+    e.stopPropagation()
+  }
+
   const handleTouchEnd = (e) => {
     const startY = touchStartRef.current
     const endY = e.changedTouches?.[0]?.clientY ?? null
     touchStartRef.current = null
     if (startY == null || endY == null) return
-    if (endY - startY >= 28) onCollapse?.()
-    if (startY - endY >= 28) onExpand?.()
+    if (endY - startY >= 16) onCollapse?.()   // 아래로 16px = 접기
+    if (startY - endY >= 16) onExpand?.()     // 위로 16px = 펼치기
   }
 
   if (collapsed) {
     return (
-      <div className="absolute top-40 left-4 right-4 z-20">
+      <div className="px-4 pb-1">
         <button
           type="button"
           onClick={onExpand}
           onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          className="rounded-full bg-white/92 backdrop-blur-md shadow-lg px-4 py-2 border border-emerald-100 flex items-center gap-2"
+          className="w-full rounded-full bg-white/92 backdrop-blur-md shadow-lg px-4 py-2 border border-emerald-100 flex items-center gap-2"
         >
           <div className="w-2 h-2 rounded-full bg-emerald-500" />
           <div className="text-xs font-bold text-emerald-700">안전 운전 모드</div>
-          <div className="text-[11px] text-gray-400">위로 밀어 펼치기</div>
+          <div className="text-[11px] text-gray-400 ml-auto">↑ 펼치기</div>
         </button>
       </div>
     )
@@ -341,25 +352,27 @@ function SafetyModeBanner({ safetyHazards, collapsed = false, onCollapse, onExpa
 
   if (!nextHazard) {
     return (
-      <div className="absolute top-40 left-4 right-4 z-20">
+      <div className="px-4 pb-1">
         <div
           className="rounded-2xl bg-white/92 backdrop-blur-md shadow-lg px-4 py-3 border border-emerald-100"
           onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
         >
           <div className="text-[11px] font-bold text-emerald-600">안전 운전 모드</div>
           <div className="text-sm font-semibold text-gray-900 mt-0.5">주변 위험요소를 확인하는 중입니다</div>
-          <div className="text-[11px] text-gray-400 mt-1">아래로 밀어 접기</div>
+          <div className="text-[11px] text-gray-400 mt-1">↓ 내려서 접기</div>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="absolute top-40 left-4 right-4 z-20">
+    <div className="px-4 pb-1">
       <div
         className="rounded-2xl bg-white/92 backdrop-blur-md shadow-lg px-4 py-3 border border-emerald-100"
         onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
         <div className="flex items-center gap-3">
@@ -374,7 +387,7 @@ function SafetyModeBanner({ safetyHazards, collapsed = false, onCollapse, onExpa
             <div className="text-xs text-gray-500 truncate">{nextHazard.name}</div>
           </div>
         </div>
-        <div className="text-[11px] text-gray-400 mt-2">아래로 밀어 접기</div>
+        <div className="text-[11px] text-gray-400 mt-2">↓ 내려서 접기</div>
       </div>
     </div>
   )
