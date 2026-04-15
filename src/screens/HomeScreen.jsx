@@ -275,7 +275,7 @@ export default function HomeScreen() {
         <RoutePreviewPanel />
         {/* 알림창 + 홈패널을 하나의 bottom 컨테이너로 묶어 항상 붙어있게 */}
         {!isSearchOverlayOpen && !showRoutePanel && !isNavigating && (
-          <div className="absolute bottom-16 left-0 right-0 z-20 flex flex-col">
+          <div className="absolute bottom-0 left-0 right-0 z-20 flex flex-col">
             {settings.safetyModeEnabled && (
               <SafetyModeBanner
                 safetyHazards={getHazardsAhead(safetyHazards, userLocation)}
