@@ -1088,7 +1088,7 @@ export default function NavigationOverlay() {
       )}
 
       {/* 주행 시뮬레이터 버튼 — 개발 환경에서만 표시 */}
-      {import.meta.env.VITE_SHOW_SIM_CONTROLS === 'true' && (
+      {(import.meta.env.VITE_SHOW_SIM_CONTROLS === 'true' || new URLSearchParams(window.location.search).get('dev') === '1') && (
         <div className="absolute right-4 bottom-64 z-20 flex flex-col gap-1 items-end">
           {isDriveSimulation ? (
             <button

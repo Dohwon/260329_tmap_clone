@@ -26,7 +26,7 @@ export default function HomeBottomPanel() {
   if (isNavigating || showRoutePanel) return null
 
   return (
-    <div className="absolute bottom-16 left-0 right-0 z-20">
+    <div className="w-full">
       <div className="bg-white bottom-sheet mx-0 pt-3 pb-2 safe-bottom">
         <div className="flex justify-center mb-2">
           <div className="w-10 h-1 bg-gray-300 rounded-full" />
