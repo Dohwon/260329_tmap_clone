@@ -1284,13 +1284,15 @@ const useAppStore = create((set, get) => ({
       const rawJumpDistanceM = Number.isFinite(previousRawLat) && Number.isFinite(previousRawLng)
         ? haversineKm(previousRawLat, previousRawLng, location.lat, location.lng) * 1000
         : 0
+      const currentAccuracyM = Number(location.accuracy ?? 999)
+      const previousAccuracyM = Number(previousLocation?.accuracy ?? 999)
       const plausibleJumpDistanceM = Math.max(
         10,
         (((Math.max(
           8,
           currentSpeedKmh,
           Number(previousLocation?.speedKmh ?? 0),
-        ) * 1000) / 3600) * Math.max(0.35, elapsedSincePrevLocationSec) * 2.8) + Math.max(4, Number(location.accuracy ?? 8) * 0.45),
+        ) * 1000) / 3600) * Math.max(0.35, elapsedSincePrevLocationSec) * 2.8) + Math.max(4, currentAccuracyM * 0.45),
       )
       const maxAdvanceKm = Math.max(0.04, ((Math.max(12, currentSpeedKmh) * Math.max(1, elapsedSinceLastSampleSec)) / 3600) * 2.4)
       const preliminaryRouteProgress = activeRoute ? analyzeRouteProgress(activeRoute, location, {
@@ -1301,13 +1303,20 @@ const useAppStore = create((set, get) => ({
       }) : null
       const snapEnterDistanceLimitM = Math.max(18, Math.min(70, Number(location.accuracy ?? 24) * 1.35))
       const snapExitDistanceLimitM = Math.max(34, Math.min(110, Number(location.accuracy ?? 24) * 2.1))
-      const shouldFilterRawJump =
-        state.isNavigating &&
+      const isGeneralGpsJump =
         Number.isFinite(rawJumpDistanceM) &&
         Number.isFinite(elapsedSincePrevLocationSec) &&
         elapsedSincePrevLocationSec <= 4 &&
-        rawJumpDistanceM > plausibleJumpDistanceM &&
-        (!preliminaryRouteProgress?.matchedLocation || preliminaryRouteProgress.distanceToRouteM > snapExitDistanceLimitM)
+        rawJumpDistanceM > Math.max(14, plausibleJumpDistanceM) &&
+        currentAccuracyM >= Math.min(60, previousAccuracyM + 8) &&
+        Math.max(currentSpeedKmh, Number(previousLocation?.speedKmh ?? 0)) <= 24
+      const shouldFilterRawJump =
+        (state.isNavigating && Number.isFinite(rawJumpDistanceM) &&
+          Number.isFinite(elapsedSincePrevLocationSec) &&
+          elapsedSincePrevLocationSec <= 4 &&
+          rawJumpDistanceM > plausibleJumpDistanceM &&
+          (!preliminaryRouteProgress?.matchedLocation || preliminaryRouteProgress.distanceToRouteM > snapExitDistanceLimitM))
+        || (!state.isNavigating && isGeneralGpsJump)
       const effectiveLocation = shouldFilterRawJump && Number.isFinite(previousRawLat) && Number.isFinite(previousRawLng)
         ? {
             ...location,
