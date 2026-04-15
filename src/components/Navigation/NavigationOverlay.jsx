@@ -506,7 +506,7 @@ export default function NavigationOverlay() {
     return () => window.clearInterval(id)
   }, [isNavigating])
 
-  // 목적지 도착 감지 — 내비 시작 시 초기화, 50m 이내 진입 시 TTS + 저장 다이얼로그
+  // 목적지 도착 감지 — 1초마다 체크 (60km/h = 초당 17m, 3초면 50m 이미 지나침)
   useEffect(() => {
     if (!isNavigating) {
       arrivedRef.current = false
@@ -536,7 +536,7 @@ export default function NavigationOverlay() {
       } else {
         s.stopNavigation()
       }
-    }, 3000)
+    }, 1000)
     return () => window.clearInterval(id)
   }, [isNavigating])
 
