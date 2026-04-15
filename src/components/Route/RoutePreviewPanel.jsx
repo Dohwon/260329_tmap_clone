@@ -28,7 +28,7 @@ export default function RoutePreviewPanel() {
   } = useAppStore()
   const [showMergeSheet, setShowMergeSheet] = useState(false)
   const [showWaypointSheet, setShowWaypointSheet] = useState(false)
-  const showSimControls = import.meta.env.VITE_SHOW_SIM_CONTROLS === 'true' || new URLSearchParams(window.location.search).get('dev') === '1'
+  const showSimControls = import.meta.env.VITE_SHOW_SIM_CONTROLS === 'true'
 
   if (!showRoutePanel) return null
 
