@@ -42,6 +42,14 @@ const GOOGLE_PLACES_KEY = process.env.GOOGLE_PLACES_API_KEY
   || localEnv.GOOGLE_PLACES_API_KEY
   || localEnv.GOOGLE_MAPS_API_KEY
   || ''
+const GOOGLE_TTS_KEY = process.env.GOOGLE_TTS_API_KEY
+  || process.env.GOOGLE_API_KEY
+  || localEnv.GOOGLE_TTS_API_KEY
+  || localEnv.GOOGLE_API_KEY
+  || ''
+const GOOGLE_TTS_VOICE = process.env.GOOGLE_TTS_VOICE_NAME
+  || localEnv.GOOGLE_TTS_VOICE_NAME
+  || 'ko-KR-Chirp3-HD-Despina'
 
 const WGS84 = 'EPSG:4326'
 const KATEC = 'KATEC'
@@ -145,6 +153,38 @@ function googlePlacesFetch(googlePath, method, extraHeaders, body) {
     if (bodyBuf) req.write(bodyBuf)
     req.end()
   })
+}
+
+function googleTtsFetch(path, method, extraHeaders, body) {
+  return new Promise((resolve, reject) => {
+    const bodyBuf = body ? Buffer.from(body, 'utf8') : null
+    const headers = {
+      Accept: 'application/json',
+      ...extraHeaders,
+    }
+    if (bodyBuf) {
+      headers['Content-Type'] = 'application/json'
+      headers['Content-Length'] = bodyBuf.length
+    }
+
+    const req = https.request(
+      { hostname: 'texttospeech.googleapis.com', path, method, headers },
+      (res) => {
+        const chunks = []
+        res.on('data', (chunk) => chunks.push(chunk))
+        res.on('end', () => resolve({ status: res.statusCode, rawHeaders: res.headers, body: Buffer.concat(chunks) }))
+      }
+    )
+    req.on('error', reject)
+    if (bodyBuf) req.write(bodyBuf)
+    req.end()
+  })
+}
+
+function withQuery(path, query = {}) {
+  const params = new URLSearchParams(query)
+  const qs = params.toString()
+  return qs ? `${path}?${qs}` : path
 }
 
 function parseJsonBuffer(buffer) {
@@ -835,6 +875,47 @@ app.get('/api/meta/tmap-diag', async (req, res) => {
     : `오류 — POI:${report.tests.poi?.ok?'✅':'❌'} 경로:${report.tests.routes?.ok?'✅':'❌'} / errorCode: ${report.tests.routes?.errorCode ?? report.tests.poi?.errorCode}`
 
   res.json(report)
+})
+
+app.post('/api/tts/google', express.json({ limit: '256kb' }), async (req, res) => {
+  if (!GOOGLE_TTS_KEY) return res.status(204).end()
+
+  const text = String(req.body?.text ?? '').trim()
+  if (!text) return res.status(400).json({ error: { code: 'EMPTY_TEXT', message: 'text가 비어 있습니다.' } })
+
+  const voiceName = String(req.body?.voiceName ?? GOOGLE_TTS_VOICE).trim() || GOOGLE_TTS_VOICE
+  const languageCode = String(req.body?.languageCode ?? (voiceName.split('-').slice(0, 2).join('-') || 'ko-KR'))
+  const speakingRate = Number.isFinite(Number(req.body?.speakingRate)) ? Number(req.body.speakingRate) : 1.02
+
+  try {
+    const result = await googleTtsFetch(
+      withQuery('/v1/text:synthesize', { key: GOOGLE_TTS_KEY }),
+      'POST',
+      {},
+      JSON.stringify({
+        input: { text: text.slice(0, 500) },
+        voice: { languageCode, name: voiceName },
+        audioConfig: { audioEncoding: 'MP3', speakingRate },
+      })
+    )
+
+    const parsed = parseJsonBuffer(result.body)
+    if (result.status !== 200 || !parsed?.audioContent) {
+      return res.status(result.status || 502).json({
+        error: {
+          code: 'GOOGLE_TTS_FAILED',
+          message: parsed?.error?.message ?? `HTTP ${result.status}`,
+        },
+      })
+    }
+
+    return res
+      .set('Content-Type', 'audio/mpeg')
+      .set('Cache-Control', 'public, max-age=86400')
+      .send(Buffer.from(parsed.audioContent, 'base64'))
+  } catch (error) {
+    return res.status(502).json({ error: { code: 'GOOGLE_TTS_PROXY_ERROR', message: error.message } })
+  }
 })
 
 // TMAP API 프록시 (GET + POST 모두 처리)

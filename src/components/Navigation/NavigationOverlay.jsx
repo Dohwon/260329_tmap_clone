@@ -13,6 +13,7 @@ import {
   getCurrentRouteSegment,
   getLaneGuidance,
   getRemainingEta,
+  getUpcomingGuidanceList,
   getUpcomingMergeOptions,
   haversineM,
 } from '../../utils/navigationLogic'
@@ -109,7 +110,7 @@ function stripLaneMention(text = '') {
     .trim()
 }
 
-function createSpeech(text) {
+function createBrowserSpeech(text) {
   const utterance = new SpeechSynthesisUtterance(text)
   utterance.lang = 'ko-KR'
   utterance.rate = 1
@@ -140,24 +141,19 @@ function playAlertChime(repeat = 1) {
   window.setTimeout(() => ctx.close().catch(() => {}), 1200)
 }
 
-function buildCameraAlertSpeech(camera, distanceM, threshold, isOverSpeed) {
+function buildCameraAlertSpeech(camera, distanceM, threshold) {
   const roundedDistance = Math.max(100, Math.round(distanceM / 10) * 10)
-  const limitText = camera?.speedLimit ? `제한속도 ${camera.speedLimit}킬로 ` : ''
   const cameraLabel = camera?.type === 'section_start'
-    ? `${limitText}구간단속 시작`
+    ? '구간단속 시작'
     : camera?.type === 'section_end'
       ? '구간단속 종료'
-      : `${limitText}과속카메라`
+      : '과속카메라'
 
   if (threshold === '100m') {
-    return isOverSpeed
-      ? `100미터 앞 ${cameraLabel}입니다. 속도를 줄이세요.`
-      : `100미터 앞 ${cameraLabel}입니다.`
+    return `100미터 앞 ${cameraLabel}입니다.`
   }
 
-  return isOverSpeed
-    ? `${roundedDistance}미터 앞 ${cameraLabel}입니다. 속도를 줄이세요.`
-    : `${roundedDistance}미터 앞 ${cameraLabel}입니다.`
+  return `${roundedDistance}미터 앞 ${cameraLabel}입니다.`
 }
 
 function buildHazardAlertSpeech(hazard, distanceM, threshold) {
@@ -194,7 +190,7 @@ export default function NavigationOverlay() {
     navAutoFollow, setNavAutoFollow, addWaypoint, searchRoute, waypoints,
     refreshNavigationRoute, navigationLastRefreshedAt, isRefreshingNavigation,
     settings, driverPreset, setDriverPreset, showRoutePanel, openSearchOverlay, safetyHazards, refreshSafetyHazards,
-    isDriveSimulation, startDriveSimulation, stopDriveSimulation,
+    isDriveSimulation, startDriveSimulation, stopDriveSimulation, triggerDriveSimulationOffRoute,
   } = useAppStore()
   const [showMerge, setShowMerge] = useState(false)
   const [showSaveDialog, setShowSaveDialog] = useState(false)
@@ -215,18 +211,20 @@ export default function NavigationOverlay() {
   const notifiedScenicRef = useRef(new Set()) // 이미 알린 scenic segment id
   const spokenGuidanceRef = useRef(new Set())
   const spokenSafetyRef = useRef(new Set())
-  const overSpeedAlertedAtRef = useRef(0)
   const startedVoiceRef = useRef(false)
   const routeSheetTouchStartRef = useRef(null)
   const routeSheetTouchHandledRef = useRef(false)
   const flashTimerRef = useRef(null)
   const speechQueueRef = useRef([])
   const speechBusyRef = useRef(false)
+  const activeAudioRef = useRef(null)
+  const activeAudioUrlRef = useRef(null)
   const lastFuelRefreshAtRef = useRef(0)
   const lastFuelRefreshCoordRef = useRef(null)
   const lastRestaurantRefreshAtRef = useRef(0)
   const lastRestaurantRefreshCoordRef = useRef(null)
   const arrivedRef = useRef(false) // 도착 중복 발동 방지
+  const offRouteEvidenceRef = useRef({ count: 0, reason: null })
 
   // 화면 꺼짐 방지
   useEffect(() => {
@@ -286,6 +284,7 @@ export default function NavigationOverlay() {
   const route = routes.find(r => r.id === selectedRouteId)
   const guidanceLocation = navigationMatchedLocation ?? userLocation
   const { progress: routeProgress, nextAction } = getGuidancePriority(route, guidanceLocation, mergeOptions)
+  const guidanceList = getUpcomingGuidanceList(route, guidanceLocation, mergeOptions, 5)
   const offRouteProgress = analyzeRouteProgress(route, userLocation)
   const currentRouteSegment = getCurrentRouteSegment(route, guidanceLocation)
   const liveMergeOptions = getUpcomingMergeOptions(mergeOptions, routeProgress.progressKm)
@@ -299,30 +298,73 @@ export default function NavigationOverlay() {
   }
 
   const flushSpeechQueue = () => {
-    if (!window.speechSynthesis || speechBusyRef.current) return
+    if (speechBusyRef.current) return
     const nextSpeech = speechQueueRef.current.shift()
     if (!nextSpeech) return
 
     speechBusyRef.current = true
-    const utterance = createSpeech(nextSpeech)
-    utterance.onend = () => {
+    playSpeech(nextSpeech).finally(() => {
       speechBusyRef.current = false
       flushSpeechQueue()
-    }
-    utterance.onerror = () => {
-      speechBusyRef.current = false
-      flushSpeechQueue()
-    }
-    window.speechSynthesis.speak(utterance)
+    })
   }
 
   const enqueueSpeech = (text) => {
-    if (!settings.voiceGuidance || !window.speechSynthesis || !text) return
+    if (!settings.voiceGuidance || !text) return
     if (speechQueueRef.current.length >= 4) {
       speechQueueRef.current = speechQueueRef.current.slice(-3)
     }
     speechQueueRef.current.push(text)
     flushSpeechQueue()
+  }
+
+  const stopActiveAudio = () => {
+    if (activeAudioRef.current) {
+      activeAudioRef.current.pause()
+      activeAudioRef.current.src = ''
+      activeAudioRef.current = null
+    }
+    if (activeAudioUrlRef.current) {
+      URL.revokeObjectURL(activeAudioUrlRef.current)
+      activeAudioUrlRef.current = null
+    }
+  }
+
+  const playSpeech = async (text) => {
+    try {
+      const response = await fetch('/api/tts/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      })
+      if (response.ok) {
+        const blob = await response.blob()
+        if (blob.size > 0) {
+          stopActiveAudio()
+          const url = URL.createObjectURL(blob)
+          activeAudioUrlRef.current = url
+          const audio = new Audio(url)
+          activeAudioRef.current = audio
+          await new Promise((resolve) => {
+            audio.onended = () => resolve()
+            audio.onerror = () => resolve()
+            audio.play().catch(() => resolve())
+          })
+          stopActiveAudio()
+          return
+        }
+      }
+    } catch {
+      // Google TTS 실패 시 브라우저 TTS로 폴백
+    }
+
+    if (!window.speechSynthesis) return
+    await new Promise((resolve) => {
+      const utterance = createBrowserSpeech(text)
+      utterance.onend = () => resolve()
+      utterance.onerror = () => resolve()
+      window.speechSynthesis.speak(utterance)
+    })
   }
 
   const speakAlert = (text, { chimeRepeat = 1, flashTone = null } = {}) => {
@@ -354,11 +396,11 @@ export default function NavigationOverlay() {
     startedVoiceRef.current = false
     spokenGuidanceRef.current.clear()
     spokenSafetyRef.current.clear()
-    overSpeedAlertedAtRef.current = 0
     if (flashTimerRef.current) window.clearTimeout(flashTimerRef.current)
     setAlertFlash(null)
     speechQueueRef.current = []
     speechBusyRef.current = false
+    stopActiveAudio()
     if (window.speechSynthesis) window.speechSynthesis.cancel()
   }, [isNavigating])
 
@@ -465,8 +507,9 @@ export default function NavigationOverlay() {
       const currentRoute = s.routes.find((r) => r.id === s.selectedRouteId)
       if (!currentRoute || currentRoute.source === 'recorded' || s.isRefreshingNavigation || !s.userLocation) return
 
-      const progress = analyzeRouteProgress(currentRoute, s.userLocation)
-      const distM = progress.distanceToRouteM
+      const probeLocation = s.navigationMatchedLocation ?? s.userLocation
+      const progress = analyzeRouteProgress(currentRoute, probeLocation)
+      const distM = s.navigationMatchedLocation ? 0 : progress.distanceToRouteM
 
       // 헤딩 이탈 감지: GPS 방향 vs 매칭된 경로 세그먼트 방향 차이
       let headingDeviation = 0
@@ -484,19 +527,28 @@ export default function NavigationOverlay() {
       // 거리 이탈(180m 초과): 쿨다운 15초
       const isHeadingOff = headingDeviation > 60 && distM != null && distM > 30
       const isDistanceOff = distM != null && distM > 180
+      const offRouteReason = isHeadingOff ? 'heading' : isDistanceOff ? 'distance' : null
       const cooldownMs = isHeadingOff ? 8000 : 15000
       const cooldownPassed = Date.now() - s.navigationLastRefreshedAt > cooldownMs
 
+      if (!offRouteReason) {
+        offRouteEvidenceRef.current = { count: 0, reason: null }
+      }
       if (!cooldownPassed) return
 
-      if (isHeadingOff || isDistanceOff) {
+      if (offRouteReason) {
+        const prevEvidence = offRouteEvidenceRef.current
+        const nextCount = prevEvidence.reason === offRouteReason ? prevEvidence.count + 1 : 1
+        offRouteEvidenceRef.current = { count: nextCount, reason: offRouteReason }
+        if (nextCount < 2) return
+        offRouteEvidenceRef.current = { count: 0, reason: null }
+
         // TTS 먼저 발화
-        if (window.speechSynthesis && s.settings?.voiceGuidance !== false) {
-          window.speechSynthesis.cancel()
-          const utt = new SpeechSynthesisUtterance('경로를 다시 탐색합니다')
-          utt.lang = 'ko-KR'
-          utt.rate = 1
-          window.speechSynthesis.speak(utt)
+        if (s.settings?.voiceGuidance !== false) {
+          stopActiveAudio()
+          if (window.speechSynthesis) window.speechSynthesis.cancel()
+          speechQueueRef.current = []
+          enqueueSpeech('경로를 다시 탐색합니다')
         }
         s.refreshNavigationRoute('off-route')
       } else if (currentRoute.source !== 'live' && Date.now() - s.navigationLastRefreshedAt > 15000) {
@@ -523,11 +575,11 @@ export default function NavigationOverlay() {
       // 시뮬레이션 중이면 정지
       if (s.isDriveSimulation) s.stopDriveSimulation()
       // TTS
-      if (window.speechSynthesis && s.settings?.voiceGuidance !== false) {
-        window.speechSynthesis.cancel()
-        const utt = new SpeechSynthesisUtterance('목적지에 도착했습니다')
-        utt.lang = 'ko-KR'
-        window.speechSynthesis.speak(utt)
+      if (s.settings?.voiceGuidance !== false) {
+        stopActiveAudio()
+        if (window.speechSynthesis) window.speechSynthesis.cancel()
+        speechQueueRef.current = []
+        enqueueSpeech('목적지에 도착했습니다')
       }
       // 저장 다이얼로그 표시 (drivePathHistory 있으면) 또는 바로 종료
       const movedPolyline = s.drivePathHistory ?? []
@@ -542,17 +594,25 @@ export default function NavigationOverlay() {
 
   // 상단 배너: 다음 조작을 목적지보다 우선 표시
   const nextGuidance = nextAction
+  const afterNextGuidance = guidanceList.find((action) => action.id !== nextGuidance?.id) ?? null
   const nextGuidanceText = nextGuidance ? getGuidanceInstruction(nextGuidance) : null
   const cleanedInstructionText = stripLaneMention(nextGuidance?.instructionText)
+  const afterNextText = afterNextGuidance ? getGuidanceInstruction(afterNextGuidance) : null
+  const afterNextGapKm = nextGuidance && afterNextGuidance
+    ? Math.max(0, (afterNextGuidance.remainingDistanceKm ?? 0) - (nextGuidance.remainingDistanceKm ?? 0))
+    : null
   const bannerTitle = nextGuidance
     ? `${formatGuidanceDistance(nextGuidance.remainingDistanceKm)} 후 ${nextGuidanceText}`
     : destination?.name ?? '목적지'
   const bannerSub = nextGuidance
-    ? (cleanedInstructionText
+    ? ([cleanedInstructionText
         ? cleanedInstructionText
         : nextGuidance.afterRoadName
         ? `${nextGuidance.afterRoadName} 진입`
-        : `${nextGuidance.afterRoadType === 'highway' ? '고속도로' : '국도'} 진입`)
+        : `${nextGuidance.afterRoadType === 'highway' ? '고속도로' : '국도'} 진입`,
+      afterNextText && Number.isFinite(afterNextGapKm)
+        ? `이후 ${formatGuidanceDistance(afterNextGapKm)} 뒤 ${afterNextText}`
+        : null].filter(Boolean).join(' · '))
     : `${routeProgress.remainingKm != null ? Number(routeProgress.remainingKm).toFixed(2) : '--'}km · ${remainingEta ? formatEta(remainingEta) : '--'} 소요`
   const bannerLabel = nextGuidance
     ? '다음 안내'
@@ -597,7 +657,6 @@ export default function NavigationOverlay() {
   useEffect(() => {
     if (!isNavigating || !userLocation) return
     const cameras = route?.cameras ?? []
-    const currentSpeed = Math.round(userLocation.speedKmh ?? 0)
 
     for (const camera of cameras) {
       if (!hasValidCoordPair(camera?.coord)) continue
@@ -609,10 +668,9 @@ export default function NavigationOverlay() {
       if (spokenSafetyRef.current.has(key)) continue
       spokenSafetyRef.current.add(key)
 
-      const isOverSpeed = Number.isFinite(camera.speedLimit) && camera.speedLimit > 0 && currentSpeed > camera.speedLimit + 3
-      speakAlert(buildCameraAlertSpeech(camera, distanceM, threshold, isOverSpeed), {
-        chimeRepeat: isOverSpeed ? 3 : 2,
-        flashTone: isOverSpeed ? 'red' : 'amber',
+      speakAlert(buildCameraAlertSpeech(camera, distanceM, threshold), {
+        chimeRepeat: 2,
+        flashTone: 'amber',
       })
       break
     }
@@ -637,22 +695,6 @@ export default function NavigationOverlay() {
       flashTone: nearestHazard.type === 'school_zone' ? 'amber' : 'sky',
     })
   }, [isNavigating, safetyHazards, settings.voiceGuidance, userLocation])
-
-  useEffect(() => {
-    if (!isNavigating || !userLocation) return
-    const speedLimit = Number(currentRouteSegment?.speedLimit)
-    const currentSpeed = Math.round(userLocation.speedKmh ?? 0)
-    if (!Number.isFinite(speedLimit) || speedLimit <= 0 || currentSpeed <= speedLimit + 7) return
-
-    const now = Date.now()
-    if (now - overSpeedAlertedAtRef.current < 20000) return
-    overSpeedAlertedAtRef.current = now
-
-    speakAlert(`현재 제한속도 ${speedLimit}킬로 구간입니다. 속도를 줄이세요.`, {
-      chimeRepeat: 3,
-      flashTone: 'red',
-    })
-  }, [currentRouteSegment?.speedLimit, isNavigating, settings.voiceGuidance, userLocation])
 
   if (!isNavigating || showRoutePanel) return null
 
@@ -1088,16 +1130,24 @@ export default function NavigationOverlay() {
       )}
 
       {/* 주행 시뮬레이터 버튼 — 개발 환경에서만 표시 */}
-      {(import.meta.env.VITE_SHOW_SIM_CONTROLS === 'true' || new URLSearchParams(window.location.search).get('dev') === '1') && (
+      {import.meta.env.VITE_SHOW_SIM_CONTROLS === 'true' && (
         <div className="absolute right-4 bottom-64 z-20 flex flex-col gap-1 items-end">
           {isDriveSimulation ? (
-            <button
-              onClick={stopDriveSimulation}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 text-white text-xs font-bold rounded-full shadow-lg active:bg-red-600"
-            >
-              <span className="w-2 h-2 bg-white rounded-sm inline-block" />
-              시뮬 정지
-            </button>
+            <>
+              <button
+                onClick={() => triggerDriveSimulationOffRoute(220, 8)}
+                className="px-3 py-1.5 bg-amber-500 text-white text-[11px] font-bold rounded-full shadow-lg active:bg-amber-600"
+              >
+                이탈 테스트
+              </button>
+              <button
+                onClick={stopDriveSimulation}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 text-white text-xs font-bold rounded-full shadow-lg active:bg-red-600"
+              >
+                <span className="w-2 h-2 bg-white rounded-sm inline-block" />
+                시뮬 정지
+              </button>
+            </>
           ) : (
             <div className="flex gap-1">
               <button
@@ -1111,6 +1161,12 @@ export default function NavigationOverlay() {
                 className="px-2.5 py-1.5 bg-gray-800 text-white text-[11px] font-bold rounded-full shadow-lg active:bg-gray-700"
               >
                 100
+              </button>
+              <button
+                onClick={() => startDriveSimulation(200)}
+                className="px-2.5 py-1.5 bg-gray-800 text-white text-[11px] font-bold rounded-full shadow-lg active:bg-gray-700"
+              >
+                200
               </button>
             </div>
           )}

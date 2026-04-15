@@ -790,6 +790,7 @@ function buildPolyline(origin, destination, offsetLng = 0) {
 function buildSegmentStats(route) {
   const pl = route.polyline ?? []
   const n = pl.length
+  const totalDistance = Number(route.distance ?? 0)
   const baseAverageSpeed = route.averageSpeed ?? Math.max(35, route.dominantSpeedLimit - (route.congestionScore === 3 ? 28 : route.congestionScore === 2 ? 16 : 8))
   // 폴리라인 길이에 무관하게 균등 분포 (긴 TMAP 경로에서도 올바른 위치)
   const c0 = pl[Math.max(0, Math.floor(n * 0.15))]
@@ -804,6 +805,8 @@ function buildSegmentStats(route) {
       speedLimit: route.dominantSpeedLimit,
       averageSpeed: Math.min(route.dominantSpeedLimit, Math.max(35, baseAverageSpeed + (route.highwayRatio >= 60 ? 6 : 2))),
       congestionScore: route.congestionScore,
+      startProgressKm: 0,
+      endProgressKm: Number((totalDistance / 3).toFixed(3)),
       center: c0,
     },
     {
@@ -814,6 +817,8 @@ function buildSegmentStats(route) {
       speedLimit: Math.max(70, route.dominantSpeedLimit - 10),
       averageSpeed: Math.max(30, Math.min(route.dominantSpeedLimit - 4, baseAverageSpeed - 8)),
       congestionScore: Math.min(3, route.congestionScore + 1),
+      startProgressKm: Number((totalDistance / 3).toFixed(3)),
+      endProgressKm: Number(((totalDistance * 2) / 3).toFixed(3)),
       center: c1,
     },
     {
@@ -824,6 +829,8 @@ function buildSegmentStats(route) {
       speedLimit: Math.max(50, route.dominantSpeedLimit - 30),
       averageSpeed: Math.max(25, Math.min(route.dominantSpeedLimit - 10, baseAverageSpeed - 15)),
       congestionScore: Math.min(3, route.congestionScore + 1),
+      startProgressKm: Number(((totalDistance * 2) / 3).toFixed(3)),
+      endProgressKm: Number(totalDistance.toFixed(3)),
       center: c2,
     },
   ]
@@ -1140,17 +1147,22 @@ async function resolveRoutingOrigin(origin) {
   return origin
 }
 
+function getActiveRoutingOrigin(state) {
+  return state?.routeOrigin ?? state?.userLocation ?? DEFAULT_ORIGIN
+}
+
 const useAppStore = create((set, get) => ({
   activeTab: 'home',
   setActiveTab: (tab) => set({ activeTab: tab }),
-  openSearchHome: () => set({ activeTab: 'search', searchMode: 'default', selectedNearbyCategory: null, nearbyPlaces: [] }),
+  openSearchHome: () => set({ activeTab: 'search', searchMode: 'default', selectedNearbyCategory: null, nearbyPlaces: [], routeSearchTarget: 'destination' }),
   isSearchOverlayOpen: false,
-  openSearchOverlay: () => set({
+  openSearchOverlay: (target = 'destination') => set({
     activeTab: 'home',
     isSearchOverlayOpen: true,
     searchMode: 'default',
     selectedNearbyCategory: null,
     nearbyPlaces: [],
+    routeSearchTarget: target,
   }),
   closeSearchOverlay: () => set({ isSearchOverlayOpen: false }),
 
@@ -1160,6 +1172,11 @@ const useAppStore = create((set, get) => ({
 
   userLocation: null,
   userAddress: '',
+  routeOrigin: null,
+  routeSearchTarget: 'destination',
+  setRouteOrigin: (routeOrigin) => set({ routeOrigin }),
+  clearRouteOrigin: () => set({ routeOrigin: null }),
+  setRouteSearchTarget: (routeSearchTarget) => set({ routeSearchTarget }),
   locationHistory: [],
   drivePathHistory: [],
   driveSampleHistory: [],
@@ -1168,7 +1185,6 @@ const useAppStore = create((set, get) => ({
   navigationProgressKm: 0,
   setUserLocation: (location) =>
     set((state) => {
-      const nextPoint = [location.lat, location.lng]
       const activeRoute = state.isNavigating
         ? (state.routes.find((route) => route.id === state.selectedRouteId) ?? state.routes[0] ?? null)
         : null
@@ -1184,14 +1200,34 @@ const useAppStore = create((set, get) => ({
             snappedToRoute: true,
           }
         : null
-      const latestDrivePoint = state.drivePathHistory[state.drivePathHistory.length - 1]
+      const trackedLocation = matchedLocation ?? location
+      const nextPoint = [trackedLocation.lat, trackedLocation.lng]
+      const rawProgressKm = Number(routeProgress?.progressKm ?? 0)
+      const prevProgressKm = Number(state.navigationProgressKm ?? 0)
       const latestDriveSample = state.driveSampleHistory[state.driveSampleHistory.length - 1]
       const elapsedSinceLastSampleSec = latestDriveSample?.capturedAt
         ? (Date.now() - Date.parse(latestDriveSample.capturedAt)) / 1000
         : Infinity
       const currentSpeedKmh = Number.isFinite(Number(location.speedKmh)) ? Number(location.speedKmh) : 0
+      const maxAdvanceKm = Math.max(0.04, ((Math.max(12, currentSpeedKmh) * Math.max(1, elapsedSinceLastSampleSec)) / 3600) * 2.4)
+      const shouldHoldProgress =
+        state.isNavigating &&
+        Boolean(matchedLocation) &&
+        Number.isFinite(prevProgressKm) &&
+        Number.isFinite(rawProgressKm) &&
+        (
+          rawProgressKm + 0.08 < prevProgressKm ||
+          rawProgressKm > prevProgressKm + maxAdvanceKm
+        )
+      const stableMatchedLocation = shouldHoldProgress
+        ? (state.navigationMatchedLocation ?? matchedLocation)
+        : matchedLocation
+      const stableProgressKm = shouldHoldProgress
+        ? prevProgressKm
+        : rawProgressKm
+      const latestDrivePoint = state.drivePathHistory[state.drivePathHistory.length - 1]
       const movedSinceLastDrivePointKm = latestDrivePoint
-        ? haversineKm(latestDrivePoint[0], latestDrivePoint[1], location.lat, location.lng)
+        ? haversineKm(latestDrivePoint[0], latestDrivePoint[1], nextPoint[0], nextPoint[1])
         : Infinity
       const shouldAppendDrivePoint = !latestDrivePoint
         || movedSinceLastDrivePointKm >= 0.004
@@ -1202,15 +1238,18 @@ const useAppStore = create((set, get) => ({
         ? Math.abs((location.speedKmh ?? 0) - (latestDriveSample.speedKmh ?? 0))
         : Infinity
       const movedSinceLastSampleKm = latestDriveSample
-        ? haversineKm(latestDriveSample.lat, latestDriveSample.lng, location.lat, location.lng)
+        ? haversineKm(latestDriveSample.lat, latestDriveSample.lng, trackedLocation.lat, trackedLocation.lng)
         : Infinity
       const shouldAppendDriveSample = !latestDriveSample
         || movedSinceLastSampleKm >= 0.003
         || speedDelta >= 4
         || elapsedSinceLastSampleSec >= 2
       const nextDriveSample = {
-        lat: location.lat,
-        lng: location.lng,
+        lat: trackedLocation.lat,
+        lng: trackedLocation.lng,
+        rawLat: location.lat,
+        rawLng: location.lng,
+        snappedToRoute: Boolean(matchedLocation),
         speedKmh: currentSpeedKmh,
         heading: Number.isFinite(Number(location.heading)) ? Number(location.heading) : null,
         capturedAt: sampleCapturedAt,
@@ -1250,8 +1289,8 @@ const useAppStore = create((set, get) => ({
         driveSampleHistory: state.isNavigating && shouldAppendDriveSample
           ? [...state.driveSampleHistory.slice(-1499), nextDriveSample]
           : state.driveSampleHistory,
-        navigationMatchedLocation: state.isNavigating ? matchedLocation : null,
-        navigationProgressKm: state.isNavigating ? Number(routeProgress?.progressKm ?? 0) : 0,
+        navigationMatchedLocation: state.isNavigating ? stableMatchedLocation : null,
+        navigationProgressKm: state.isNavigating ? stableProgressKm : 0,
         stationaryVisitState: nextStationary,
       }
     }),
@@ -1396,6 +1435,7 @@ const useAppStore = create((set, get) => ({
     set({
       isNavigating: false,
       isDriveSimulation: false,
+      driveSimulationForcedOffRoute: null,
       navAutoFollow: false,
       isSearchOverlayOpen: false,
       destination: null,
@@ -1415,6 +1455,7 @@ const useAppStore = create((set, get) => ({
 
   // ── 주행 시뮬레이터 ─────────────────────────────────
   isDriveSimulation: false,
+  driveSimulationForcedOffRoute: null,
 
   startDriveSimulation: (speedKmh = 60) => {
     const { routes, selectedRouteId } = get()
@@ -1426,10 +1467,11 @@ const useAppStore = create((set, get) => ({
       clearInterval(_simIntervalId)
       _simIntervalId = null
     }
-    set({ isDriveSimulation: true })
+    set({ isDriveSimulation: true, driveSimulationForcedOffRoute: null })
 
-    const INTERVAL_MS = 1000
+    const INTERVAL_MS = 250
     const cruiseSpeedKmh = speedKmh
+    const tickSeconds = INTERVAL_MS / 1000
 
     // 폴리라인 세그먼트 길이 사전 계산
     const segLengths = []
@@ -1444,7 +1486,11 @@ const useAppStore = create((set, get) => ({
     let targetSpeedKmh = cruiseSpeedKmh
     let brakingStepsLeft = 0          // 급정거 지속 스텝
     let laneChangeStepsLeft = 0       // 차선변경 지속 스텝
-    let laneOffsetM = 0               // 측면 오프셋(m)
+    let desiredLaneOffsetM = 0
+    let currentLaneOffsetM = 0
+    let currentForcedOffsetM = 0
+    let noiseLatM = 0
+    let noiseLngM = 0
 
     // 측면 오프셋 → 위도/경도 변환
     const applyLateralOffset = (lat, lng, headingDeg, offsetM) => {
@@ -1466,36 +1512,44 @@ const useAppStore = create((set, get) => ({
       // ── 속도 이벤트 ──
       if (brakingStepsLeft > 0) {
         brakingStepsLeft -= 1
-        targetSpeedKmh = brakingStepsLeft === 0 ? cruiseSpeedKmh : 5
-      } else if (Math.random() < 0.04) {
-        // 4% 확률 급정거 (2~4스텝)
-        brakingStepsLeft = 2 + Math.floor(Math.random() * 3)
-        targetSpeedKmh = 5
+        targetSpeedKmh = brakingStepsLeft === 0 ? cruiseSpeedKmh : Math.max(18, cruiseSpeedKmh * 0.42)
+      } else if (Math.random() < (cruiseSpeedKmh >= 140 ? 0.001 : 0.0025)) {
+        brakingStepsLeft = 3 + Math.floor(Math.random() * 3)
+        targetSpeedKmh = Math.max(18, cruiseSpeedKmh * 0.42)
       } else {
-        // 크루즈 ±15% 랜덤 변동
-        targetSpeedKmh = cruiseSpeedKmh * (0.85 + Math.random() * 0.3)
+        targetSpeedKmh = cruiseSpeedKmh * (0.97 + Math.random() * 0.05)
       }
 
-      const maxChange = brakingStepsLeft > 0 ? 40 : 15
-      currentSpeedKmh = brakingStepsLeft > 0
-        ? Math.max(targetSpeedKmh, currentSpeedKmh - maxChange)
-        : Math.min(targetSpeedKmh, currentSpeedKmh + maxChange)
+      const accelRateKmhPerSec = cruiseSpeedKmh >= 180 ? 56 : cruiseSpeedKmh >= 120 ? 40 : 24
+      const brakeRateKmhPerSec = cruiseSpeedKmh >= 180 ? 78 : cruiseSpeedKmh >= 120 ? 58 : 42
+      const accelStep = accelRateKmhPerSec * tickSeconds
+      const brakeStep = brakeRateKmhPerSec * tickSeconds
+      if (currentSpeedKmh < targetSpeedKmh) {
+        currentSpeedKmh = Math.min(targetSpeedKmh, currentSpeedKmh + accelStep)
+      } else {
+        currentSpeedKmh = Math.max(targetSpeedKmh, currentSpeedKmh - (brakingStepsLeft > 0 ? brakeStep : accelStep * 1.4))
+      }
       currentSpeedKmh = Math.max(0, currentSpeedKmh)
 
       // ── 차선변경 이벤트 ──
-      if (laneChangeStepsLeft > 0) {
-        laneChangeStepsLeft -= 1
-        laneOffsetM *= 0.6
-      } else if (Math.random() < 0.03) {
-        // 3% 확률 차선변경 (3~4스텝, 2~3.5m 측면 이동)
-        laneChangeStepsLeft = 3 + Math.floor(Math.random() * 2)
-        laneOffsetM = (Math.random() > 0.5 ? 1 : -1) * (2 + Math.random() * 1.5)
+      laneChangeStepsLeft = 0
+      desiredLaneOffsetM = 0
+      currentLaneOffsetM += (desiredLaneOffsetM - currentLaneOffsetM) * 0.18
+
+      const forcedOffRoute = get().driveSimulationForcedOffRoute
+      if (forcedOffRoute?.remainingTicks > 0) {
+        currentForcedOffsetM += (forcedOffRoute.offsetM - currentForcedOffsetM) * 0.24
+        set({
+          driveSimulationForcedOffRoute: forcedOffRoute.remainingTicks <= 1
+            ? null
+            : { ...forcedOffRoute, remainingTicks: forcedOffRoute.remainingTicks - 1 },
+        })
       } else {
-        laneOffsetM *= 0.8
+        currentForcedOffsetM *= 0.82
       }
 
       // ── 이동 거리 계산 ──
-      let remaining = (currentSpeedKmh * 1000) / 3600
+      let remaining = ((currentSpeedKmh * 1000) / 3600) * tickSeconds
       while (remaining > 0.001 && segIdx < segLengths.length) {
         const segLen = segLengths[segIdx]
         if (offsetM + remaining < segLen) {
@@ -1511,7 +1565,7 @@ const useAppStore = create((set, get) => ({
       if (segIdx >= segLengths.length) {
         clearInterval(_simIntervalId)
         _simIntervalId = null
-        set({ isDriveSimulation: false })
+        set({ isDriveSimulation: false, driveSimulationForcedOffRoute: null })
         return
       }
 
@@ -1524,19 +1578,19 @@ const useAppStore = create((set, get) => ({
 
       const headingDeg = ((Math.atan2(p1[1] - p0[1], p1[0] - p0[0]) * 180) / Math.PI + 360) % 360
 
-      // GPS 노이즈 ±2m
-      const noise = 2 / 111320
-      const noisedLat = baseLat + (Math.random() - 0.5) * noise
-      const noisedLng = baseLng + (Math.random() - 0.5) * noise
+      noiseLatM *= 0.75
+      noiseLngM *= 0.75
+      const noisedLat = baseLat + (noiseLatM / 111320)
+      const noisedLng = baseLng + (noiseLngM / (111320 * Math.cos(baseLat * Math.PI / 180)))
 
-      const { lat, lng } = applyLateralOffset(noisedLat, noisedLng, headingDeg, laneOffsetM)
+      const { lat, lng } = applyLateralOffset(noisedLat, noisedLng, headingDeg, currentLaneOffsetM + currentForcedOffsetM)
 
       get().setUserLocation({
         lat,
         lng,
         speedKmh: Math.round(currentSpeedKmh),
         heading: headingDeg,
-        accuracy: 5 + Math.random() * 8,
+        accuracy: 4,
       })
     }, INTERVAL_MS)
   },
@@ -1546,7 +1600,18 @@ const useAppStore = create((set, get) => ({
       clearInterval(_simIntervalId)
       _simIntervalId = null
     }
-    set({ isDriveSimulation: false })
+    set({ isDriveSimulation: false, driveSimulationForcedOffRoute: null })
+  },
+
+  triggerDriveSimulationOffRoute: (offsetM = 220, durationSec = 8) => {
+    if (!get().isDriveSimulation) return
+    const ticks = Math.max(4, Math.round((durationSec * 1000) / 250))
+    set({
+      driveSimulationForcedOffRoute: {
+        offsetM,
+        remainingTicks: ticks,
+      },
+    })
   },
 
   // ── 경로 저장 ──────────────────────────────────────
@@ -1675,7 +1740,7 @@ const useAppStore = create((set, get) => ({
       junctions: savedRoute.junctions ?? [],
       cameras: savedRoute.cameras ?? [],
     }, 0, {
-      origin: get().userLocation ?? DEFAULT_ORIGIN,
+      origin: getActiveRoutingOrigin(get()),
       destination: savedRoute.destination ?? { name: savedRoute.name, lat: savedRoute.polyline.at(-1)?.[0], lng: savedRoute.polyline.at(-1)?.[1] },
       routePreferences: get().routePreferences,
       driverPreset: get().driverPreset,
@@ -1721,7 +1786,7 @@ const useAppStore = create((set, get) => ({
   scenicRouteError: null,
   applyScenicRoute: async (suggestion) => {
     const state = get()
-    const origin = state.userLocation ?? DEFAULT_ORIGIN
+    const origin = getActiveRoutingOrigin(state)
     const { destination, routePreferences, driverPreset, waypoints, routes, selectedRouteId, scenicReferencePolyline } = state
     if (!destination) return
     set({ isLoadingRoutes: true, scenicRouteError: null })
@@ -1929,14 +1994,23 @@ const useAppStore = create((set, get) => ({
       set({ nearbyPlaces: [], isLoadingNearby: false })
     }
   },
-  refreshHomeRestaurantPins: async () => {
-    const origin = get().userLocation ?? DEFAULT_ORIGIN
+  refreshHomeRestaurantPins: async (center = null) => {
+    const fallbackCenter = normalizeCoordPair(get().mapCenter)
+    const origin = center
+      ? { lat: Number(center.lat), lng: Number(center.lng) }
+      : fallbackCenter
+        ? { lat: fallbackCenter[0], lng: fallbackCenter[1] }
+        : (get().userLocation ?? DEFAULT_ORIGIN)
     try {
       const pins = await searchNearbyPOIs('음식점', origin.lat, origin.lng, {
         fuelSettings: get().settings,
       })
       set({
-        homeRestaurantPins: (pins ?? []).filter((item) => (item.distanceKm ?? Infinity) <= 10).slice(0, 8),
+        homeRestaurantPins: (pins ?? []).filter((item) => (item.distanceKm ?? Infinity) <= 10).slice(0, 8).map((item) => ({
+          ...item,
+          referenceLat: origin.lat,
+          referenceLng: origin.lng,
+        })),
         homeRestaurantPinsLoadedAt: Date.now(),
       })
     } catch {
@@ -2036,7 +2110,7 @@ const useAppStore = create((set, get) => ({
 
   searchRoute: async (destination) => {
     const normalizedDestination = await enrichDestinationTarget(destination)
-    const origin = await resolveRoutingOrigin(get().userLocation ?? DEFAULT_ORIGIN)
+    const origin = await resolveRoutingOrigin(getActiveRoutingOrigin(get()))
     const { routePreferences, driverPreset, scenicReferencePolyline, waypoints } = get()
     set({
       activeTab: 'home',
@@ -2110,7 +2184,7 @@ const useAppStore = create((set, get) => ({
     const state = get()
     if (state.isRefreshingNavigation || !state.destination) return null
 
-    const origin = await resolveRoutingOrigin(state.userLocation ?? DEFAULT_ORIGIN)
+    const origin = await resolveRoutingOrigin(getActiveRoutingOrigin(state))
     set({ isRefreshingNavigation: true })
 
     try {
@@ -2155,7 +2229,7 @@ const useAppStore = create((set, get) => ({
 
   applyMergeOption: async (mergeOptionId) => {
     const state = get()
-    const origin = state.userLocation ?? DEFAULT_ORIGIN
+    const origin = getActiveRoutingOrigin(state)
     const destination = state.destination
     const baseRoute = state.routes.find((route) => route.id === state.selectedRouteId)
     const option = state.mergeOptions.find((item) => item.id === mergeOptionId)

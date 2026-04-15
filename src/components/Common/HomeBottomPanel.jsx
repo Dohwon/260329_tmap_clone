@@ -9,9 +9,11 @@ export default function HomeBottomPanel() {
     favorites,
     userLocation,
     userAddress,
+    mapCenter,
     searchRoute,
     showRecentSearches,
     openNearbyCategory,
+    refreshHomeRestaurantPins,
     selectRoad,
     setActiveTab,
   } = useAppStore()
@@ -63,6 +65,14 @@ export default function HomeBottomPanel() {
             <QuickChip icon="⛽" label="주유소" onClick={() => openNearbyCategory('주유소')} />
             <QuickChip icon="🏥" label="병원" onClick={() => openNearbyCategory('병원')} />
             <QuickChip icon="🍽️" label="맛집" onClick={() => openNearbyCategory('음식점')} />
+            <QuickChip
+              icon="🔄"
+              label="맛집 새로고침"
+              onClick={() => refreshHomeRestaurantPins({
+                lat: Number(mapCenter?.[0] ?? userLocation?.lat),
+                lng: Number(mapCenter?.[1] ?? userLocation?.lng),
+              })}
+            />
             <QuickChip icon="🅿️" label="주차장" onClick={() => openNearbyCategory('주차장')} />
           </div>
         </div>

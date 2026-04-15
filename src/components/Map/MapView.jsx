@@ -217,6 +217,7 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
   const isNavigating = useAppStore((s) => s.isNavigating)
   const navAutoFollow = useAppStore((s) => s.navAutoFollow)
   const setNavAutoFollow = useAppStore((s) => s.setNavAutoFollow)
+  const setMapCenter = useAppStore((s) => s.setMapCenter)
   const userLocation = useAppStore((s) => s.userLocation)
   const navigationMatchedLocation = useAppStore((s) => s.navigationMatchedLocation)
   const locationHistory = useAppStore((s) => s.locationHistory)
@@ -248,6 +249,11 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
     },
     zoomstart: () => {
       if (isNavigating && !programmaticMotionRef.current) setNavAutoFollow(false)
+    },
+    moveend: () => {
+      if (isNavigating || programmaticMotionRef.current) return
+      const nextCenter = map.getCenter()
+      setMapCenter([nextCenter.lat, nextCenter.lng], map.getZoom())
     },
   })
 
@@ -494,6 +500,7 @@ export default function MapView({ darkMode = false }) {
     routes,
     selectedRouteId,
     destination,
+    routeOrigin,
     visibleLayers,
     userLocation,
     userAddress,
@@ -586,7 +593,11 @@ export default function MapView({ darkMode = false }) {
   )
 
   // OSM Korea HOT 타일은 현재 유효한 한국어 라벨 베이스맵을 제공한다.
-  const tileUrl = 'https://tiles.osm.kr/hot/{z}/{x}/{y}.png'
+  const maptilerKey = import.meta.env.VITE_MAPTILER_KEY
+  const tileQuery = maptilerKey ? new URLSearchParams({ key: maptilerKey }).toString() : ''
+  const tileUrl = maptilerKey
+    ? `https://api.maptiler.com/maps/streets-v4-pastel/{z}/{x}/{y}.png?${tileQuery}`
+    : 'https://tiles.osm.kr/hot/{z}/{x}/{y}.png'
   const labelUrl = null
 
   return (
@@ -820,10 +831,16 @@ export default function MapView({ darkMode = false }) {
           ) : null}
 
           {isNavigating && drivePathHistory.length > 1 && (
-            <Polyline
-              positions={drivePathHistory}
-              pathOptions={{ color: '#FFFFFF', weight: showMinimalNavigationMap ? 4 : 3, opacity: 0.45 }}
-            />
+            <>
+              <Polyline
+                positions={drivePathHistory}
+                pathOptions={{ color: '#05233B', weight: showMinimalNavigationMap ? 9 : 7, opacity: 0.58 }}
+              />
+              <Polyline
+                positions={drivePathHistory}
+                pathOptions={{ color: '#22D3EE', weight: showMinimalNavigationMap ? 6 : 5, opacity: 0.96 }}
+              />
+            </>
           )}
 
           {isNavigating && remainingRoutePath.length > 1 && (
@@ -928,7 +945,9 @@ export default function MapView({ darkMode = false }) {
             <div className="text-sm font-bold">{restaurant.name}</div>
             <div className="text-xs text-gray-500 mt-0.5">{formatRestaurantPopupMeta(restaurant)}</div>
             <div className="text-xs text-gray-400 mt-0.5">
-              {restaurant.distanceKm != null ? `${restaurant.distanceKm.toFixed(1)}km` : '현재 위치 기준'}
+              {Number.isFinite(Number(restaurant.referenceLat)) && Number.isFinite(Number(restaurant.referenceLng))
+                ? `${(haversineM(restaurant.referenceLat, restaurant.referenceLng, restaurant.lat, restaurant.lng) / 1000).toFixed(1)}km`
+                : restaurant.distanceKm != null ? `${restaurant.distanceKm.toFixed(1)}km` : '지도 중심 기준'}
               {typeof restaurant.googleOpenNow === 'boolean' ? ` · ${restaurant.googleOpenNow ? '영업중' : '영업종료'}` : ''}
             </div>
             {restaurant.address ? (
@@ -1011,6 +1030,16 @@ export default function MapView({ darkMode = false }) {
             <div className="text-xs text-gray-500 mt-0.5">
               {Math.round(userLocation.speedKmh ?? 0)}km/h · 정확도 {Math.round(userLocation.accuracy ?? 0)}m
             </div>
+          </Popup>
+        </Marker>
+      )}
+
+      {!isNavigating && routeOrigin && (
+        <Marker position={[routeOrigin.lat, routeOrigin.lng]} icon={startIcon}>
+          <Popup>
+            <div className="text-sm font-bold">출발지</div>
+            <div className="text-xs text-gray-700 mt-0.5">{routeOrigin.name}</div>
+            {routeOrigin.address && <div className="text-xs text-gray-500 mt-0.5">{routeOrigin.address}</div>}
           </Popup>
         </Marker>
       )}

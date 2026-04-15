@@ -24,6 +24,11 @@ export default function SearchSheet({ onClose, embedded = false }) {
   const {
     searchRoute,
     userLocation,
+    routeOrigin,
+    routeSearchTarget,
+    setRouteOrigin,
+    clearRouteOrigin,
+    setRouteSearchTarget,
     destination,
     routes,
     selectedRouteId,
@@ -50,6 +55,11 @@ export default function SearchSheet({ onClose, embedded = false }) {
     [routes, selectedRouteId]
   )
   const activeRoutePolyline = activeRoute?.polyline ?? []
+  const originLabel = routeOrigin?.name ?? '현재 위치'
+  const originSubLabel = routeOrigin?.address ?? 'GPS 기준 출발'
+  const searchAnchor = routeSearchTarget === 'origin'
+    ? (routeOrigin ?? userLocation ?? destination ?? null)
+    : (userLocation ?? routeOrigin ?? destination ?? null)
 
   const closeSheet = () => {
     setPendingSelection(null)
@@ -59,6 +69,18 @@ export default function SearchSheet({ onClose, embedded = false }) {
   }
 
   const performSelect = (nextDestination) => {
+    if (routeSearchTarget === 'origin' && !isNavigating) {
+      setRouteOrigin({
+        id: `origin-${nextDestination.lat}-${nextDestination.lng}`,
+        name: nextDestination.name,
+        lat: nextDestination.lat,
+        lng: nextDestination.lng,
+        address: nextDestination.address ?? '',
+      })
+      if (destination) searchRoute(destination)
+      closeSheet()
+      return
+    }
     if (isNavigating) {
       setPendingSelection(nextDestination)
       return
@@ -88,7 +110,7 @@ export default function SearchSheet({ onClose, embedded = false }) {
       setIsLoading(false)
       return
     }
-    const instantResults = searchInstantPlaceCandidates(query, userLocation?.lat, userLocation?.lng)
+    const instantResults = searchInstantPlaceCandidates(query, searchAnchor?.lat, searchAnchor?.lng)
     if (instantResults.length > 0) {
       setResults(instantResults)
       setIsLoading(false)
@@ -99,7 +121,7 @@ export default function SearchSheet({ onClose, embedded = false }) {
     debounceRef.current = setTimeout(async () => {
       setIsLoading(true)
       try {
-        const pois = await searchPOI(query, userLocation?.lat, userLocation?.lng, {
+        const pois = await searchPOI(query, searchAnchor?.lat, searchAnchor?.lng, {
           routePolyline: activeRoutePolyline,
           fuelSettings: settings,
         })
@@ -114,7 +136,7 @@ export default function SearchSheet({ onClose, embedded = false }) {
     }, 120)
 
     return () => clearTimeout(debounceRef.current)
-  }, [activeRoutePolyline, query, userLocation?.lat, userLocation?.lng])
+  }, [activeRoutePolyline, query, searchAnchor?.lat, searchAnchor?.lng, settings])
 
   const showNearby = !query.trim() && searchMode === 'nearby'
   const showRecent = !query.trim() && (searchMode === 'recent' || recentSearches.length > 0)
@@ -172,7 +194,7 @@ export default function SearchSheet({ onClose, embedded = false }) {
             </svg>
             <input
               type="text"
-              placeholder="주소, 장소, 고속도로 시점/종점 검색"
+              placeholder={routeSearchTarget === 'origin' ? '출발지 검색' : '주소, 장소, 고속도로 시점/종점 검색'}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               onCompositionStart={() => { isComposingRef.current = true }}
@@ -192,6 +214,40 @@ export default function SearchSheet({ onClose, embedded = false }) {
             ) : null}
           </div>
         </div>
+        {!isNavigating && (
+          <div className="grid grid-cols-2 gap-2 mt-3">
+            <button
+              onClick={() => setRouteSearchTarget('origin')}
+              className={`rounded-2xl border px-3 py-2 text-left ${routeSearchTarget === 'origin' ? 'border-tmap-blue bg-blue-50' : 'border-gray-200 bg-gray-50'}`}
+            >
+              <div className="text-[11px] font-bold text-gray-500">출발지</div>
+              <div className="text-sm font-bold text-gray-900 truncate mt-0.5">{originLabel}</div>
+              <div className="text-[11px] text-gray-400 truncate mt-0.5">{originSubLabel}</div>
+            </button>
+            <button
+              onClick={() => setRouteSearchTarget('destination')}
+              className={`rounded-2xl border px-3 py-2 text-left ${routeSearchTarget === 'destination' ? 'border-tmap-blue bg-blue-50' : 'border-gray-200 bg-gray-50'}`}
+            >
+              <div className="text-[11px] font-bold text-gray-500">도착지</div>
+              <div className="text-sm font-bold text-gray-900 truncate mt-0.5">{destination?.name ?? '도착지 선택'}</div>
+              <div className="text-[11px] text-gray-400 truncate mt-0.5">{destination?.address ?? '검색 결과에서 선택'}</div>
+            </button>
+          </div>
+        )}
+        {!isNavigating && routeSearchTarget === 'origin' && (
+          <div className="flex items-center gap-2 mt-2">
+            <button
+              onClick={() => {
+                clearRouteOrigin()
+                if (destination) searchRoute(destination)
+              }}
+              className="rounded-full bg-gray-100 px-3 py-1.5 text-[11px] font-semibold text-gray-600"
+            >
+              현재 위치로 초기화
+            </button>
+            <div className="text-[11px] text-gray-400">출발지를 바꾸면 현재 도착지 기준으로 경로를 다시 계산합니다.</div>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto no-scrollbar">

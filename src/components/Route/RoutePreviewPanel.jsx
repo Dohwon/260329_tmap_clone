@@ -156,6 +156,17 @@ export default function RoutePreviewPanel() {
                     >
                       시뮬 100
                     </button>
+                    <button
+                      onClick={() => startNavigationWithSimulation(200)}
+                      disabled={!canStartNavigation}
+                      className={`px-3 py-2 rounded-2xl text-xs font-bold shadow-lg ${
+                        canStartNavigation
+                          ? 'bg-gray-800 text-white active:bg-gray-700'
+                          : 'bg-gray-200 text-gray-500 shadow-none cursor-not-allowed'
+                      }`}
+                    >
+                      시뮬 200
+                    </button>
                   </div>
                 )}
               </div>
@@ -341,6 +352,17 @@ export default function RoutePreviewPanel() {
                   >
                     100
                   </button>
+                  <button
+                    onClick={() => startNavigationWithSimulation(200)}
+                    disabled={!canStartNavigation}
+                    className={`px-3 py-2 rounded-2xl text-xs font-bold shadow-lg ${
+                      canStartNavigation
+                        ? 'bg-gray-800 text-white active:bg-gray-700'
+                        : 'bg-gray-200 text-gray-500 shadow-none cursor-not-allowed'
+                    }`}
+                  >
+                    200
+                  </button>
                 </div>
               )}
             </div>
@@ -431,6 +453,17 @@ export default function RoutePreviewPanel() {
                     }`}
                   >
                     시뮬 100
+                  </button>
+                  <button
+                    onClick={() => startNavigationWithSimulation(200)}
+                    disabled={!canStartNavigation}
+                    className={`px-3 py-2 rounded-2xl text-xs font-bold shadow-lg ${
+                      canStartNavigation
+                        ? 'bg-gray-800 text-white active:bg-gray-700'
+                        : 'bg-gray-200 text-gray-500 shadow-none cursor-not-allowed'
+                    }`}
+                  >
+                    시뮬 200
                   </button>
                 </div>
               )}

@@ -201,9 +201,33 @@ function getGuidanceSourcePriority(source = '') {
   return 3
 }
 
+function getGuidanceActionPriority(candidate = {}) {
+  const turnType = Number(candidate?.turnType)
+  const text = String(candidate?.instructionText ?? candidate?.description ?? '').trim()
+
+  if (turnType === 14 || /유턴/.test(text)) return 0
+  if (turnType === 12 || turnType === 13 || /좌회전|우회전/.test(text)) return 1
+  if (
+    turnType === 16 || turnType === 17 || turnType === 18 || turnType === 19 ||
+    turnType >= 100 ||
+    JUNCTION_TURN_TYPES.has(turnType) ||
+    /합류|분기|진출|램프|IC|JC/.test(text)
+  ) {
+    return 2
+  }
+  if (/지하차도|고가차도|터널/.test(text)) return 3
+  if (/도착|목적지/.test(text)) return 4
+  if (turnType === 11 || /직진/.test(text)) return 8
+  return 5
+}
+
 function dedupeGuidanceCandidates(candidates = []) {
   const sorted = [...candidates].sort((a, b) => {
     const distanceGap = (a.remainingDistanceKm ?? Infinity) - (b.remainingDistanceKm ?? Infinity)
+    if (Math.abs(distanceGap) <= 0.18) {
+      const actionGap = getGuidanceActionPriority(a) - getGuidanceActionPriority(b)
+      if (actionGap !== 0) return actionGap
+    }
     if (Math.abs(distanceGap) > 0.001) return distanceGap
     const sourceGap = getGuidanceSourcePriority(a.source) - getGuidanceSourcePriority(b.source)
     if (sourceGap !== 0) return sourceGap
@@ -319,22 +343,48 @@ export function getCurrentRouteSegment(route, userLocation) {
   const segments = route?.segmentStats ?? []
   if (!userLocation || !Array.isArray(segments) || segments.length === 0) return null
 
+  const routeProgress = analyzeRouteProgress(route, userLocation)
+  const progressKm = Number(routeProgress?.progressKm)
   let bestSegment = null
-  let bestDistanceM = Infinity
+  let bestScore = Infinity
 
   for (const segment of segments) {
     const positions = segment?.positions ?? []
     if (!Array.isArray(positions) || positions.length < 2) continue
 
+    let bestDistanceM = Infinity
     for (let index = 0; index < positions.length - 1; index += 1) {
       const projection = projectPointToSegment(
         [userLocation.lat, userLocation.lng],
         positions[index],
         positions[index + 1]
       )
-      if (projection.distanceM < bestDistanceM) {
-        bestDistanceM = projection.distanceM
-        bestSegment = { ...segment, distanceToUserM: projection.distanceM }
+      bestDistanceM = Math.min(bestDistanceM, projection.distanceM)
+    }
+
+    if (!Number.isFinite(bestDistanceM)) continue
+
+    const startProgressKm = Number(segment?.startProgressKm)
+    const endProgressKm = Number(segment?.endProgressKm)
+    let score = bestDistanceM
+
+    if (Number.isFinite(progressKm) && Number.isFinite(startProgressKm) && Number.isFinite(endProgressKm)) {
+      const progressMarginKm = 0.18
+      if (progressKm < startProgressKm - progressMarginKm) {
+        score += ((startProgressKm - progressKm) * 1800)
+      } else if (progressKm > endProgressKm + progressMarginKm) {
+        score += ((progressKm - endProgressKm) * 1800)
+      } else {
+        score -= Math.min(35, bestDistanceM * 0.15)
+      }
+    }
+
+    if (score < bestScore) {
+      bestScore = score
+      bestSegment = {
+        ...segment,
+        distanceToUserM: bestDistanceM,
+        routeProgressKm: Number.isFinite(progressKm) ? progressKm : null,
       }
     }
   }
@@ -772,7 +822,7 @@ export function getUpcomingJunction(route, userLocation) {
         ((maneuver.projectedDistanceKm ?? maneuver.distanceFromStart ?? 0) - progress.progressKm)
       ),
     }))
-    .filter((maneuver) => maneuver.remainingDistanceKm > 0.02)
+    .filter((maneuver) => maneuver.remainingDistanceKm > 0.005)
     .sort((a, b) => a.remainingDistanceKm - b.remainingDistanceKm)
   const junctions = (route?.junctions ?? [])
     .map((junction) => ({
@@ -786,7 +836,7 @@ export function getUpcomingJunction(route, userLocation) {
         ((junction.projectedDistanceKm ?? junction.distanceFromStart ?? 0) - progress.progressKm)
       ),
     }))
-    .filter((junction) => junction.remainingDistanceKm > 0.03)
+    .filter((junction) => junction.remainingDistanceKm > 0.01)
     .sort((a, b) => a.remainingDistanceKm - b.remainingDistanceKm)
 
   return {
@@ -812,7 +862,7 @@ export function getUpcomingGuidanceList(route, userLocation, mergeOptions = [], 
         ((maneuver.projectedDistanceKm ?? maneuver.distanceFromStart ?? 0) - progress.progressKm)
       ),
     }))
-    .filter((maneuver) => maneuver.remainingDistanceKm > 0.02)
+    .filter((maneuver) => maneuver.remainingDistanceKm > 0.005)
 
   const junctionCandidates = (route?.junctions ?? [])
     .map((junction) => ({
@@ -827,7 +877,7 @@ export function getUpcomingGuidanceList(route, userLocation, mergeOptions = [], 
         ((junction.projectedDistanceKm ?? junction.distanceFromStart ?? 0) - progress.progressKm)
       ),
     }))
-    .filter((junction) => junction.remainingDistanceKm > 0.03)
+    .filter((junction) => junction.remainingDistanceKm > 0.01)
 
   const mergeCandidates = (mergeOptions ?? [])
     .map((option) => ({
@@ -838,7 +888,7 @@ export function getUpcomingGuidanceList(route, userLocation, mergeOptions = [], 
       laneHint: option.afterRoadType === 'highway' ? '우측 차로 준비' : '진행 방향 차로 준비',
       remainingDistanceKm: Math.max(0, (option.distanceFromCurrent ?? 0) - progress.progressKm),
     }))
-    .filter((option) => option.remainingDistanceKm > 0.03 && !option.isCurrent)
+    .filter((option) => option.remainingDistanceKm > 0.01 && !option.isCurrent)
 
   return dedupeGuidanceCandidates([
     ...maneuverCandidates,

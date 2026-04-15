@@ -1495,6 +1495,8 @@ function parseRouteResponse(json, option) {
       const speedLimit = estimateSegmentSpeedLimit(props, roadType)
       const averageSpeed = estimateSegmentAverageSpeed(props, roadType, speedLimit)
       const congestionScore = estimateSegmentCongestionScore(props, averageSpeed, speedLimit)
+      const startProgressKm = accumulatedDist / 1000
+      const endProgressKm = (accumulatedDist + dist) / 1000
 
       if (positions.length > 1) {
         const startPoint = positions[0]
@@ -1507,6 +1509,8 @@ function parseRouteResponse(json, option) {
           speedLimit,
           averageSpeed,
           congestionScore,
+          startProgressKm: Number(startProgressKm.toFixed(3)),
+          endProgressKm: Number(endProgressKm.toFixed(3)),
           center: [
             (startPoint[0] + endPoint[0]) / 2,
             (startPoint[1] + endPoint[1]) / 2,

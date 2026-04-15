@@ -153,18 +153,6 @@ export default function HomeScreen() {
   }, [isNavigating, safetyHazards, settings.safetyModeEnabled, settings.voiceGuidance, userLocation])
 
   useEffect(() => {
-    if (isNavigating || showRoutePanel || !userLocation) return
-    const last = restaurantRefreshCoordRef.current
-    const movedDistanceKm = last
-      ? Math.hypot((userLocation.lat - last.lat) * 110, (userLocation.lng - last.lng) * 88)
-      : Infinity
-    const shouldRefresh = !last || movedDistanceKm >= 1.5 || Date.now() - homeRestaurantPinsLoadedAt > 1000 * 60 * 10
-    if (!shouldRefresh) return
-    restaurantRefreshCoordRef.current = { lat: userLocation.lat, lng: userLocation.lng }
-    refreshHomeRestaurantPins()
-  }, [homeRestaurantPinsLoadedAt, isNavigating, refreshHomeRestaurantPins, showRoutePanel, userLocation])
-
-  useEffect(() => {
     if (!showRoutePanel) return
     setShowLayerMenu(false)
     setShowHighwayExplorer(false)
