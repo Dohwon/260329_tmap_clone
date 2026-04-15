@@ -573,8 +573,16 @@ export default function SearchSheet({ onClose, embedded = false }) {
 }
 
 function isRestaurantDestination(destination = {}) {
-  return Boolean(destination?.restaurantRatingKey)
-    || [destination?.name, destination?.category, destination?.address].filter(Boolean).join(' ').match(/음식점|맛집|식당|한식|중식|일식|양식|분식|국밥|냉면|칼국수|파스타|치킨|피자|햄버거|고기집|기사식당/i)
+  const categoryText = String(destination?.category ?? '').trim()
+  const mergedText = [destination?.name, destination?.category, destination?.address].filter(Boolean).join(' ')
+
+  const hardExclude = /휴게소|졸음쉼터|주유소|주차장|병원|약국|편의점|고속도로|국도|톨게이트|나들목|분기점|ic|jc/i
+  if (hardExclude.test(categoryText) || hardExclude.test(mergedText)) return false
+
+  const categoryRestaurant = /음식점|맛집|식당|한식|중식|일식|양식|분식|국밥|냉면|칼국수|파스타|치킨|피자|햄버거|고기집|기사식당/i
+  if (categoryRestaurant.test(categoryText)) return true
+
+  return Boolean(destination?.restaurantRatingKey) && categoryRestaurant.test(mergedText)
 }
 
 function formatGoogleRating(restaurant = {}) {
