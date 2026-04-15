@@ -1,6 +1,7 @@
 import express from 'express'
 import https from 'https'
 import fs from 'fs'
+import crypto from 'crypto'
 import proj4 from 'proj4'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
@@ -50,6 +51,9 @@ const GOOGLE_TTS_KEY = process.env.GOOGLE_TTS_API_KEY
 const GOOGLE_TTS_VOICE = process.env.GOOGLE_TTS_VOICE_NAME
   || localEnv.GOOGLE_TTS_VOICE_NAME
   || 'ko-KR-Chirp3-HD-Despina'
+const TTS_CACHE_DIR = process.env.TTS_CACHE_DIR
+  || localEnv.TTS_CACHE_DIR
+  || join(__dirname, '.runtime-cache', 'tts-google')
 
 const WGS84 = 'EPSG:4326'
 const KATEC = 'KATEC'
@@ -185,6 +189,60 @@ function withQuery(path, query = {}) {
   const params = new URLSearchParams(query)
   const qs = params.toString()
   return qs ? `${path}?${qs}` : path
+}
+
+function ensureDirSync(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true })
+  }
+}
+
+function normalizeTtsText(text = '') {
+  return String(text)
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function buildTtsCacheKey({ text = '', voiceName = '', languageCode = '', speakingRate = 1 }) {
+  const normalizedText = normalizeTtsText(text)
+  const normalizedVoiceName = String(voiceName).trim()
+  const normalizedLanguageCode = String(languageCode).trim()
+  const normalizedRate = Number.isFinite(Number(speakingRate)) ? Number(speakingRate).toFixed(2) : '1.00'
+  return crypto.createHash('sha1')
+    .update(JSON.stringify({
+      text: normalizedText,
+      voiceName: normalizedVoiceName,
+      languageCode: normalizedLanguageCode,
+      speakingRate: normalizedRate,
+    }))
+    .digest('hex')
+}
+
+function getTtsCacheFilePath(cacheKey) {
+  ensureDirSync(TTS_CACHE_DIR)
+  return join(TTS_CACHE_DIR, `${cacheKey}.mp3`)
+}
+
+function readCachedTtsBuffer(cacheKey) {
+  try {
+    const filepath = getTtsCacheFilePath(cacheKey)
+    if (!fs.existsSync(filepath)) return null
+    const stats = fs.statSync(filepath)
+    if (!stats.isFile() || stats.size <= 0) return null
+    return fs.readFileSync(filepath)
+  } catch {
+    return null
+  }
+}
+
+function writeCachedTtsBuffer(cacheKey, buffer) {
+  try {
+    if (!Buffer.isBuffer(buffer) || buffer.length === 0) return
+    const filepath = getTtsCacheFilePath(cacheKey)
+    fs.writeFileSync(filepath, buffer)
+  } catch (error) {
+    console.warn('[Google TTS cache] write failed:', error.message)
+  }
 }
 
 function parseJsonBuffer(buffer) {
@@ -880,12 +938,22 @@ app.get('/api/meta/tmap-diag', async (req, res) => {
 app.post('/api/tts/google', express.json({ limit: '256kb' }), async (req, res) => {
   if (!GOOGLE_TTS_KEY) return res.status(204).end()
 
-  const text = String(req.body?.text ?? '').trim()
+  const text = normalizeTtsText(req.body?.text ?? '')
   if (!text) return res.status(400).json({ error: { code: 'EMPTY_TEXT', message: 'text가 비어 있습니다.' } })
 
   const voiceName = String(req.body?.voiceName ?? GOOGLE_TTS_VOICE).trim() || GOOGLE_TTS_VOICE
   const languageCode = String(req.body?.languageCode ?? (voiceName.split('-').slice(0, 2).join('-') || 'ko-KR'))
   const speakingRate = Number.isFinite(Number(req.body?.speakingRate)) ? Number(req.body.speakingRate) : 1.02
+  const cacheKey = buildTtsCacheKey({ text, voiceName, languageCode, speakingRate })
+  const cachedBuffer = readCachedTtsBuffer(cacheKey)
+
+  if (cachedBuffer) {
+    return res
+      .set('Content-Type', 'audio/mpeg')
+      .set('Cache-Control', 'public, max-age=31536000, immutable')
+      .set('X-TTS-Cache', 'HIT')
+      .send(cachedBuffer)
+  }
 
   try {
     const result = await googleTtsFetch(
@@ -909,10 +977,14 @@ app.post('/api/tts/google', express.json({ limit: '256kb' }), async (req, res) =
       })
     }
 
+    const audioBuffer = Buffer.from(parsed.audioContent, 'base64')
+    writeCachedTtsBuffer(cacheKey, audioBuffer)
+
     return res
       .set('Content-Type', 'audio/mpeg')
-      .set('Cache-Control', 'public, max-age=86400')
-      .send(Buffer.from(parsed.audioContent, 'base64'))
+      .set('Cache-Control', 'public, max-age=31536000, immutable')
+      .set('X-TTS-Cache', 'MISS')
+      .send(audioBuffer)
   } catch (error) {
     return res.status(502).json({ error: { code: 'GOOGLE_TTS_PROXY_ERROR', message: error.message } })
   }
