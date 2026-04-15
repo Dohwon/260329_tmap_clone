@@ -40,6 +40,7 @@ const DEFAULT_SETTINGS = {
 const LEGACY_FAVORITE_ADDRESSES = new Set(['서울시 강남구 테헤란로', '서울시 중구 을지로'])
 const liveRouteRequestCache = new Map()
 const liveRouteInflightRequests = new Map()
+const MAP_CENTER_EPSILON = 0.000001
 
 function readStorage(key, fallback) {
   try {
@@ -95,6 +96,25 @@ function haversineKm(lat1, lng1, lat2, lng2) {
     Math.sin(dLat / 2) ** 2 +
     Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2
   return 2 * R * Math.asin(Math.sqrt(a))
+}
+
+function areSameCenter(prevCenter, nextCenter) {
+  if (!Array.isArray(prevCenter) || !Array.isArray(nextCenter)) return false
+  if (prevCenter.length < 2 || nextCenter.length < 2) return false
+  const prevLat = Number(prevCenter[0])
+  const prevLng = Number(prevCenter[1])
+  const nextLat = Number(nextCenter[0])
+  const nextLng = Number(nextCenter[1])
+  if (
+    !Number.isFinite(prevLat) || !Number.isFinite(prevLng) ||
+    !Number.isFinite(nextLat) || !Number.isFinite(nextLng)
+  ) {
+    return false
+  }
+  return (
+    Math.abs(prevLat - nextLat) <= MAP_CENTER_EPSILON &&
+    Math.abs(prevLng - nextLng) <= MAP_CENTER_EPSILON
+  )
 }
 
 function normalizeCoordPair(coord) {
@@ -1168,7 +1188,13 @@ const useAppStore = create((set, get) => ({
 
   mapCenter: DEFAULT_CENTER,
   mapZoom: 13,
-  setMapCenter: (center, zoom) => set({ mapCenter: center, mapZoom: zoom ?? get().mapZoom }),
+  setMapCenter: (center, zoom) => set((state) => {
+    const nextZoom = zoom ?? state.mapZoom
+    if (areSameCenter(state.mapCenter, center) && state.mapZoom === nextZoom) {
+      return state
+    }
+    return { mapCenter: center, mapZoom: nextZoom }
+  }),
 
   userLocation: null,
   userAddress: '',
@@ -1355,7 +1381,9 @@ const useAppStore = create((set, get) => ({
   navAutoFollow: false,
   isRefreshingNavigation: false,
   navigationLastRefreshedAt: 0,
-  setNavAutoFollow: (val) => set({ navAutoFollow: val }),
+  setNavAutoFollow: (val) => set((state) => (
+    state.navAutoFollow === val ? state : { navAutoFollow: val }
+  )),
   startNavigation: async () => {
     const { userLocation, destination, routes, selectedRouteId } = get()
     // 내 위치로 지도 포커스
@@ -1433,11 +1461,14 @@ const useAppStore = create((set, get) => ({
       _simIntervalId = null
     }
     set({
+      activeTab: 'home',
       isNavigating: false,
       isDriveSimulation: false,
       driveSimulationForcedOffRoute: null,
       navAutoFollow: false,
       isSearchOverlayOpen: false,
+      showRoutePanel: false,
+      selectedRoadId: null,
       destination: null,
       routes: [],
       selectedRouteId: null,

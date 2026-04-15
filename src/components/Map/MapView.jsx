@@ -245,10 +245,12 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
 
   const map = useMapEvents({
     dragstart: () => {
-      if (isNavigating && !programmaticMotionRef.current) setNavAutoFollow(false)
+      if (!isNavigating || programmaticMotionRef.current) return
+      if (useAppStore.getState().navAutoFollow) setNavAutoFollow(false)
     },
     zoomstart: () => {
-      if (isNavigating && !programmaticMotionRef.current) setNavAutoFollow(false)
+      if (!isNavigating || programmaticMotionRef.current) return
+      if (useAppStore.getState().navAutoFollow) setNavAutoFollow(false)
     },
     moveend: () => {
       if (isNavigating || programmaticMotionRef.current) return

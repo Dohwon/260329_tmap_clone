@@ -99,15 +99,13 @@ export default function HomeScreen() {
     isSearchOverlayOpen,
     openSearchOverlay,
     closeSearchOverlay,
-    refreshHomeRestaurantPins,
-    homeRestaurantPinsLoadedAt,
     stopNavigation,
   } = useAppStore()
   const [showLayerMenu, setShowLayerMenu] = useState(false)
   const [showHighwayExplorer, setShowHighwayExplorer] = useState(false)
   const [isSafetyBannerCollapsed, setIsSafetyBannerCollapsed] = useState(false)
+  const [recoveryNonce, setRecoveryNonce] = useState(0)
   const safetySpeechRef = useRef('')
-  const restaurantRefreshCoordRef = useRef(null)
 
   // 팝업 상호 배타적 열기
   const openSearch = () => { openSearchOverlay(); setShowLayerMenu(false); setShowHighwayExplorer(false) }
@@ -167,10 +165,14 @@ export default function HomeScreen() {
   return (
     <div className="relative w-full h-full overflow-hidden">
       <HomeScreenBoundary
-        resetKey={`${isNavigating}-${showRoutePanel}`}
+        resetKey={`${isNavigating}-${showRoutePanel}-${isSearchOverlayOpen}-${recoveryNonce}`}
         onRecover={() => {
           stopNavigation()
           closeSearchOverlay()
+          setShowLayerMenu(false)
+          setShowHighwayExplorer(false)
+          setIsSafetyBannerCollapsed(false)
+          setRecoveryNonce((prev) => prev + 1)
         }}
       >
         <MapView darkMode={darkMode} />
