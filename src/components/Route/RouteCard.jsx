@@ -22,9 +22,18 @@ function formatRouteSpeedMetric(route) {
   return '실값없음'
 }
 
+function formatCameraMetric(route, key) {
+  const isActualRoute = route?.source === 'live' || route?.source === 'recorded'
+  if (!isActualRoute) return '정보없음'
+  const value = Number(route?.[key])
+  return Number.isFinite(value) && value >= 0 ? value : 0
+}
+
 export default function RouteCard({ route, isSelected, onClick }) {
   const congestion = CONGESTION_INFO[route.congestionScore]
   const { setRoutePanelMode, setSelectedRouteId } = useAppStore()
+  const fixedCameraMetric = formatCameraMetric(route, 'fixedCameraCount')
+  const sectionCameraMetric = formatCameraMetric(route, 'sectionCameraCount')
 
   const handleViewOnMap = (e) => {
     e.stopPropagation()
@@ -122,8 +131,8 @@ export default function RouteCard({ route, isSelected, onClick }) {
       {/* 세부 지표 그리드 */}
       <div className="grid grid-cols-4 gap-2">
         <MetricBadge icon="🔀" value={route.mergeCount} label="합류" />
-        <MetricBadge icon="📷" value={route.fixedCameraCount} label="고정" color={route.fixedCameraCount > 3 ? 'red' : 'gray'} />
-        <MetricBadge icon="🚧" value={route.sectionCameraCount} label="구간" color={route.sectionCameraCount > 0 ? 'orange' : 'gray'} />
+        <MetricBadge icon="📷" value={fixedCameraMetric} label="고정" color={typeof fixedCameraMetric === 'number' && fixedCameraMetric > 3 ? 'red' : 'gray'} />
+        <MetricBadge icon="🚧" value={sectionCameraMetric} label="구간" color={typeof sectionCameraMetric === 'number' && sectionCameraMetric > 0 ? 'orange' : 'gray'} />
         <MetricBadge icon="⚡" value={formatRouteSpeedMetric(route)} label="최고/평균" />
       </div>
 
