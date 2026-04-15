@@ -455,24 +455,27 @@ export default function NavigationOverlay() {
     }
   }, [isNavigating, route?.id, route?.polyline, userLocation])
 
+  // 경로 이탈 감지 — 5초마다 폴링
+  // useEffect 의존성 기반으로는 distanceToRouteM이 고정값일 때 cooldown이 지나도 재실행 안 되는 버그 있음
   useEffect(() => {
-    if (!isNavigating || !route || !userLocation || isRefreshingNavigation || route.source === 'recorded') return
-    const cooldownPassed = Date.now() - navigationLastRefreshedAt > 15000
-    const shouldRefreshForFallback = route.source !== 'live' && cooldownPassed
-    const shouldRefreshForOffRoute = offRouteProgress.distanceToRouteM != null && offRouteProgress.distanceToRouteM > 180 && cooldownPassed
-
-    if (shouldRefreshForFallback || shouldRefreshForOffRoute) {
-      refreshNavigationRoute(shouldRefreshForOffRoute ? 'off-route' : 'live-retry')
-    }
-  }, [
-    isNavigating,
-    isRefreshingNavigation,
-    navigationLastRefreshedAt,
-    refreshNavigationRoute,
-    route,
-    offRouteProgress.distanceToRouteM,
-    userLocation,
-  ])
+    if (!isNavigating) return
+    const id = window.setInterval(() => {
+      const s = useAppStore.getState()
+      const currentRoute = s.routes.find((r) => r.id === s.selectedRouteId)
+      if (!currentRoute || currentRoute.source === 'recorded' || s.isRefreshingNavigation || !s.userLocation) return
+      const cooldownPassed = Date.now() - s.navigationLastRefreshedAt > 15000
+      if (!cooldownPassed) return
+      const progress = analyzeRouteProgress(currentRoute, s.userLocation)
+      const isOffRoute = progress.distanceToRouteM != null && progress.distanceToRouteM > 180
+      const isNotLive = currentRoute.source !== 'live'
+      if (isOffRoute) {
+        s.refreshNavigationRoute('off-route')
+      } else if (isNotLive) {
+        s.refreshNavigationRoute('live-retry')
+      }
+    }, 5000)
+    return () => window.clearInterval(id)
+  }, [isNavigating])
 
   // 상단 배너: 다음 조작을 목적지보다 우선 표시
   const nextGuidance = nextAction
