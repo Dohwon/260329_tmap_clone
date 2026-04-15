@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react'
 import useAppStore from '../../store/appStore'
 import { searchInstantPlaceCandidates, searchPOI } from '../../services/tmapService'
 
+const SEARCH_DEBOUNCE_MS = 450
+
 export default function WaypointSheet({ onClose }) {
   const { waypoints, addWaypoint, removeWaypoint, searchRoute, destination, userLocation, routes, selectedRouteId } = useAppStore()
   const [query, setQuery] = useState('')
@@ -44,7 +46,7 @@ export default function WaypointSheet({ onClose }) {
       } finally {
         setIsSearching(false)
       }
-    }, 120)
+    }, SEARCH_DEBOUNCE_MS)
 
     return () => clearTimeout(debounceRef.current)
   }, [activeRoutePolyline, query, userLocation?.lat, userLocation?.lng, destination?.lat, destination?.lng])

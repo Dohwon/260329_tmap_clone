@@ -482,7 +482,9 @@ function formatSpeedLimitLabel(speedLimit) {
 
 function formatRestaurantPopupMeta(restaurant = {}) {
   const rating = Number(restaurant?.googleRating)
-  if (!Number.isFinite(rating) || rating <= 0) return '별점 정보 없음'
+  if (!Number.isFinite(rating) || rating <= 0) {
+    return restaurant?.googleRatingSource === 'lazy' ? '탭 후 평점 조회' : '별점 정보 없음'
+  }
   const reviewCount = Number(restaurant?.googleUserRatingCount)
   return `Google ${rating.toFixed(1)}${Number.isFinite(reviewCount) && reviewCount > 0 ? ` · 리뷰 ${reviewCount.toLocaleString()}` : ''}`
 }

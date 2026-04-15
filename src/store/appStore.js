@@ -548,6 +548,7 @@ function buildRoadRestStops(road) {
       km: stop.km,
     }))
   }
+  if (road.disableRestStopFallback) return []
   // 폴백: 분기점 좌표 기반 생성 (국도 등)
   const path = getRoadPath(road)
   return path.slice(1, -1).map((coord, index) => ({

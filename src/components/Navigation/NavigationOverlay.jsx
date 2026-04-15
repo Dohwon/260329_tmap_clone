@@ -171,7 +171,9 @@ function buildHazardAlertSpeech(hazard, distanceM, threshold) {
 
 function formatRestaurantMeta(poi = {}) {
   const rating = Number(poi?.googleRating)
-  if (!Number.isFinite(rating) || rating <= 0) return '별점 정보 없음'
+  if (!Number.isFinite(rating) || rating <= 0) {
+    return poi?.googleRatingSource === 'lazy' ? '카드 열면 평점 조회' : '별점 정보 없음'
+  }
   const reviewCount = Number(poi?.googleUserRatingCount)
   return `Google ${rating.toFixed(1)}${Number.isFinite(reviewCount) && reviewCount > 0 ? ` · 리뷰 ${reviewCount.toLocaleString()}` : ''}`
 }

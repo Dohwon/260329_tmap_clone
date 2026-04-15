@@ -1,10 +1,17 @@
-import React, { useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import { HIGHWAYS } from '../../data/highwayData'
 import useAppStore from '../../store/appStore'
 
 export default function HighwayExplorer({ onClose }) {
   const [selected, setSelected] = useState(null)
   const { setMapCenter, searchRoute, searchRouteAlongRoad, selectRoad } = useAppStore()
+  const roadOptions = useMemo(
+    () => [...HIGHWAYS].sort((a, b) => {
+      if (a.roadClass !== b.roadClass) return a.roadClass === 'expressway' ? -1 : 1
+      return String(a.name).localeCompare(String(b.name), 'ko')
+    }),
+    []
+  )
 
   const handleSelect = (hw) => {
     setSelected(hw)
@@ -60,7 +67,7 @@ export default function HighwayExplorer({ onClose }) {
         {/* 고속도로 리스트 */}
         <div className="flex-1 overflow-y-auto no-scrollbar">
           <div className="px-4 py-3 space-y-2">
-            {HIGHWAYS.map(hw => (
+            {roadOptions.map(hw => (
               <button
                 key={hw.id}
                 onClick={() => handleSelect(hw)}

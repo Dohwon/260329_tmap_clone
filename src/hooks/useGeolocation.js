@@ -129,17 +129,20 @@ export default function useGeolocation() {
       }
       const loc = filterLocation(rawLoc)
       setUserLocation(loc)
+      const isNavigating = useAppStore.getState().isNavigating
       // 역지오코딩: 50m 이상 이동 + 마지막 호출 후 5초 이상 경과한 경우에만 호출
-      const prev = lastGeocodedRef.current
-      const movedFar = !prev || distanceM(prev.lat, prev.lng, loc.lat, loc.lng) >= 50
-      const longEnough = !prev || (Date.now() - prev.time) >= 5000
-      if (movedFar || longEnough) {
-        clearTimeout(addressTimer.current)
-        lastGeocodedRef.current = { lat: loc.lat, lng: loc.lng, time: Date.now() }
-        addressTimer.current = setTimeout(async () => {
-          const address = await reverseGeocode(loc.lat, loc.lng)
-          if (address) setUserAddress(address)
-        }, 800)
+      if (isNavigating) {
+        const prev = lastGeocodedRef.current
+        const movedFar = !prev || distanceM(prev.lat, prev.lng, loc.lat, loc.lng) >= 50
+        const longEnough = !prev || (Date.now() - prev.time) >= 5000
+        if (movedFar || longEnough) {
+          clearTimeout(addressTimer.current)
+          lastGeocodedRef.current = { lat: loc.lat, lng: loc.lng, time: Date.now() }
+          addressTimer.current = setTimeout(async () => {
+            const address = await reverseGeocode(loc.lat, loc.lng)
+            if (address) setUserAddress(address)
+          }, 800)
+        }
       }
       // 첫 위치 확정 시에만 지도 중심 이동
       if (!firstFix.current) {

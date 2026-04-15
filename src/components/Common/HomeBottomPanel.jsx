@@ -1,4 +1,4 @@
-import React, { useRef } from 'react'
+import React, { useMemo, useRef } from 'react'
 import useAppStore from '../../store/appStore'
 import { HIGHWAYS } from '../../data/highwayData'
 
@@ -19,6 +19,13 @@ export default function HomeBottomPanel() {
   } = useAppStore()
   const quickChipRef = useRef(null)
   const roadRef = useRef(null)
+  const roadOptions = useMemo(
+    () => [...HIGHWAYS].sort((a, b) => {
+      if (a.roadClass !== b.roadClass) return a.roadClass === 'expressway' ? -1 : 1
+      return String(a.name).localeCompare(String(b.name), 'ko')
+    }),
+    []
+  )
 
   const handleWheelScroll = (ref) => (event) => {
     if (!ref.current) return
@@ -83,7 +90,7 @@ export default function HomeBottomPanel() {
             <div className="text-[11px] text-gray-400">스크롤해서 선택</div>
           </div>
           <div ref={roadRef} onWheel={handleWheelScroll(roadRef)} className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-            {HIGHWAYS.map((road) => (
+            {roadOptions.map((road) => (
               <button
                 key={road.id}
                 onClick={() => selectRoad(road.id)}

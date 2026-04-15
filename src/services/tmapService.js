@@ -6,6 +6,7 @@ const ROAD_KEYWORD_PATTERN = /(고속|국도|jc|ic|분기|인터체인지|나들
 // 도로명 주소 패턴: "효행로 250", "강남대로 123번길 45" 등
 const ROAD_ADDRESS_PATTERN = /[가-힣]+(?:로|길|대로|avenue)\s*\d+/i
 const SEARCH_CACHE = new Map()
+const RESTAURANT_META_CACHE = new Map()
 const SEARCH_CACHE_TTL = 1000 * 60 * 5
 const FAST_SEARCH_PLACES = [
   {
@@ -183,7 +184,7 @@ function buildRoadSearchPlaces() {
       lat: road.startCoord[0],
       lng: road.startCoord[1],
       category: road.roadClass === 'national' ? '국도' : '고속도로',
-      aliases: [`${road.name} 시점`, `${road.shortName} 시점`, road.startName].filter(Boolean),
+      aliases: [...(road.aliases ?? []), `${road.name} 시점`, `${road.shortName} 시점`, road.startName].filter(Boolean),
     },
     {
       id: `${road.id}-end`,
@@ -192,7 +193,7 @@ function buildRoadSearchPlaces() {
       lat: road.endCoord[0],
       lng: road.endCoord[1],
       category: road.roadClass === 'national' ? '국도' : '고속도로',
-      aliases: [`${road.name} 종점`, `${road.shortName} 종점`, road.endName].filter(Boolean),
+      aliases: [...(road.aliases ?? []), `${road.name} 종점`, `${road.shortName} 종점`, road.endName].filter(Boolean),
     },
     ...(road.majorJunctions ?? []).map((junction) => ({
       id: `${road.id}-${junction.name}`,
@@ -201,7 +202,7 @@ function buildRoadSearchPlaces() {
       lat: junction.coord[0],
       lng: junction.coord[1],
       category: '분기점',
-      aliases: [junction.name, `${road.name} ${junction.name}`],
+      aliases: [...(road.aliases ?? []), junction.name, `${road.name} ${junction.name}`],
     })),
     ...(road.restStops ?? []).map((stop) => ({
       id: stop.id,
@@ -210,7 +211,7 @@ function buildRoadSearchPlaces() {
       lat: stop.coord[0],
       lng: stop.coord[1],
       category: stop.type === 'service' ? '휴게소' : '졸음쉼터',
-      aliases: [stop.name, `${road.name} ${stop.name}`],
+      aliases: [...(road.aliases ?? []), stop.name, `${road.name} ${stop.name}`],
     })),
   ])
 }
@@ -312,6 +313,30 @@ export function buildRestaurantRatingKey(item = {}) {
   const latKey = Number.isFinite(lat) ? lat.toFixed(5) : 'na'
   const lngKey = Number.isFinite(lng) ? lng.toFixed(5) : 'na'
   return `restaurant:${base}:${latKey}:${lngKey}`
+}
+
+function mergeRestaurantGoogleMeta(result = {}, meta = null, fallbackSource = 'lazy') {
+  if (!meta) {
+    return {
+      ...result,
+      googlePlaceId: result.googlePlaceId ?? null,
+      googleRating: result.googleRating ?? null,
+      googleUserRatingCount: result.googleUserRatingCount ?? null,
+      googleOpenNow: typeof result.googleOpenNow === 'boolean' ? result.googleOpenNow : null,
+      googleMapsUri: result.googleMapsUri ?? null,
+      googleRatingSource: result.googleRatingSource ?? fallbackSource,
+    }
+  }
+
+  return {
+    ...result,
+    googlePlaceId: meta.placeId ?? result.googlePlaceId ?? null,
+    googleRating: Number.isFinite(Number(meta.rating)) ? Number(meta.rating) : null,
+    googleUserRatingCount: Number.isFinite(Number(meta.userRatingCount)) ? Number(meta.userRatingCount) : null,
+    googleOpenNow: typeof meta.openNow === 'boolean' ? meta.openNow : null,
+    googleMapsUri: meta.googleMapsUri ?? null,
+    googleRatingSource: meta.source ?? 'google-places',
+  }
 }
 
 function isRestaurantPoi(item = {}) {
@@ -660,6 +685,26 @@ async function fetchRestaurantRatingsMeta(results = []) {
   return new Map(items.map((item) => [item.sourceId, item.restaurant]).filter(([, restaurant]) => Boolean(restaurant)))
 }
 
+export async function fetchRestaurantRatingForPlace(place = {}) {
+  const placeKey = buildRestaurantRatingKey(place)
+  if (RESTAURANT_META_CACHE.has(placeKey)) {
+    return mergeRestaurantGoogleMeta({
+      ...place,
+      restaurantRatingKey: placeKey,
+    }, RESTAURANT_META_CACHE.get(placeKey))
+  }
+
+  const metaMap = await fetchRestaurantRatingsMeta([place]).catch(() => new Map())
+  const meta = metaMap.get(place.id) ?? null
+  if (meta) {
+    RESTAURANT_META_CACHE.set(placeKey, meta)
+  }
+  return mergeRestaurantGoogleMeta({
+    ...place,
+    restaurantRatingKey: placeKey,
+  }, meta, 'lazy')
+}
+
 async function enrichHospitalPlaces(results = []) {
   const hospitalMap = await fetchHospitalHoursMeta(results).catch(() => new Map())
   if (hospitalMap.size === 0) return results
@@ -696,31 +741,9 @@ async function enrichRestaurantPlaces(results = [], routePolyline = []) {
     ...result,
     restaurantRatingKey: buildRestaurantRatingKey(result),
   }))
-  const restaurantMap = await fetchRestaurantRatingsMeta(withKeys).catch(() => new Map())
 
   return withKeys
-    .map((result) => {
-      const meta = restaurantMap.get(result.id)
-      if (!meta) {
-        return {
-          ...result,
-          googleRating: null,
-          googleUserRatingCount: null,
-          googleOpenNow: null,
-          googleMapsUri: null,
-          googleRatingSource: 'unavailable',
-        }
-      }
-      return {
-        ...result,
-        googlePlaceId: meta.placeId ?? null,
-        googleRating: Number.isFinite(Number(meta.rating)) ? Number(meta.rating) : null,
-        googleUserRatingCount: Number.isFinite(Number(meta.userRatingCount)) ? Number(meta.userRatingCount) : null,
-        googleOpenNow: typeof meta.openNow === 'boolean' ? meta.openNow : null,
-        googleMapsUri: meta.googleMapsUri ?? null,
-        googleRatingSource: meta.source ?? 'google-places',
-      }
-    })
+    .map((result) => mergeRestaurantGoogleMeta(result, RESTAURANT_META_CACHE.get(result.restaurantRatingKey), 'lazy'))
     .sort((a, b) => {
       if (a.isRouteCorridor !== b.isRouteCorridor) return a.isRouteCorridor ? -1 : 1
       const ratingDiff = (Number(b.googleRating) || -1) - (Number(a.googleRating) || -1)

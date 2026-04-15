@@ -3,6 +3,7 @@ import useAppStore from '../store/appStore'
 import { searchInstantPlaceCandidates, searchPOI } from '../services/tmapService'
 
 const ICONS = ['⭐', '🏪', '🍽️', '☕', '🏋️', '🏫', '🏥', '💼', '🎯', '🏖️']
+const SEARCH_DEBOUNCE_MS = 450
 
 export default function FavoritesScreen() {
   const { favorites, updateFavorite, addFavorite, deleteFavorite, searchRoute, setActiveTab } = useAppStore()
@@ -184,7 +185,7 @@ function EditSheet({ favorite, onSave, onClose }) {
       } finally {
         setIsLoading(false)
       }
-    }, 220)
+    }, SEARCH_DEBOUNCE_MS)
     return () => clearTimeout(timer)
   }, [query, userLocation?.lat, userLocation?.lng])
 

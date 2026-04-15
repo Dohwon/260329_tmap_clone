@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import useAppStore from '../../store/appStore'
-import { buildRestaurantRatingKey, getDiscountedFuelPrice, searchInstantPlaceCandidates, searchPOI } from '../../services/tmapService'
+import { buildRestaurantRatingKey, fetchRestaurantRatingForPlace, getDiscountedFuelPrice, searchInstantPlaceCandidates, searchPOI } from '../../services/tmapService'
+
+const SEARCH_DEBOUNCE_MS = 450
 
 const QUICK_CATEGORIES = [
   { icon: '⛽', label: '주유소' },
@@ -17,6 +19,8 @@ export default function SearchSheet({ onClose, embedded = false }) {
   const [isLoading, setIsLoading] = useState(false)
   const [pendingSelection, setPendingSelection] = useState(null)
   const [restaurantSelection, setRestaurantSelection] = useState(null)
+  const [restaurantDetail, setRestaurantDetail] = useState(null)
+  const [restaurantDetailLoading, setRestaurantDetailLoading] = useState(false)
   const debounceRef = useRef(null)
   const isComposingRef = useRef(false)
   const requestIdRef = useRef(0)
@@ -133,10 +137,39 @@ export default function SearchSheet({ onClose, embedded = false }) {
       } finally {
         if (requestIdRef.current === requestId) setIsLoading(false)
       }
-    }, 120)
+    }, SEARCH_DEBOUNCE_MS)
 
     return () => clearTimeout(debounceRef.current)
   }, [activeRoutePolyline, query, searchAnchor?.lat, searchAnchor?.lng, settings])
+
+  useEffect(() => {
+    if (!restaurantSelection) {
+      setRestaurantDetail(null)
+      setRestaurantDetailLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setRestaurantDetail(restaurantSelection)
+    setRestaurantDetailLoading(true)
+
+    fetchRestaurantRatingForPlace(restaurantSelection)
+      .then((enriched) => {
+        if (cancelled || !enriched) return
+        setRestaurantDetail(enriched)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setRestaurantDetail(restaurantSelection)
+      })
+      .finally(() => {
+        if (!cancelled) setRestaurantDetailLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [restaurantSelection])
 
   const showNearby = !query.trim() && searchMode === 'nearby'
   const showRecent = !query.trim() && (searchMode === 'recent' || recentSearches.length > 0)
@@ -500,7 +533,8 @@ export default function SearchSheet({ onClose, embedded = false }) {
         <>
           <div className="absolute inset-0 z-40 bg-black/35" onClick={() => setRestaurantSelection(null)} />
           <RestaurantDetailSheet
-            restaurant={restaurantSelection}
+            restaurant={restaurantDetail ?? restaurantSelection}
+            isLoadingMeta={restaurantDetailLoading}
             isNavigating={isNavigating}
             userRating={selectedRestaurantRating?.rating ?? null}
             canRate={restaurantRatingEligibility.canRate}
@@ -545,7 +579,11 @@ function isRestaurantDestination(destination = {}) {
 
 function formatGoogleRating(restaurant = {}) {
   const rating = Number(restaurant?.googleRating)
-  if (!Number.isFinite(rating) || rating <= 0) return '별점 정보 없음'
+  if (!Number.isFinite(rating) || rating <= 0) {
+    return restaurant?.googleRatingSource === 'lazy'
+      ? '카드에서 평점 조회'
+      : '별점 정보 없음'
+  }
   const reviewCount = Number(restaurant?.googleUserRatingCount)
   return `Google ${rating.toFixed(1)}${Number.isFinite(reviewCount) && reviewCount > 0 ? ` · 리뷰 ${reviewCount.toLocaleString()}` : ''}`
 }
@@ -681,6 +719,7 @@ function SearchResultRow({ destination, onSelect }) {
 
 function RestaurantDetailSheet({
   restaurant,
+  isLoadingMeta,
   isNavigating,
   userRating,
   canRate,
@@ -696,9 +735,13 @@ function RestaurantDetailSheet({
       <div className="text-xs text-gray-500 mt-1">{restaurant.address}</div>
       <div className="mt-3 rounded-2xl bg-amber-50 px-3 py-3">
         <div className="text-[11px] font-bold text-amber-600">구글 평점</div>
-        <div className="text-sm font-black text-gray-900 mt-1">{formatGoogleRating(restaurant)}</div>
+        <div className="text-sm font-black text-gray-900 mt-1">
+          {isLoadingMeta ? '평점 조회 중...' : formatGoogleRating(restaurant)}
+        </div>
         <div className="text-[11px] text-gray-500 mt-1">
-          {typeof restaurant.googleOpenNow === 'boolean'
+          {isLoadingMeta
+            ? '영업 정보를 불러오는 중입니다.'
+            : typeof restaurant.googleOpenNow === 'boolean'
             ? restaurant.googleOpenNow ? '현재 영업중' : '현재 영업종료'
             : '영업 정보 없음'}
         </div>
