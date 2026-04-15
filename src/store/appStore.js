@@ -313,6 +313,44 @@ function getProgressKmOnPolyline(point, polyline = []) {
   return bestProgressKm
 }
 
+function getPointOnPolylineAtProgressKm(polyline = [], progressKm = 0) {
+  if (!Array.isArray(polyline) || polyline.length < 2) return null
+  const targetM = Math.max(0, Number(progressKm) * 1000)
+  let travelledM = 0
+
+  for (let index = 0; index < polyline.length - 1; index += 1) {
+    const start = normalizeCoordPair(polyline[index])
+    const end = normalizeCoordPair(polyline[index + 1])
+    if (!start || !end) continue
+
+    const segmentLengthM = haversineKm(start[0], start[1], end[0], end[1]) * 1000
+    const nextTravelledM = travelledM + segmentLengthM
+    if (targetM <= nextTravelledM) {
+      const ratio = segmentLengthM > 0 ? Math.max(0, Math.min(1, (targetM - travelledM) / segmentLengthM)) : 0
+      const lat = start[0] + ((end[0] - start[0]) * ratio)
+      const lng = start[1] + ((end[1] - start[1]) * ratio)
+      const heading = ((Math.atan2(end[1] - start[1], end[0] - start[0]) * 180) / Math.PI + 360) % 360
+      return {
+        lat,
+        lng,
+        heading,
+        segmentIndex: index,
+      }
+    }
+    travelledM = nextTravelledM
+  }
+
+  const tailStart = normalizeCoordPair(polyline[polyline.length - 2])
+  const tailEnd = normalizeCoordPair(polyline[polyline.length - 1])
+  if (!tailStart || !tailEnd) return null
+  return {
+    lat: tailEnd[0],
+    lng: tailEnd[1],
+    heading: ((Math.atan2(tailEnd[1] - tailStart[1], tailEnd[0] - tailStart[0]) * 180) / Math.PI + 360) % 360,
+    segmentIndex: Math.max(0, polyline.length - 2),
+  }
+}
+
 function getDistanceKmToPolyline(point, polyline = []) {
   if (!Array.isArray(point) || point.length < 2 || !Array.isArray(polyline) || polyline.length < 2) return null
 
@@ -1212,6 +1250,14 @@ const useAppStore = create((set, get) => ({
   navigationProgressKm: 0,
   setUserLocation: (location) =>
     set((state) => {
+      const sampleCapturedAt = new Date().toISOString()
+      const currentSpeedKmh = Number.isFinite(Number(location.speedKmh)) ? Number(location.speedKmh) : 0
+      const previousLocation = state.userLocation
+      const previousRawLat = Number(previousLocation?.rawLat ?? previousLocation?.lat)
+      const previousRawLng = Number(previousLocation?.rawLng ?? previousLocation?.lng)
+      const elapsedSincePrevLocationSec = previousLocation?.capturedAt
+        ? (Date.now() - Date.parse(previousLocation.capturedAt)) / 1000
+        : Infinity
       const activeRoute = state.isNavigating
         ? (state.routes.find((route) => route.id === state.selectedRouteId) ?? state.routes[0] ?? null)
         : null
@@ -1219,9 +1265,19 @@ const useAppStore = create((set, get) => ({
       const elapsedSinceLastSampleSec = latestDriveSample?.capturedAt
         ? (Date.now() - Date.parse(latestDriveSample.capturedAt)) / 1000
         : Infinity
-      const currentSpeedKmh = Number.isFinite(Number(location.speedKmh)) ? Number(location.speedKmh) : 0
+      const rawJumpDistanceM = Number.isFinite(previousRawLat) && Number.isFinite(previousRawLng)
+        ? haversineKm(previousRawLat, previousRawLng, location.lat, location.lng) * 1000
+        : 0
+      const plausibleJumpDistanceM = Math.max(
+        10,
+        (((Math.max(
+          8,
+          currentSpeedKmh,
+          Number(previousLocation?.speedKmh ?? 0),
+        ) * 1000) / 3600) * Math.max(0.35, elapsedSincePrevLocationSec) * 2.8) + Math.max(4, Number(location.accuracy ?? 8) * 0.45),
+      )
       const maxAdvanceKm = Math.max(0.04, ((Math.max(12, currentSpeedKmh) * Math.max(1, elapsedSinceLastSampleSec)) / 3600) * 2.4)
-      const routeProgress = activeRoute ? analyzeRouteProgress(activeRoute, location, {
+      const preliminaryRouteProgress = activeRoute ? analyzeRouteProgress(activeRoute, location, {
         nearProgressKm: state.navigationProgressKm,
         progressWindowKm: Math.max(0.35, maxAdvanceKm * 3.2),
         nearSegmentIndex: state.navigationMatchedSegmentIndex,
@@ -1229,19 +1285,42 @@ const useAppStore = create((set, get) => ({
       }) : null
       const snapEnterDistanceLimitM = Math.max(18, Math.min(70, Number(location.accuracy ?? 24) * 1.35))
       const snapExitDistanceLimitM = Math.max(34, Math.min(110, Number(location.accuracy ?? 24) * 2.1))
+      const shouldFilterRawJump =
+        state.isNavigating &&
+        Number.isFinite(rawJumpDistanceM) &&
+        Number.isFinite(elapsedSincePrevLocationSec) &&
+        elapsedSincePrevLocationSec <= 4 &&
+        rawJumpDistanceM > plausibleJumpDistanceM &&
+        (!preliminaryRouteProgress?.matchedLocation || preliminaryRouteProgress.distanceToRouteM > snapExitDistanceLimitM)
+      const effectiveLocation = shouldFilterRawJump && Number.isFinite(previousRawLat) && Number.isFinite(previousRawLng)
+        ? {
+            ...location,
+            lat: previousRawLat,
+            lng: previousRawLng,
+            rawLat: location.lat,
+            rawLng: location.lng,
+            gpsJumpFiltered: true,
+          }
+        : location
+      const routeProgress = activeRoute ? analyzeRouteProgress(activeRoute, effectiveLocation, {
+        nearProgressKm: state.navigationProgressKm,
+        progressWindowKm: Math.max(0.35, maxAdvanceKm * 3.2),
+        nearSegmentIndex: state.navigationMatchedSegmentIndex,
+        segmentWindow: 180,
+      }) : null
       const keepExistingMatch = Boolean(state.navigationMatchedLocation) && routeProgress?.distanceToRouteM != null && routeProgress.distanceToRouteM <= snapExitDistanceLimitM
       const allowNewMatch = routeProgress?.distanceToRouteM != null && routeProgress.distanceToRouteM <= snapEnterDistanceLimitM
       const matchedLocation = routeProgress?.matchedLocation && (allowNewMatch || keepExistingMatch)
         ? {
-            ...location,
+            ...effectiveLocation,
             lat: routeProgress.matchedLocation.lat,
             lng: routeProgress.matchedLocation.lng,
-            rawLat: location.lat,
-            rawLng: location.lng,
+            rawLat: effectiveLocation.rawLat ?? location.lat,
+            rawLng: effectiveLocation.rawLng ?? location.lng,
             snappedToRoute: true,
           }
         : null
-      const trackedLocation = matchedLocation ?? location
+      const trackedLocation = matchedLocation ?? effectiveLocation
       const nextPoint = [trackedLocation.lat, trackedLocation.lng]
       const rawProgressKm = Number(routeProgress?.progressKm ?? 0)
       const prevProgressKm = Number(state.navigationProgressKm ?? 0)
@@ -1271,9 +1350,8 @@ const useAppStore = create((set, get) => ({
         || movedSinceLastDrivePointKm >= 0.004
         || (currentSpeedKmh >= 4 && elapsedSinceLastSampleSec >= 2)
         || (currentSpeedKmh < 4 && movedSinceLastDrivePointKm >= 0.0015 && elapsedSinceLastSampleSec >= 4)
-      const sampleCapturedAt = new Date().toISOString()
       const speedDelta = latestDriveSample
-        ? Math.abs((location.speedKmh ?? 0) - (latestDriveSample.speedKmh ?? 0))
+        ? Math.abs((effectiveLocation.speedKmh ?? 0) - (latestDriveSample.speedKmh ?? 0))
         : Infinity
       const movedSinceLastSampleKm = latestDriveSample
         ? haversineKm(latestDriveSample.lat, latestDriveSample.lng, trackedLocation.lat, trackedLocation.lng)
@@ -1288,6 +1366,7 @@ const useAppStore = create((set, get) => ({
         rawLat: location.lat,
         rawLng: location.lng,
         snappedToRoute: Boolean(matchedLocation),
+        gpsJumpFiltered: Boolean(shouldFilterRawJump),
         speedKmh: currentSpeedKmh,
         heading: Number.isFinite(Number(location.heading)) ? Number(location.heading) : null,
         capturedAt: sampleCapturedAt,
@@ -1319,7 +1398,13 @@ const useAppStore = create((set, get) => ({
               }
 
       return {
-        userLocation: location,
+        userLocation: {
+          ...effectiveLocation,
+          rawLat: effectiveLocation.rawLat ?? location.lat,
+          rawLng: effectiveLocation.rawLng ?? location.lng,
+          capturedAt: sampleCapturedAt,
+          gpsJumpFiltered: Boolean(shouldFilterRawJump),
+        },
         locationHistory: [...state.locationHistory.slice(-19), nextPoint],
         drivePathHistory: state.isNavigating && shouldAppendDrivePoint
           ? [...state.drivePathHistory.slice(-1999), nextPoint]
@@ -1524,15 +1609,9 @@ const useAppStore = create((set, get) => ({
     const cruiseSpeedKmh = speedKmh
     const tickSeconds = INTERVAL_MS / 1000
 
-    // 폴리라인 세그먼트 길이 사전 계산
-    const segLengths = []
-    for (let i = 0; i < polyline.length - 1; i++) {
-      segLengths.push(haversineKm(polyline[i][0], polyline[i][1], polyline[i + 1][0], polyline[i + 1][1]) * 1000)
-    }
-
     // ── 시뮬레이션 상태 ──
-    let segIdx = 0
-    let offsetM = 0
+    let simulatedProgressKm = Math.max(0, Number(get().navigationProgressKm ?? getProgressKmOnPolyline(polyline[0], polyline) ?? 0))
+    let lastRouteId = route?.id ?? null
     let currentSpeedKmh = 0           // 출발 시 0에서 가속
     let targetSpeedKmh = cruiseSpeedKmh
     let brakingStepsLeft = 0          // 급정거 지속 스텝
@@ -1599,35 +1678,47 @@ const useAppStore = create((set, get) => ({
         currentForcedOffsetM *= 0.82
       }
 
-      // ── 이동 거리 계산 ──
-      let remaining = ((currentSpeedKmh * 1000) / 3600) * tickSeconds
-      while (remaining > 0.001 && segIdx < segLengths.length) {
-        const segLen = segLengths[segIdx]
-        if (offsetM + remaining < segLen) {
-          offsetM += remaining
-          remaining = 0
-        } else {
-          remaining -= (segLen - offsetM)
-          segIdx += 1
-          offsetM = 0
-        }
-      }
-
-      if (segIdx >= segLengths.length) {
+      const liveState = get()
+      const liveRoute = liveState.routes.find((candidate) => candidate.id === liveState.selectedRouteId) ?? liveState.routes[0] ?? null
+      const livePolyline = liveRoute?.polyline ?? []
+      if (livePolyline.length < 2) {
         clearInterval(_simIntervalId)
         _simIntervalId = null
         set({ isDriveSimulation: false, driveSimulationForcedOffRoute: null })
         return
       }
 
-      const segLen = segLengths[segIdx]
-      const ratio = segLen > 0 ? Math.min(1, offsetM / segLen) : 0
-      const p0 = polyline[segIdx]
-      const p1 = polyline[segIdx + 1]
-      const baseLat = p0[0] + (p1[0] - p0[0]) * ratio
-      const baseLng = p0[1] + (p1[1] - p0[1]) * ratio
+      if ((liveRoute?.id ?? null) !== lastRouteId && liveState.userLocation) {
+        const rerouteProgress = analyzeRouteProgress(liveRoute, liveState.userLocation, {
+          nearProgressKm: simulatedProgressKm,
+          progressWindowKm: 1.6,
+          nearSegmentIndex: liveState.navigationMatchedSegmentIndex,
+          segmentWindow: 260,
+        })
+        if (Number.isFinite(Number(rerouteProgress?.progressKm))) {
+          simulatedProgressKm = Math.max(0, Number(rerouteProgress.progressKm))
+        }
+        lastRouteId = liveRoute?.id ?? null
+      }
 
-      const headingDeg = ((Math.atan2(p1[1] - p0[1], p1[0] - p0[0]) * 180) / Math.PI + 360) % 360
+      simulatedProgressKm += ((currentSpeedKmh * 1000) / 3600) * tickSeconds / 1000
+      const liveRouteDistanceKm = Number(liveRoute?.distance ?? getPolylineDistanceKm(livePolyline))
+      if (Number.isFinite(liveRouteDistanceKm) && simulatedProgressKm >= liveRouteDistanceKm) {
+        clearInterval(_simIntervalId)
+        _simIntervalId = null
+        set({ isDriveSimulation: false, driveSimulationForcedOffRoute: null })
+        return
+      }
+      const sampledPoint = getPointOnPolylineAtProgressKm(livePolyline, simulatedProgressKm)
+      if (!sampledPoint) {
+        clearInterval(_simIntervalId)
+        _simIntervalId = null
+        set({ isDriveSimulation: false, driveSimulationForcedOffRoute: null })
+        return
+      }
+      const baseLat = sampledPoint.lat
+      const baseLng = sampledPoint.lng
+      const headingDeg = sampledPoint.heading
 
       noiseLatM *= 0.75
       noiseLngM *= 0.75
