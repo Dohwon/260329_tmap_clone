@@ -226,6 +226,7 @@ export default function NavigationOverlay() {
   const lastFuelRefreshCoordRef = useRef(null)
   const lastRestaurantRefreshAtRef = useRef(0)
   const lastRestaurantRefreshCoordRef = useRef(null)
+  const arrivedRef = useRef(false) // 도착 중복 발동 방지
 
   // 화면 꺼짐 방지
   useEffect(() => {
@@ -500,6 +501,40 @@ export default function NavigationOverlay() {
         s.refreshNavigationRoute('off-route')
       } else if (currentRoute.source !== 'live' && Date.now() - s.navigationLastRefreshedAt > 15000) {
         s.refreshNavigationRoute('live-retry')
+      }
+    }, 3000)
+    return () => window.clearInterval(id)
+  }, [isNavigating])
+
+  // 목적지 도착 감지 — 내비 시작 시 초기화, 50m 이내 진입 시 TTS + 저장 다이얼로그
+  useEffect(() => {
+    if (!isNavigating) {
+      arrivedRef.current = false
+      return
+    }
+    const id = window.setInterval(() => {
+      if (arrivedRef.current) return
+      const s = useAppStore.getState()
+      if (!s.destination || !s.userLocation) return
+      const distM = haversineM(s.userLocation.lat, s.userLocation.lng, s.destination.lat, s.destination.lng)
+      if (distM > 50) return
+
+      arrivedRef.current = true
+      // 시뮬레이션 중이면 정지
+      if (s.isDriveSimulation) s.stopDriveSimulation()
+      // TTS
+      if (window.speechSynthesis && s.settings?.voiceGuidance !== false) {
+        window.speechSynthesis.cancel()
+        const utt = new SpeechSynthesisUtterance('목적지에 도착했습니다')
+        utt.lang = 'ko-KR'
+        window.speechSynthesis.speak(utt)
+      }
+      // 저장 다이얼로그 표시 (drivePathHistory 있으면) 또는 바로 종료
+      const movedPolyline = s.drivePathHistory ?? []
+      if (movedPolyline.length > 1) {
+        setShowSaveDialog(true)
+      } else {
+        s.stopNavigation()
       }
     }, 3000)
     return () => window.clearInterval(id)
