@@ -22,9 +22,13 @@ export default function RoutePreviewPanel() {
     tmapStatus,
     mergeOptions,
     waypoints,
+    isDriveSimulation,
+    startDriveSimulation,
+    stopDriveSimulation,
   } = useAppStore()
   const [showMergeSheet, setShowMergeSheet] = useState(false)
   const [showWaypointSheet, setShowWaypointSheet] = useState(false)
+  const showSimControls = import.meta.env.VITE_SHOW_SIM_CONTROLS === 'true' || new URLSearchParams(window.location.search).get('dev') === '1'
 
   if (!showRoutePanel) return null
 
@@ -32,6 +36,10 @@ export default function RoutePreviewPanel() {
   const baselineRoute = routes.find((route) => route.isBaseline) ?? routes[0]
   const mergePreview = mergeOptions[0]
   const canStartNavigation = isUsableLiveRoute(selectedRoute)
+  const startNavigationWithSimulation = async (speedKmh) => {
+    const started = await startNavigation()
+    if (started) startDriveSimulation(speedKmh)
+  }
 
   // 단거리 판단 (30km 미만 또는 35분 미만)
   const isShortDistance = selectedRoute
@@ -115,6 +123,43 @@ export default function RoutePreviewPanel() {
                 </div>
               </button>
             </div>
+            {showSimControls && (
+              <div className="mt-2 flex justify-end">
+                {isDriveSimulation ? (
+                  <button
+                    onClick={stopDriveSimulation}
+                    className="px-3 py-2 rounded-2xl bg-red-500 text-white text-xs font-bold shadow-lg active:bg-red-600"
+                  >
+                    시뮬 정지
+                  </button>
+                ) : (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => startNavigationWithSimulation(60)}
+                      disabled={!canStartNavigation}
+                      className={`px-3 py-2 rounded-2xl text-xs font-bold shadow-lg ${
+                        canStartNavigation
+                          ? 'bg-gray-800 text-white active:bg-gray-700'
+                          : 'bg-gray-200 text-gray-500 shadow-none cursor-not-allowed'
+                      }`}
+                    >
+                      시뮬 60
+                    </button>
+                    <button
+                      onClick={() => startNavigationWithSimulation(100)}
+                      disabled={!canStartNavigation}
+                      className={`px-3 py-2 rounded-2xl text-xs font-bold shadow-lg ${
+                        canStartNavigation
+                          ? 'bg-gray-800 text-white active:bg-gray-700'
+                          : 'bg-gray-200 text-gray-500 shadow-none cursor-not-allowed'
+                      }`}
+                    >
+                      시뮬 100
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -259,6 +304,48 @@ export default function RoutePreviewPanel() {
             </svg>
           </button>
 
+          {showSimControls && (
+            <div className="rounded-2xl px-4 py-3 border border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-gray-900">개발용 주행 시뮬레이터</div>
+                <div className="text-xs text-gray-500 mt-0.5">안내 시작과 함께 가상 GPS를 경로 위로 이동시킵니다.</div>
+              </div>
+              {isDriveSimulation ? (
+                <button
+                  onClick={stopDriveSimulation}
+                  className="px-3 py-2 rounded-2xl bg-red-500 text-white text-xs font-bold shadow-lg active:bg-red-600 flex-shrink-0"
+                >
+                  정지
+                </button>
+              ) : (
+                <div className="flex gap-2 flex-shrink-0">
+                  <button
+                    onClick={() => startNavigationWithSimulation(60)}
+                    disabled={!canStartNavigation}
+                    className={`px-3 py-2 rounded-2xl text-xs font-bold shadow-lg ${
+                      canStartNavigation
+                        ? 'bg-gray-800 text-white active:bg-gray-700'
+                        : 'bg-gray-200 text-gray-500 shadow-none cursor-not-allowed'
+                    }`}
+                  >
+                    60
+                  </button>
+                  <button
+                    onClick={() => startNavigationWithSimulation(100)}
+                    disabled={!canStartNavigation}
+                    className={`px-3 py-2 rounded-2xl text-xs font-bold shadow-lg ${
+                      canStartNavigation
+                        ? 'bg-gray-800 text-white active:bg-gray-700'
+                        : 'bg-gray-200 text-gray-500 shadow-none cursor-not-allowed'
+                    }`}
+                  >
+                    100
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* 경로 카드 리스트 */}
           {isLoadingRoutes ? (
             <div className="flex flex-col items-center py-10 gap-3">
@@ -312,6 +399,43 @@ export default function RoutePreviewPanel() {
               </div>
             </button>
           </div>
+          {showSimControls && (
+            <div className="mt-3 flex justify-end">
+              {isDriveSimulation ? (
+                <button
+                  onClick={stopDriveSimulation}
+                  className="px-3 py-2 rounded-2xl bg-red-500 text-white text-xs font-bold shadow-lg active:bg-red-600"
+                >
+                  시뮬 정지
+                </button>
+              ) : (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => startNavigationWithSimulation(60)}
+                    disabled={!canStartNavigation}
+                    className={`px-3 py-2 rounded-2xl text-xs font-bold shadow-lg ${
+                      canStartNavigation
+                        ? 'bg-gray-800 text-white active:bg-gray-700'
+                        : 'bg-gray-200 text-gray-500 shadow-none cursor-not-allowed'
+                    }`}
+                  >
+                    시뮬 60
+                  </button>
+                  <button
+                    onClick={() => startNavigationWithSimulation(100)}
+                    disabled={!canStartNavigation}
+                    className={`px-3 py-2 rounded-2xl text-xs font-bold shadow-lg ${
+                      canStartNavigation
+                        ? 'bg-gray-800 text-white active:bg-gray-700'
+                        : 'bg-gray-200 text-gray-500 shadow-none cursor-not-allowed'
+                    }`}
+                  >
+                    시뮬 100
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
