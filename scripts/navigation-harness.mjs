@@ -1,5 +1,15 @@
 import assert from 'node:assert/strict'
-import { searchInstantPlaceCandidates } from '../src/services/tmapService.js'
+import {
+  buildSearchOptionAttempts,
+  fetchDirectRoute,
+  fetchRoutes,
+  getDirectRouteOptionsForMode,
+  searchInstantPlaceCandidates,
+} from '../src/services/tmapService.js'
+import {
+  buildScenicAnchorSeeds,
+  validateRouteForNavigation,
+} from '../src/utils/routingGuards.js'
 import {
   analyzeRecordedDrive,
   analyzeRouteProgress,
@@ -27,6 +37,57 @@ function run(name, fn) {
     console.error(`FAIL ${name}`)
     console.error(error instanceof Error ? error.message : String(error))
     process.exitCode = 1
+  }
+}
+
+async function runAsync(name, fn) {
+  try {
+    await fn()
+    console.log(`PASS ${name}`)
+  } catch (error) {
+    console.error(`FAIL ${name}`)
+    console.error(error instanceof Error ? error.message : String(error))
+    process.exitCode = 1
+  }
+}
+
+function buildMockRouteResponse(searchOption = '0') {
+  const highwayPreferred = String(searchOption) === '4'
+  return {
+    properties: {
+      totalDistance: highwayPreferred ? 18200 : 16500,
+      totalTime: highwayPreferred ? 760 : 690,
+      trafficTime: highwayPreferred ? 140 : 120,
+      totalFare: highwayPreferred ? 2500 : 0,
+      safetyFacilityList: [],
+    },
+    features: [
+      {
+        geometry: {
+          type: 'LineString',
+          coordinates: highwayPreferred
+            ? [[127.0, 37.5], [127.03, 37.53], [127.08, 37.58], [127.1, 37.6]]
+            : [[127.0, 37.5], [127.025, 37.525], [127.06, 37.56], [127.1, 37.6]],
+        },
+        properties: {
+          distance: highwayPreferred ? 18200 : 16500,
+          roadType: highwayPreferred ? 4 : 2,
+          roadName: highwayPreferred ? '경부고속도로' : '국도 1호선',
+          roadNo: '1',
+          speedLimit: highwayPreferred ? 100 : 80,
+          speed: highwayPreferred ? 86 : 63,
+        },
+      },
+      {
+        geometry: { type: 'Point', coordinates: [127.03, 37.53] },
+        properties: {
+          pointType: 'B',
+          turnType: 17,
+          name: '테스트 분기점',
+          description: '테스트 분기점',
+        },
+      },
+    ],
   }
 }
 
@@ -290,6 +351,111 @@ run('TMAP searchOption is normalized to the numeric string format the API accept
   assert.equal(normalizeSearchOption('00'), '0')
   assert.equal(normalizeSearchOption('04'), '4')
   assert.equal(normalizeSearchOption('10'), '10')
+})
+
+run('route request search options do not duplicate raw and normalized values', () => {
+  assert.deepEqual(buildSearchOptionAttempts('00'), ['0'])
+  assert.deepEqual(buildSearchOptionAttempts('04'), ['4'])
+  assert.deepEqual(buildSearchOptionAttempts('10'), ['10'])
+})
+
+run('navigation mode requests only the baseline direct route option', () => {
+  assert.equal(getDirectRouteOptionsForMode('mixed', 'navigation').length, 1)
+  assert.equal(getDirectRouteOptionsForMode('highway_only', 'navigation')[0].searchOption, '04')
+  assert.equal(getDirectRouteOptionsForMode('national_road', 'navigation')[0].searchOption, '00')
+})
+
+run('preview mode still keeps alternative direct route options for comparison', () => {
+  assert.equal(getDirectRouteOptionsForMode('mixed', 'preview').length, 2)
+  assert.equal(getDirectRouteOptionsForMode('highway_only', 'preview').length, 2)
+})
+
+await runAsync('preview route search stays within the direct-route budget without extra via fan-out', async () => {
+  const originalFetch = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (url, options = {}) => {
+    const payload = options.body ? JSON.parse(options.body) : null
+    calls.push({ url: String(url), payload })
+    return {
+      ok: true,
+      status: 200,
+      json: async () => buildMockRouteResponse(payload?.searchOption),
+    }
+  }
+
+  try {
+    const routes = await fetchRoutes(37.5, 127.0, 37.6, 127.1, {
+      roadType: 'mixed',
+      routeRequestMode: 'preview',
+    })
+
+    assert.equal(routes.length, 2)
+    assert.equal(calls.filter((call) => call.url.includes('/routes?version=1')).length, 2)
+    assert.equal(calls.some((call) => call.url.includes('/routeSequential30')), false)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+await runAsync('route 429 opens a short circuit breaker so immediate retries do not hit the network again', async () => {
+  const originalFetch = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = async () => {
+    calls += 1
+    return {
+      ok: false,
+      status: 429,
+      json: async () => ({ error: { message: 'too many requests' } }),
+    }
+  }
+
+  try {
+    await assert.rejects(() => fetchDirectRoute(37.5, 127.0, 37.6, 127.1))
+    await assert.rejects(() => fetchDirectRoute(37.5, 127.0, 37.6, 127.1))
+    assert.equal(calls, 1)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+run('navigation route validation blocks malformed routes before overlay render', () => {
+  const invalid = validateRouteForNavigation({
+    id: 'invalid-route',
+    source: 'live',
+    distance: 12,
+    polyline: [[37.5, 127.0]],
+  }, { lat: 37.5, lng: 127.0 })
+  assert.equal(invalid.ok, false)
+
+  const valid = validateRouteForNavigation({
+    id: 'valid-route',
+    source: 'live',
+    distance: 1.6,
+    polyline: [
+      [37.5, 127.0],
+      [37.5005, 127.006],
+      [37.501, 127.012],
+    ],
+  }, { lat: 37.5, lng: 127.0 })
+  assert.equal(valid.ok, true)
+})
+
+run('scenic suggestions derive concrete entry and exit anchors from real segment data', () => {
+  const anchors = buildScenicAnchorSeeds({
+    id: 'scenic-demo',
+    name: '서해안 태안반도 해안',
+    roadLabel: '국도 77호선 태안반도',
+    viaPoints: [
+      { lat: 36.82, lng: 126.14, name: '만리포' },
+      { lat: 36.57, lng: 126.30, name: '꽃지해안' },
+    ],
+  })
+
+  assert.equal(anchors.length, 2)
+  assert.equal(anchors[0].role, 'entry')
+  assert.equal(anchors[1].role, 'exit')
+  assert.equal(anchors[0].name, '만리포')
+  assert.equal(anchors[1].name, '꽃지해안')
 })
 
 run('instant search does not crash on roads without rest stop arrays', () => {

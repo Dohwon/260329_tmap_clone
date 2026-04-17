@@ -6,11 +6,13 @@ import { HIGHWAYS } from '../data/highwayData'
 import { SCENIC_SEGMENTS_SORTED } from '../data/scenicRoads'
 import { PRESET_INFO, MOCK_RECENT_SEARCHES } from '../data/mockData'
 import { enrichDestinationTarget, fetchDirectRoute, fetchRouteByWaypoints, fetchRoutes, fetchTmapStatus, searchNearbyPOIs, searchPOI, searchSafetyHazards } from '../services/tmapService'
+import { buildScenicAnchorSeeds, validateRouteForNavigation } from '../utils/routingGuards'
 import { analyzeRecordedDrive, analyzeRouteProgress, ensureLiveRouteSource, isUsableLiveRoute } from '../utils/navigationLogic'
 
 const DEFAULT_CENTER = [37.5665, 126.978]
 const DEFAULT_ORIGIN = { lat: 37.5665, lng: 126.978, speedKmh: 0, heading: 0, accuracy: null }
 const LIVE_ROUTE_REQUEST_TTL_MS = 8000
+const LIVE_ROUTE_STALE_REUSE_MS = 1000 * 60
 const STORAGE_KEYS = {
   favorites: 'tmap_favorites_v3',
   recents: 'tmap_recent_searches_v3',
@@ -74,6 +76,15 @@ function sanitizeSettings(settings) {
     ...DEFAULT_SETTINGS,
     ...(settings ?? {}),
   }
+}
+
+function cloneLiveRoutes(routes = [], patch = {}) {
+  return (routes ?? []).map((route) => ({ ...route, ...patch }))
+}
+
+function buildRouteBudgetStatusMessage(retryAfterMs) {
+  const retryAfterSec = Math.max(1, Math.ceil((Number(retryAfterMs) || 1000) / 1000))
+  return `TMAP 요청 예산 보호로 마지막 정상 경로를 유지 중입니다. ${retryAfterSec}초 후 다시 시도하세요.`
 }
 
 function buildLiveRouteRequestKey(origin, destination, waypoints = [], routePreferences = {}) {
@@ -229,6 +240,47 @@ function mergeWaypointsInRouteOrder(existingWaypoints = [], incomingWaypoint, re
   })
 
   return scored.slice(0, 3).map(({ _originalIndex, ...point }) => point)
+}
+
+export async function resolveScenicWaypoints(suggestion, referencePolyline = []) {
+  const seeds = buildScenicAnchorSeeds(suggestion)
+  if (seeds.length === 0) return []
+
+  const resolved = []
+  for (const seed of seeds) {
+    try {
+      const enriched = await enrichDestinationTarget({
+        id: seed.id,
+        name: seed.name,
+        address: seed.address,
+        lat: seed.lat,
+        lng: seed.lng,
+      }, { preferRoadSnap: true })
+
+      if (!Number.isFinite(enriched?.lat) || !Number.isFinite(enriched?.lng)) continue
+      const routeOrderKm = getProgressKmOnPolyline([enriched.lat, enriched.lng], referencePolyline)
+      const routeDistanceKm = getDistanceKmToPolyline([enriched.lat, enriched.lng], referencePolyline)
+      resolved.push({
+        ...enriched,
+        scenicId: suggestion.id,
+        scenicType: suggestion.scenicType,
+        scenicName: suggestion.name,
+        scenicRole: seed.role,
+        routeOrderKm: Number.isFinite(routeOrderKm) ? Number(routeOrderKm.toFixed(1)) : null,
+        routeDistanceKm: Number.isFinite(routeDistanceKm) ? Number(routeDistanceKm.toFixed(1)) : null,
+      })
+    } catch {
+      // 다음 anchor 계속
+    }
+  }
+
+  const deduped = []
+  for (const point of resolved) {
+    const duplicated = deduped.some((existing) => haversineKm(existing.lat, existing.lng, point.lat, point.lng) <= 0.08)
+    if (!duplicated) deduped.push(point)
+  }
+
+  return deduped
 }
 
 function getPolylineDistanceKm(polyline = []) {
@@ -421,26 +473,43 @@ function detectScenicRoads(origin, destination, polyline = [], minDetourMinutes 
   const ranked = SCENIC_SEGMENTS_SORTED
     .filter((seg) => seg.detourMinutes >= minDetourMinutes)
     .map((seg) => {
+      const anchorSeeds = buildScenicAnchorSeeds(seg)
+      const anchorMetrics = anchorSeeds
+        .map((seed) => ({
+          ...seed,
+          progressKm: getProgressKmOnPolyline([seed.lat, seed.lng], polyline),
+          routeDistanceKm: getDistanceKmToPolyline([seed.lat, seed.lng], polyline),
+        }))
+        .filter((seed) => Number.isFinite(seed.progressKm) && Number.isFinite(seed.routeDistanceKm))
       const [mLat, mLng] = seg.segmentMid
-      const routeDistanceKm = getDistanceKmToPolyline([mLat, mLng], polyline)
+      const routeDistanceKm = anchorMetrics.length > 0
+        ? Math.min(...anchorMetrics.map((seed) => seed.routeDistanceKm))
+        : getDistanceKmToPolyline([mLat, mLng], polyline)
       const directDistanceKm = Math.min(
         haversineKm(origin.lat, origin.lng, mLat, mLng),
         haversineKm(destination.lat, destination.lng, mLat, mLng)
       )
-      const encounteredProgressKm = getProgressKmOnPolyline([mLat, mLng], polyline)
+      const encounteredProgressKm = anchorMetrics.length > 0
+        ? Math.min(...anchorMetrics.map((seed) => seed.progressKm))
+        : getProgressKmOnPolyline([mLat, mLng], polyline)
+      const scenicExitProgressKm = anchorMetrics.length > 1
+        ? Math.max(...anchorMetrics.map((seed) => seed.progressKm))
+        : encounteredProgressKm
       const requiresBacktrack = Number.isFinite(encounteredProgressKm)
-        ? encounteredProgressKm <= 0.5 && routeDistanceKm > 1.5
+        ? encounteredProgressKm <= 1.2 && routeDistanceKm > 1.5
         : false
       return {
         ...seg,
         routeDistanceKm: Number(routeDistanceKm.toFixed(1)),
         directDistanceKm: Number(directDistanceKm.toFixed(1)),
         encounteredProgressKm: Number.isFinite(encounteredProgressKm) ? Number(encounteredProgressKm.toFixed(1)) : null,
+        scenicExitProgressKm: Number.isFinite(scenicExitProgressKm) ? Number(scenicExitProgressKm.toFixed(1)) : null,
         requiresBacktrack,
         isRecommended: routeDistanceKm <= 10,
         isReachableSoon: routeDistanceKm <= 30,
         recommendationMode: routeDistanceKm <= 10 ? 'nearby' : routeDistanceKm <= 30 ? 'reachable' : 'distant',
         noScenicWithin30Km: routeDistanceKm > 30,
+        actualWaypointReady: anchorMetrics.length > 0,
       }
     })
     .filter((seg) => Number.isFinite(seg.routeDistanceKm) && seg.routeDistanceKm <= MAX_ROUTE_CORRIDOR_KM)
@@ -463,36 +532,29 @@ function detectScenicRoads(origin, destination, polyline = [], minDetourMinutes 
 
 async function decorateScenicSuggestionsWithEntry(suggestions = []) {
   const resolved = await Promise.all(
-    (suggestions ?? []).map(async (suggestion) => {
-      const seed =
-        suggestion?.viaPoints?.[0]
-        ?? (Array.isArray(suggestion?.segmentMid)
-          ? { name: suggestion.name, lat: suggestion.segmentMid[0], lng: suggestion.segmentMid[1] }
-          : null)
-
-      if (!seed || !Number.isFinite(seed.lat) || !Number.isFinite(seed.lng)) {
+    (suggestions ?? []).map(async (suggestion, index) => {
+      if (index >= 3) {
         return suggestion
       }
 
       try {
-        const enriched = await enrichDestinationTarget({
-          id: `scenic-entry-${suggestion.id}`,
-          name: seed.name ?? suggestion.name,
-          address: seed.address ?? seed.name ?? suggestion.roadLabel ?? suggestion.name,
-          lat: seed.lat,
-          lng: seed.lng,
-        }, { preferRoadSnap: true })
+        const resolvedWaypoints = await resolveScenicWaypoints(suggestion, suggestion.referencePolyline ?? [])
+        const entryWaypoint = resolvedWaypoints[0] ?? null
+        const exitWaypoint = resolvedWaypoints.length > 1 ? resolvedWaypoints[resolvedWaypoints.length - 1] : null
 
         return {
           ...suggestion,
-          entryName: enriched?.name ?? seed.name ?? suggestion.name,
-          entryAddress: enriched?.address ?? seed.address ?? suggestion.roadLabel ?? null,
+          entryName: entryWaypoint?.name ?? suggestion.name,
+          entryAddress: entryWaypoint?.address ?? suggestion.roadLabel ?? null,
+          exitName: exitWaypoint?.name ?? null,
+          exitAddress: exitWaypoint?.address ?? null,
+          resolvedWaypoints,
+          actualWaypointReady: resolvedWaypoints.length > 0,
         }
       } catch {
         return {
           ...suggestion,
-          entryName: seed.name ?? suggestion.name,
-          entryAddress: seed.address ?? suggestion.roadLabel ?? null,
+          actualWaypointReady: false,
         }
       }
     })
@@ -675,6 +737,7 @@ function buildMergeOptions(route, selectedId, driverPreset = 'intermediate') {
   const junctions = route.junctions ?? []
   const routeDistance = route.distance ?? 50
   const routeEta = route.eta ?? 60
+  const hasActualCameraData = (route?.source === 'live' || route?.source === 'recorded') && Array.isArray(route?.cameras)
 
   // 거리/시간에 따른 성향 차이 적용 강도
   const isShort = routeDistance < 30 || routeEta < 35
@@ -719,8 +782,9 @@ function buildMergeOptions(route, selectedId, driverPreset = 'intermediate') {
         maintainKm: mainKm,
         difficulty,
         score,
-        fixedCameraCount: Math.max(1, Math.round(route.fixedCameraCount * mainKm / Math.max(1, routeDistance))),
-        sectionCameraCount: isHighway ? 1 : 0,
+        fixedCameraCount: idx === 0 && hasActualCameraData ? route.fixedCameraCount : null,
+        sectionCameraCount: idx === 0 && hasActualCameraData ? route.sectionCameraCount : null,
+        cameraCountActual: idx === 0 && hasActualCameraData,
         dominantSpeedLimit: speedLimit,
         avgSpeedBefore,
         avgSpeedAfter,
@@ -777,6 +841,7 @@ function buildMergeOptions(route, selectedId, driverPreset = 'intermediate') {
       score: 20,
       fixedCameraCount: route.fixedCameraCount,
       sectionCameraCount: route.sectionCameraCount,
+      cameraCountActual: hasActualCameraData,
       dominantSpeedLimit: route.dominantSpeedLimit,
       isCurrent: true,
       afterRoadType: route.highwayRatio >= 50 ? 'highway' : 'national',
@@ -798,8 +863,9 @@ function buildMergeOptions(route, selectedId, driverPreset = 'intermediate') {
         maintainKm: routeDistance * 0.6,
         difficulty: '중',
         score: 15,
-        fixedCameraCount: route.fixedCameraCount + 2,
-        sectionCameraCount: Math.max(1, route.sectionCameraCount),
+        fixedCameraCount: null,
+        sectionCameraCount: null,
+        cameraCountActual: false,
         dominantSpeedLimit: Math.max(100, route.dominantSpeedLimit),
         isCurrent: false,
         afterRoadType: 'highway',
@@ -822,8 +888,9 @@ function buildMergeOptions(route, selectedId, driverPreset = 'intermediate') {
         maintainKm: routeDistance * 0.55,
         difficulty: '중',
         score: 10,
-        fixedCameraCount: Math.max(0, route.fixedCameraCount - 1),
-        sectionCameraCount: 0,
+        fixedCameraCount: null,
+        sectionCameraCount: null,
+        cameraCountActual: false,
         dominantSpeedLimit: Math.min(80, route.dominantSpeedLimit),
         isCurrent: false,
         afterRoadType: 'national',
@@ -1106,7 +1173,7 @@ function buildFallbackRoutes(origin, destination, routePreferences, driverPreset
       tollFee: Math.round(distanceKm * 110),
       tag: '추천',
       tagColor: 'blue',
-      routeColor: '#0064FF',
+      routeColor: '#FF89AC',
       polyline: buildPolyline(origin, destination, 0.03),
     },
     {
@@ -1126,7 +1193,7 @@ function buildFallbackRoutes(origin, destination, routePreferences, driverPreset
       tollFee: Math.round(distanceKm * 75),
       tag: '고속+국도',
       tagColor: 'blue',
-      routeColor: '#FF9500',
+      routeColor: '#808080',
       polyline: buildPolyline(origin, destination, -0.07),
     },
     {
@@ -1146,7 +1213,7 @@ function buildFallbackRoutes(origin, destination, routePreferences, driverPreset
       tollFee: Math.round(distanceKm * 35),
       tag: '국도선호',
       tagColor: 'green',
-      routeColor: '#00A84F',
+      routeColor: '#54C7FC',
       polyline: buildPolyline(origin, destination, 0.12),
     },
   ]
@@ -1154,16 +1221,21 @@ function buildFallbackRoutes(origin, destination, routePreferences, driverPreset
   return configs.map((route, index) => decorateRoute(route, index, { origin, destination, routePreferences, driverPreset }))
 }
 
-async function loadLiveRoutes(origin, destination, waypoints = [], routePreferences = {}) {
-  const requestKey = buildLiveRouteRequestKey(origin, destination, waypoints, routePreferences)
+async function loadLiveRoutes(origin, destination, waypoints = [], routePreferences = {}, options = {}) {
+  const routeRequestMode = options.routeRequestMode === 'navigation' ? 'navigation' : 'preview'
+  const requestStartedAt = Date.now()
+  const requestKey = JSON.stringify({
+    key: buildLiveRouteRequestKey(origin, destination, waypoints, routePreferences),
+    routeRequestMode,
+  })
   const cached = liveRouteRequestCache.get(requestKey)
-  if (cached && Date.now() - cached.savedAt <= LIVE_ROUTE_REQUEST_TTL_MS) {
-    return cached.routes.map((route) => ({ ...route }))
+  if (cached && requestStartedAt - cached.savedAt <= LIVE_ROUTE_REQUEST_TTL_MS) {
+    return cloneLiveRoutes(cached.routes)
   }
 
   const inflight = liveRouteInflightRequests.get(requestKey)
   if (inflight) {
-    return inflight.then((routes) => routes.map((route) => ({ ...route })))
+    return inflight.then((routes) => cloneLiveRoutes(routes))
   }
 
   const validWaypoints = dedupeWaypoints(waypoints)
@@ -1198,6 +1270,7 @@ async function loadLiveRoutes(origin, destination, waypoints = [], routePreferen
     const directRoutes = await fetchRoutes(origin.lat, origin.lng, destination.lat, destination.lng, {
       allowNarrowRoads: routePreferences.allowNarrowRoads,
       roadType: routePreferences.roadType,
+      routeRequestMode,
     })
     const routes = directRoutes.map((route) => ensureLiveRouteSource(route))
     liveRouteRequestCache.set(requestKey, { savedAt: Date.now(), routes })
@@ -1207,7 +1280,20 @@ async function loadLiveRoutes(origin, destination, waypoints = [], routePreferen
   liveRouteInflightRequests.set(requestKey, requestPromise)
   try {
     const routes = await requestPromise
-    return routes.map((route) => ({ ...route }))
+    return cloneLiveRoutes(routes)
+  } catch (error) {
+    const canReuseCachedRoute = (
+      cached?.routes?.length > 0 &&
+      requestStartedAt - cached.savedAt <= LIVE_ROUTE_STALE_REUSE_MS &&
+      error?.code === 'TMAP_ROUTE_RATE_LIMIT'
+    )
+    if (canReuseCachedRoute) {
+      return cloneLiveRoutes(cached.routes, {
+        reusedFromCache: true,
+        cacheRetryAfterMs: Number(error?.retryAfterMs) || 1000,
+      })
+    }
+    throw error
   } finally {
     liveRouteInflightRequests.delete(requestKey)
   }
@@ -1529,15 +1615,17 @@ const useAppStore = create((set, get) => ({
       selectedRoute = await get().refreshNavigationRoute('navigation-start')
     }
 
-    if (!isUsableLiveRoute(selectedRoute)) {
+    const navigationRouteValidity = validateRouteForNavigation(selectedRoute, userLocation)
+    if (!navigationRouteValidity.ok) {
       get().setTmapStatus({
         hasApiKey: get().tmapStatus.hasApiKey,
         mode: 'simulation',
-        lastError: '실제 TMAP 경로를 받아오지 못해 안내를 시작할 수 없습니다.',
+        lastError: navigationRouteValidity.reason ?? '실제 TMAP 경로를 받아오지 못해 안내를 시작할 수 없습니다.',
       })
       set({ showRoutePanel: true, routePanelMode: 'full' })
       return false
     }
+    selectedRoute = navigationRouteValidity.route
 
     set({
       navigationMatchedLocation: userLocation && selectedRoute ? (() => {
@@ -1964,63 +2052,41 @@ const useAppStore = create((set, get) => ({
       ? scenicReferencePolyline
       : (selectedRoute?.polyline ?? [])
 
-    // 경유지 좌표 후보: viaPoints → segmentMid → segmentStart/End 중간점 → POI 검색
-    const coordCandidates = []
-    if (suggestion.viaPoints?.length > 0) {
-      coordCandidates.push(...suggestion.viaPoints.map((pt, i) => ({ id: `via-${i}`, name: pt.name, lat: pt.lat, lng: pt.lng })))
-    }
-    if (suggestion.segmentMid) {
-      coordCandidates.push({ id: 'mid', name: suggestion.name, lat: suggestion.segmentMid[0], lng: suggestion.segmentMid[1] })
-    }
-    if (suggestion.segmentStart && suggestion.segmentEnd) {
-      coordCandidates.push({
-        id: 'se-mid', name: suggestion.name,
-        lat: (suggestion.segmentStart[0] + suggestion.segmentEnd[0]) / 2,
-        lng: (suggestion.segmentStart[1] + suggestion.segmentEnd[1]) / 2,
-      })
-    }
+    let scenicWaypoints = Array.isArray(suggestion?.resolvedWaypoints) && suggestion.resolvedWaypoints.length > 0
+      ? suggestion.resolvedWaypoints
+      : await resolveScenicWaypoints(suggestion, referencePolyline)
 
-    // POI 검색으로 도로 위 좌표 추가 (TMAP이 반환하는 POI는 도로 근처)
-    try {
-      const [mLat, mLng] = suggestion.segmentMid ?? [0, 0]
-      const poiResults = await searchPOI(suggestion.name, mLat, mLng)
-      if (poiResults?.length > 0) {
-        coordCandidates.push({ id: 'poi', name: poiResults[0].name, lat: poiResults[0].lat, lng: poiResults[0].lng })
-      }
-      // roadLabel 도로명도 검색 시도 (예: "국도 44호선")
-      if (suggestion.roadLabel && poiResults?.length === 0) {
-        const roadPoi = await searchPOI(suggestion.roadLabel, mLat, mLng)
-        if (roadPoi?.length > 0) {
-          coordCandidates.push({ id: 'road-poi', name: roadPoi[0].name, lat: roadPoi[0].lat, lng: roadPoi[0].lng })
-        }
-      }
-    } catch {
-      // POI 검색 실패는 무시
-    }
-
-    const snappedCandidates = []
-    for (const candidate of coordCandidates) {
+    if (scenicWaypoints.length === 0) {
+      // 마지막 보조 수단으로만 POI 검색
       try {
-        const snapped = await enrichDestinationTarget({
-          id: candidate.id,
-          name: candidate.name,
-          address: candidate.address ?? candidate.name ?? suggestion.name,
-          lat: candidate.lat,
-          lng: candidate.lng,
-        }, { preferRoadSnap: true })
-        if (!Number.isFinite(snapped?.lat) || !Number.isFinite(snapped?.lng)) continue
-        const duplicated = snappedCandidates.some((existing) =>
-          haversineKm(existing.lat, existing.lng, snapped.lat, snapped.lng) <= 0.08
-        )
-        if (duplicated) continue
-        snappedCandidates.push(snapped)
+        const [mLat, mLng] = suggestion.segmentMid ?? [0, 0]
+        const poiResults = await searchPOI(suggestion.name, mLat, mLng)
+        const fallbackCandidate = poiResults?.[0]
+        if (fallbackCandidate) {
+          const enriched = await enrichDestinationTarget({
+            id: `scenic-fallback-${suggestion.id}`,
+            name: fallbackCandidate.name,
+            address: fallbackCandidate.address ?? suggestion.roadLabel ?? suggestion.name,
+            lat: fallbackCandidate.lat,
+            lng: fallbackCandidate.lng,
+          }, { preferRoadSnap: true })
+          if (Number.isFinite(enriched?.lat) && Number.isFinite(enriched?.lng)) {
+            scenicWaypoints = [{
+              ...enriched,
+              scenicId: suggestion.id,
+              scenicType: suggestion.scenicType,
+              scenicName: suggestion.name,
+              scenicRole: 'entry',
+              routeOrderKm: getProgressKmOnPolyline([enriched.lat, enriched.lng], referencePolyline),
+            }]
+          }
+        }
       } catch {
-        // 다음 후보 계속
+        // fallback 실패는 그대로 처리
       }
     }
 
-    const scenicWaypoint = snappedCandidates[0]
-    if (!scenicWaypoint) {
+    if (scenicWaypoints.length === 0) {
       set({
         isLoadingRoutes: false,
         scenicRouteError: `${suggestion.name} 경로를 찾을 수 없습니다. 경관 구간 후보를 실제 도로에 맞춰도 유효한 진입 좌표를 만들지 못했습니다.`,
@@ -2029,15 +2095,20 @@ const useAppStore = create((set, get) => ({
     }
 
     try {
-      const nextWaypoint = {
-        ...scenicWaypoint,
-        id: scenicWaypoint.id ?? `scenic-${suggestion.id}`,
-        scenicId: suggestion.id,
-        scenicType: suggestion.scenicType,
-        scenicName: suggestion.name,
-        routeOrderKm: getProgressKmOnPolyline([scenicWaypoint.lat, scenicWaypoint.lng], referencePolyline),
+      let mergedWaypoints = [...waypoints]
+      for (const scenicWaypoint of scenicWaypoints) {
+        const nextWaypoint = {
+          ...scenicWaypoint,
+          id: scenicWaypoint.id ?? `scenic-${suggestion.id}-${scenicWaypoint.scenicRole ?? 'entry'}`,
+          scenicId: suggestion.id,
+          scenicType: suggestion.scenicType,
+          scenicName: suggestion.name,
+          routeOrderKm: Number.isFinite(scenicWaypoint.routeOrderKm)
+            ? scenicWaypoint.routeOrderKm
+            : getProgressKmOnPolyline([scenicWaypoint.lat, scenicWaypoint.lng], referencePolyline),
+        }
+        mergedWaypoints = mergeWaypointsInRouteOrder(mergedWaypoints, nextWaypoint, referencePolyline)
       }
-      const mergedWaypoints = mergeWaypointsInRouteOrder(waypoints, nextWaypoint, referencePolyline)
       set({
         waypoints: mergedWaypoints,
         scenicRoadSuggestions: get().scenicRoadSuggestions.filter((s) => s.id !== suggestion.id),
@@ -2304,9 +2375,16 @@ const useAppStore = create((set, get) => ({
 
     let liveRoutes = []
     try {
-      liveRoutes = await loadLiveRoutes(origin, normalizedDestination, get().waypoints, routePreferences)
+      liveRoutes = await loadLiveRoutes(origin, normalizedDestination, get().waypoints, routePreferences, {
+        routeRequestMode: 'preview',
+      })
       if (liveRoutes.length > 0) {
-        get().setTmapStatus({ hasApiKey: true, mode: 'live', lastError: null })
+        const reusedRoute = liveRoutes.find((route) => route.reusedFromCache)
+        get().setTmapStatus({
+          hasApiKey: true,
+          mode: 'live',
+          lastError: reusedRoute ? buildRouteBudgetStatusMessage(reusedRoute.cacheRetryAfterMs) : null,
+        })
       }
     } catch (error) {
       get().setTmapStatus({
@@ -2323,6 +2401,23 @@ const useAppStore = create((set, get) => ({
         routePreferences,
         driverPreset,
       })), driverPreset)
+    if (decoratedRoutes.length === 0) {
+      set({
+        routes: [],
+        selectedRouteId: null,
+        isLoadingRoutes: false,
+        selectedMergeOptionId: 'merge-current',
+        mergeOptions: [],
+        scenicRoadSuggestions: [],
+        scenicReferencePolyline: [],
+      })
+      get().setTmapStatus({
+        hasApiKey: tmapStatus.hasApiKey,
+        mode: liveRoutes.length > 0 ? 'live' : 'simulation',
+        lastError: get().tmapStatus.lastError ?? '유효한 경로를 만들지 못했습니다.',
+      })
+      return
+    }
     const selectedRouteId = decoratedRoutes[0]?.id ?? null
     const selectedRoute = decoratedRoutes[0] ?? null
     const hasScenicWaypoint = (waypoints ?? []).some((point) => point?.scenicId)
@@ -2335,6 +2430,7 @@ const useAppStore = create((set, get) => ({
     const wantsMountain = routePreferences.includeMountain || driverPreset === 'expert'
     const rawScenicRoadSuggestions = (wantsCoastal || wantsMountain)
       ? detectScenicRoads(origin, normalizedDestination, referencePolyline)
+          .map((suggestion) => ({ ...suggestion, referencePolyline }))
           .filter(s => s.scenicType === 'coastal' ? wantsCoastal : wantsMountain)
       : []
     const scenicRoadSuggestions = await decorateScenicSuggestionsWithEntry(rawScenicRoadSuggestions)
@@ -2365,7 +2461,9 @@ const useAppStore = create((set, get) => ({
     set({ isRefreshingNavigation: true })
 
     try {
-      const liveRoutes = await loadLiveRoutes(origin, state.destination, state.waypoints, state.routePreferences)
+      const liveRoutes = await loadLiveRoutes(origin, state.destination, state.waypoints, state.routePreferences, {
+        routeRequestMode: 'navigation',
+      })
       if (liveRoutes.length === 0) throw new Error('TMAP 경로 응답 없음')
 
       const routes = rankRoutesByDriverPreset(liveRoutes.map((route, index) => decorateRoute(route, index, {
@@ -2384,10 +2482,15 @@ const useAppStore = create((set, get) => ({
         isRefreshingNavigation: false,
         navigationLastRefreshedAt: Date.now(),
       })
+      const reusedRoute = liveRoutes.find((route) => route.reusedFromCache)
       get().setTmapStatus({
         hasApiKey: true,
         mode: 'live',
-        lastError: reason === 'off-route' ? '경로 이탈 감지 후 재탐색 완료' : null,
+        lastError: reusedRoute
+          ? buildRouteBudgetStatusMessage(reusedRoute.cacheRetryAfterMs)
+          : reason === 'off-route'
+            ? '경로 이탈 감지 후 재탐색 완료'
+            : null,
       })
       return selectedRoute
     } catch (error) {

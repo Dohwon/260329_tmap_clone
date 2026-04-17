@@ -1,5 +1,10 @@
 // 한국 주요 고속도로 데이터
-export const HIGHWAYS = [
+const ROAD_CLASS_COLORS = {
+  expressway: '#FF89AC',
+  national: '#54C7FC',
+}
+
+const RAW_HIGHWAYS = [
   {
     id: 'gyeongbu',
     roadClass: 'expressway',
@@ -1035,3 +1040,8 @@ export const HIGHWAYS = [
     description: '서해·남해·동해 해안도로 전체를 잇는 대표 해안 국도 (순환)'
   },
 ]
+
+export const HIGHWAYS = RAW_HIGHWAYS.map((road) => ({
+  ...road,
+  color: ROAD_CLASS_COLORS[road.roadClass] ?? road.color,
+}))

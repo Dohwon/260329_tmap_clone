@@ -58,9 +58,9 @@ export default function ScenicRoadDialog() {
               <div className="text-lg font-black text-gray-900">{formatMin(baseEta)}</div>
               <div className="text-xs text-gray-500">직행</div>
             </div>
-            <div className={`rounded-2xl p-3 text-center ${suggestion.type === 'coastal' ? 'bg-blue-50' : 'bg-green-50'}`}>
+            <div className={`rounded-2xl p-3 text-center ${suggestion.scenicType === 'coastal' ? 'bg-blue-50' : 'bg-green-50'}`}>
               <div className="text-xs text-gray-400 mb-1">{typeLabel} 경유</div>
-              <div className={`text-lg font-black ${suggestion.type === 'coastal' ? 'text-blue-700' : 'text-green-700'}`}>
+              <div className={`text-lg font-black ${suggestion.scenicType === 'coastal' ? 'text-blue-700' : 'text-green-700'}`}>
                 {formatMin(totalEta)}
               </div>
               <div className="text-xs text-orange-500 font-semibold">+{suggestion.detourMinutes}분 추가</div>
@@ -87,6 +87,13 @@ export default function ScenicRoadDialog() {
             우회 시 <strong>{suggestion.detourMinutes}분</strong> 더 걸립니다.
             {destination && ` 최종 목적지(${destination.name})까지 총 ${formatMin(totalEta)} 예상.`}
           </div>
+
+          {suggestion.exitAddress && (
+            <div className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-xs text-slate-600">
+              진입: <strong>{suggestion.entryAddress}</strong><br />
+              진출: <strong>{suggestion.exitAddress}</strong>
+            </div>
+          )}
 
           {suggestion.requiresBacktrack && (
             <div className="bg-red-50 border border-red-100 rounded-xl px-3 py-2 text-xs text-red-600">

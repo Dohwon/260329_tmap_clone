@@ -245,6 +245,23 @@ function writeCachedTtsBuffer(cacheKey, buffer) {
   }
 }
 
+function summarizeTmapBody(rawBody = null) {
+  if (!rawBody) return null
+  try {
+    const parsed = JSON.parse(rawBody)
+    return {
+      startX: parsed.startX ?? null,
+      startY: parsed.startY ?? null,
+      endX: parsed.endX ?? null,
+      endY: parsed.endY ?? null,
+      searchOption: parsed.searchOption ?? null,
+      viaPointCount: Array.isArray(parsed.viaPoints) ? parsed.viaPoints.length : 0,
+    }
+  } catch {
+    return null
+  }
+}
+
 function parseJsonBuffer(buffer) {
   try {
     return JSON.parse(buffer.toString())
@@ -1005,12 +1022,28 @@ app.use('/api/tmap', express.json({ limit: '2mb' }), async (req, res) => {
   const tmapPath = '/tmap' + req.url
 
   const body = (req.method === 'POST' && req.body) ? JSON.stringify(req.body) : null
+  const shouldTrace = tmapPath.includes('/routes') || tmapPath.includes('/nearestRoad')
+  const bodySummary = shouldTrace ? summarizeTmapBody(body) : null
 
   console.log(`[TMAP proxy] ${req.method} ${tmapPath}`)
+  if (bodySummary) {
+    console.log('[TMAP proxy] body:', bodySummary)
+  }
 
   try {
     const result = await tmapFetch(tmapPath, req.method, { origin, referer }, body)
     console.log(`[TMAP proxy] → ${result.status}`)
+    if (shouldTrace && [400, 403, 429].includes(Number(result.status))) {
+      let parsed = null
+      try { parsed = JSON.parse(result.body.toString()) } catch { /* noop */ }
+      console.warn('[TMAP proxy] traced error:', {
+        status: result.status,
+        path: tmapPath,
+        body: bodySummary,
+        errorCode: parsed?.error?.code ?? parsed?.error?.errorCode ?? null,
+        errorMessage: parsed?.error?.message ?? parsed?.error?.errorMessage ?? null,
+      })
+    }
     res.status(result.status)
     res.set('Content-Type', result.rawHeaders['content-type'] || 'application/json')
     res.send(result.body)

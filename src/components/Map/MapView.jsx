@@ -13,13 +13,13 @@ L.Icon.Default.mergeOptions({
 })
 
 const COLORS = {
-  selectedRoute: '#0064FF',
-  navigationGuide: '#FF4FD8',
-  secondaryRoute: '#AEB7C6',
-  routeHighway: '#2563EB',
-  routeNational: '#16A34A',
-  routeLocal: '#F97316',
-  routeJunction: '#F59E0B',
+  selectedRoute: '#FF89AC',
+  navigationGuide: '#FF89AC',
+  secondaryRoute: '#808080',
+  routeHighway: '#FF89AC',
+  routeNational: '#54C7FC',
+  routeLocal: '#808080',
+  routeJunction: '#B8FFE9',
   fixedCamera: '#FF3B30',
   sectionCamera: '#FF3B30',
   restStop: '#008800',

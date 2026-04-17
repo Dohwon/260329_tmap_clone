@@ -2,9 +2,9 @@ import React from 'react'
 import useAppStore from '../../store/appStore'
 
 const ROAD_TYPE_STYLE = {
-  highway: { icon: '🛣️', label: '고속도로', color: '#0064FF', bg: '#E8F0FF' },
-  national: { icon: '🛤️', label: '국도', color: '#00A84F', bg: '#E8F5EE' },
-  local: { icon: '🏘️', label: '일반도로', color: '#8E8E93', bg: '#F2F2F7' },
+  highway: { icon: '🛣️', label: '고속도로', color: '#FF89AC', bg: '#FFF1F5' },
+  national: { icon: '🛤️', label: '국도', color: '#54C7FC', bg: '#EEF9FF' },
+  local: { icon: '🏘️', label: '일반도로', color: '#808080', bg: '#F3F4F6' },
 }
 
 export default function MergeOptionsSheet({ onClose }) {
@@ -150,8 +150,12 @@ export default function MergeOptionsSheet({ onClose }) {
                     />
                     <MiniStat
                       label="카메라"
-                      value={`${(opt.fixedCameraCount ?? 0) + (opt.sectionCameraCount ?? 0)}개`}
-                      color={(opt.fixedCameraCount ?? 0) + (opt.sectionCameraCount ?? 0) > 0 ? '#FF3B30' : '#00A84F'}
+                      value={opt.cameraCountActual
+                        ? `${(opt.fixedCameraCount ?? 0) + (opt.sectionCameraCount ?? 0)}개`
+                        : '실값없음'}
+                      color={opt.cameraCountActual
+                        ? ((opt.fixedCameraCount ?? 0) + (opt.sectionCameraCount ?? 0) > 0 ? '#FF3B30' : '#00A84F')
+                        : '#8E8E93'}
                     />
                     <MiniStat
                       label="제한속도"

@@ -29,7 +29,7 @@
 
 ### 2026-04-13 실시간 경로 재탐색 안정성
 
-- 상태: `open`
+- 상태: `mitigated`
 - 증상: `/api/tmap/routes` 400, `/api/tmap/road/nearestRoad` 403 발생 시 실시간 재탐색이 간헐적으로 누락되거나 폴백 경로가 선택된다.
 - 원인 가설:
   - 좌표 스냅 실패 시 nearestRoad 응답이 비정상 종료
@@ -39,7 +39,12 @@
   - 라이브 경로 실패 시 폴백 재탐색 유지
   - 입력 삭제와 연료/POI 실패 시 크래시 방어 추가
 - 해결 기록:
-  - 아직 미해결. 하네스와 실서비스 로그 기준으로 반복 검증 필요
+  - 2026-04-18: preview route 1회당 direct 비교 경로를 2개 상한으로 줄이고, direct 대안이 이미 있으면 추가 `routeSequential30` fan-out을 만들지 않도록 조정
+  - 2026-04-18: route 429 직후 즉시 재시도로 quota를 다시 소모하지 않도록 짧은 client-side circuit breaker를 추가
+  - 2026-04-18: 같은 key의 최근 정상 경로는 rate-limit 시 재사용하도록 바꾸고, 하네스에 preview 호출 예산 / 429 breaker 회귀 테스트를 추가
+- 남은 한계:
+  - `/api/tmap/routes` 400은 payload 방어와 로그는 들어갔지만 dev/Railway live 응답 기준 최종 종결 여부는 추가 확인이 필요
+  - stale cache 재사용은 사용성 보호용이므로, rate-limit 구간에서는 최신 교통 반영이 잠깐 늦을 수 있음
 - 관련 파일:
   - `src/services/tmapService.js`
   - `src/store/appStore.js`

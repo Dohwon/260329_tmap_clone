@@ -8,6 +8,14 @@ const ROAD_ADDRESS_PATTERN = /[가-힣]+(?:로|길|대로|avenue)\s*\d+/i
 const SEARCH_CACHE = new Map()
 const RESTAURANT_META_CACHE = new Map()
 const SEARCH_CACHE_TTL = 1000 * 60 * 5
+const NEAREST_ROAD_COOLDOWN_MS = 1000 * 60 * 5
+const ROUTE_RATE_LIMIT_COOLDOWN_MS = 1000 * 15
+const nearestRoadCircuit = {
+  blockedUntil: 0,
+}
+const routeRateLimitState = {
+  blockedUntil: 0,
+}
 const FAST_SEARCH_PLACES = [
   {
     id: 'fast-gangnam-station',
@@ -93,6 +101,43 @@ function getFuelBenefitConfig(settings = {}) {
     brand: String(settings?.fuelBenefitBrand ?? '').trim(),
     percent: Number(settings?.fuelBenefitPercent ?? 0),
   }
+}
+
+function hasFiniteCoord(lat, lng) {
+  return Number.isFinite(Number(lat)) && Number.isFinite(Number(lng))
+}
+
+function buildRouteRateLimitError(retryAfterMs = Math.max(1000, routeRateLimitState.blockedUntil - Date.now())) {
+  const safeRetryAfterMs = Math.max(1000, Math.round(Number(retryAfterMs) || ROUTE_RATE_LIMIT_COOLDOWN_MS))
+  const retryAfterSec = Math.max(1, Math.ceil(safeRetryAfterMs / 1000))
+  const error = new Error(`TMAP 요청이 많아 마지막 정상 경로를 유지합니다. ${retryAfterSec}초 후 다시 시도해주세요.`)
+  error.code = 'TMAP_ROUTE_RATE_LIMIT'
+  error.retryAfterMs = safeRetryAfterMs
+  return error
+}
+
+function guardRouteRequestBudget() {
+  if (Date.now() < routeRateLimitState.blockedUntil) {
+    throw buildRouteRateLimitError(routeRateLimitState.blockedUntil - Date.now())
+  }
+}
+
+function markRouteRateLimited() {
+  routeRateLimitState.blockedUntil = Date.now() + ROUTE_RATE_LIMIT_COOLDOWN_MS
+  return buildRouteRateLimitError(ROUTE_RATE_LIMIT_COOLDOWN_MS)
+}
+
+function sanitizeRouteWaypoints(start, destination, wayPoints = []) {
+  return (wayPoints ?? [])
+    .filter((point) => hasFiniteCoord(point?.lat, point?.lng))
+    .filter((point) => {
+      const pointLat = Number(point.lat)
+      const pointLng = Number(point.lng)
+      return !(
+        haversineKm(start.lat, start.lng, pointLat, pointLng) <= 0.08 ||
+        haversineKm(destination.lat, destination.lng, pointLat, pointLng) <= 0.08
+      )
+    })
 }
 
 export function getDiscountedFuelPrice(item = {}, settings = {}) {
@@ -935,9 +980,40 @@ export async function fetchUpcomingFuelContext(routePolyline = [], userLocation 
   }
 }
 
-function buildSearchOptionAttempts(option) {
+export function buildSearchOptionAttempts(option) {
   const raw = String(option ?? '00').trim()
-  return [...new Set([raw, normalizeSearchOption(raw)].filter(Boolean))]
+  const normalized = normalizeSearchOption(raw)
+  return [...new Set([normalized || raw].filter(Boolean))]
+}
+
+function shouldRetryWithFallbackBody(status, message = '') {
+  if (status === 429) return false
+  if (status >= 500) return true
+  const text = String(message ?? '')
+  return /detailPosFlag|trafficInfo|sort|invalid param|invalid request|필수 파라미터/i.test(text)
+}
+
+export function getDirectRouteOptionsForMode(roadType = 'mixed', routeRequestMode = 'preview') {
+  const previewOpts = roadType === 'highway_only'
+    ? [
+        { searchOption: '04', title: '고속도로 우선', tag: '추천', tagColor: 'blue', isBaseline: true },
+        { searchOption: '00', title: '추천 경로', tag: '추천경로', tagColor: 'blue' },
+      ]
+    : roadType === 'national_road'
+      ? [
+          { searchOption: '00', title: '추천 경로', tag: '추천', tagColor: 'blue', isBaseline: true },
+          { searchOption: '10', title: '최단거리', tag: '최단', tagColor: 'orange' },
+        ]
+      : [
+          { searchOption: '00', title: '추천 경로', tag: '추천', tagColor: 'blue', isBaseline: true },
+          { searchOption: '04', title: '고속도로 우선', tag: '고속', tagColor: 'blue' },
+        ]
+
+  if (routeRequestMode === 'navigation') {
+    return [previewOpts[0]]
+  }
+
+  return previewOpts
 }
 
 export async function fetchTmapStatus() {
@@ -973,6 +1049,23 @@ async function fetchPoiSearch(keyword, nearLat, nearLng, searchtypCd = 'A') {
   const json = await res.json()
   const pois = json?.searchPoiInfo?.pois?.poi ?? []
   return pois.map(normalizePoi).filter((poi) => Number.isFinite(poi.lat) && Number.isFinite(poi.lng))
+}
+
+function shouldTryBusinessPoiSearch(keyword) {
+  const text = String(keyword ?? '').trim()
+  if (text.length < 2) return false
+  if (ROAD_KEYWORD_PATTERN.test(text) || ROAD_ADDRESS_PATTERN.test(text)) return false
+  if (
+    text === '음식점' ||
+    text === '맛집' ||
+    text === '주유소' ||
+    text === '휴게소' ||
+    text === '주차장' ||
+    text === '병원'
+  ) {
+    return false
+  }
+  return true
 }
 
 async function fetchFullAddrGeo(keyword) {
@@ -1106,11 +1199,11 @@ export async function searchPOI(keyword, nearLat, nearLng, options = {}) {
     )
     if (unique.length > 0) results = unique
   } else {
-    // 건물명/업체명: POI 검색 (전체 + 업종 병렬)
-    const [poiAll, poiBiz] = await Promise.all([
-      fetchPoiSearch(trimmedKeyword, nearLat, nearLng, 'A').catch(() => []),
-      fetchPoiSearch(trimmedKeyword, nearLat, nearLng, 'B').catch(() => []),
-    ])
+    // 건물명/업체명: 전체 검색 우선, 업종 검색은 필요한 경우에만 보조적으로 시도
+    const poiAll = await fetchPoiSearch(trimmedKeyword, nearLat, nearLng, 'A').catch(() => [])
+    const poiBiz = (poiAll.length < 5 && shouldTryBusinessPoiSearch(trimmedKeyword))
+      ? await fetchPoiSearch(trimmedKeyword, nearLat, nearLng, 'B').catch(() => [])
+      : []
     // 중복 제거 (id 기준)
     const seen = new Set()
     const combined = [...poiAll, ...poiBiz].filter((item) => {
@@ -1316,27 +1409,21 @@ export async function searchSafetyHazards(lat, lng) {
 export async function fetchRoutes(startLat, startLng, endLat, endLng, preferences = {}) {
   const start = { lat: startLat, lng: startLng, name: '출발' }
   const dest = { lat: endLat, lng: endLng, name: '도착' }
-  const { roadType = 'mixed' } = preferences
+  const { roadType = 'mixed', routeRequestMode = 'preview' } = preferences
 
-  // roadType에 따라 기본 탐색 옵션 조정
-  // highway_only → 고속 우선을 베이스라인으로, national_road → 국도 포함 우선
-  const directOpts = roadType === 'highway_only'
-    ? [
-        { searchOption: '04', title: '고속도로 우선', tag: '추천', tagColor: 'blue', isBaseline: true },
-        { searchOption: '00', title: '추천 경로', tag: '추천경로', tagColor: 'blue' },
-      ]
-    : roadType === 'national_road'
-      ? [
-          { searchOption: '00', title: '추천 경로', tag: '추천', tagColor: 'blue', isBaseline: true },
-          { searchOption: '10', title: '최단거리', tag: '최단', tagColor: 'orange' },
-        ]
-      : [
-          { searchOption: '00', title: '추천 경로', tag: '추천', tagColor: 'blue', isBaseline: true },
-          { searchOption: '04', title: '고속도로 우선', tag: '고속', tagColor: 'blue' },
-        ]
-  const directResults = await Promise.allSettled(
-    directOpts.map((opt) => fetchSingleRoute(startLat, startLng, endLat, endLng, opt))
-  )
+  const directOpts = getDirectRouteOptionsForMode(roadType, routeRequestMode)
+  const directResults = []
+  for (const opt of directOpts) {
+    try {
+      const route = await fetchSingleRoute(startLat, startLng, endLat, endLng, opt)
+      directResults.push({ status: 'fulfilled', value: route })
+    } catch (error) {
+      directResults.push({ status: 'rejected', reason: error })
+      if (String(error?.message ?? '').includes('잠시 후 다시 시도')) {
+        break
+      }
+    }
+  }
   const routes = directResults
     .filter((r) => r.status === 'fulfilled' && r.value)
     .map((r) => ({ ...r.value, source: 'live' }))
@@ -1346,51 +1433,80 @@ export async function fetchRoutes(startLat, startLng, endLat, endLng, preference
     throw failed?.reason ?? new Error('경로를 찾을 수 없습니다')
   }
 
-  // Step 2: 기본 경로의 IC/JC 분기점을 경유지로 삼아 실제로 다른 경로 생성
+  // Step 2: direct 비교 경로가 모자랄 때만 경유지 기반 보조 경로를 1회 추가한다.
+  // 미리보기 1회가 업스트림 다중 호출로 증폭되지 않도록 2개 결과를 상한으로 둔다.
   const baseRoute = routes[0]
   const junctions = baseRoute?.junctions ?? []
 
-  if (junctions.length >= 2) {
-    // 1/3 지점 분기점 경유 → 다른 경로 강제
+  if (routeRequestMode !== 'navigation' && routes.length < 2 && junctions.length >= 2) {
     const viaA = junctions[Math.floor(junctions.length * 0.35)]
-    // 2/3 지점 분기점 경유 → 또 다른 경로
     const viaB = junctions[Math.floor(junctions.length * 0.65)]
+    const viaCandidates = [
+      viaA ? {
+        waypoint: viaA,
+        option: {
+          id: 'route-via-a',
+          searchOption: '00',
+          title: `${viaA.name} 경유`,
+          tag: `${viaA.name}`,
+          tagColor: 'green',
+        },
+      } : null,
+      junctions.length >= 4 && viaB ? {
+        waypoint: viaB,
+        option: {
+          id: 'route-via-b',
+          searchOption: '00',
+          title: `${viaB.name} 경유`,
+          tag: `${viaB.name}`,
+          tagColor: 'orange',
+        },
+      } : null,
+    ].filter(Boolean)
 
-    const viaResults = await Promise.allSettled([
-      fetchRouteByWaypoints(start, dest, [viaA], {
-        id: `route-via-a`,
-        searchOption: '00',
-        title: `${viaA.name} 경유`,
-        tag: `${viaA.name}`,
-        tagColor: 'green',
-      }),
-      junctions.length >= 4
-        ? fetchRouteByWaypoints(start, dest, [viaB], {
-            id: `route-via-b`,
-            searchOption: '00',
-            title: `${viaB.name} 경유`,
-            tag: `${viaB.name}`,
-            tagColor: 'orange',
-          })
-        : Promise.reject(new Error('skip')),
-    ])
+    for (const candidate of viaCandidates) {
+      try {
+        const viaRoute = await fetchRouteByWaypoints(start, dest, [candidate.waypoint], candidate.option)
+        if (viaRoute) {
+          routes.push({ ...viaRoute, source: 'live' })
+        }
+      } catch (error) {
+        if (error?.code === 'TMAP_ROUTE_RATE_LIMIT' || String(error?.message ?? '').includes('잠시 후 다시 시도')) {
+          break
+        }
+      }
 
-    for (const r of viaResults) {
-      if (r.status === 'fulfilled' && r.value) {
-        routes.push({ ...r.value, source: 'live' })
+      const uniqueRouteCount = routes.filter((route, index, all) =>
+        all.findIndex((other) =>
+          Math.abs(other.eta - route.eta) < 2 && Math.abs((other.distance ?? 0) - (route.distance ?? 0)) < 1
+        ) === index
+      ).length
+      if (uniqueRouteCount >= 2) {
+        break
       }
     }
   }
 
   // 중복 제거: ETA가 2분 미만 차이이고 거리도 1km 미만 차이면 같은 경로로 간주
-  return routes.filter((route, index, all) =>
+  const dedupedRoutes = routes.filter((route, index, all) =>
     all.findIndex((other) =>
       Math.abs(other.eta - route.eta) < 2 && Math.abs((other.distance ?? 0) - (route.distance ?? 0)) < 1
     ) === index
   )
+
+  return dedupedRoutes.slice(0, routeRequestMode === 'navigation' ? 1 : 2)
 }
 
 export async function fetchRouteByWaypoints(start, destination, wayPoints = [], option = {}) {
+  guardRouteRequestBudget()
+  if (!hasFiniteCoord(start?.lat, start?.lng) || !hasFiniteCoord(destination?.lat, destination?.lng)) {
+    throw new Error('출발지 또는 목적지 좌표가 올바르지 않습니다.')
+  }
+  const sanitizedWayPoints = sanitizeRouteWaypoints(start, destination, wayPoints)
+  if (sanitizedWayPoints.length === 0) {
+    return fetchDirectRoute(start.lat, start.lng, destination.lat, destination.lng, option)
+  }
+
   const startTime = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')
   let lastMessage = 'TMAP 경유 경로 응답 실패'
 
@@ -1407,7 +1523,7 @@ export async function fetchRouteByWaypoints(start, destination, wayPoints = [], 
       endY: String(destination.lat),
       searchOption,
       carType: '0',
-      viaPoints: wayPoints.map((point, index) => ({
+      viaPoints: sanitizedWayPoints.map((point, index) => ({
         viaPointId: point.id ?? `via-${index}`,
         viaPointName: sanitizeRouteLabel(point.name, `경유지 ${index + 1}`),
         viaX: String(point.lng),
@@ -1438,7 +1554,7 @@ export async function fetchRouteByWaypoints(start, destination, wayPoints = [], 
     }
 
     if (res.status === 429) {
-      throw new Error(lastMessage)
+      throw markRouteRateLimited()
     }
   }
 
@@ -1450,6 +1566,9 @@ export async function fetchDirectRoute(startLat, startLng, endLat, endLng, optio
 }
 
 export async function snapToNearestRoad(lat, lng) {
+  if (!hasFiniteCoord(lat, lng)) return null
+  if (Date.now() < nearestRoadCircuit.blockedUntil) return null
+
   const params = new URLSearchParams({
     version: '1',
     lat: String(lat),
@@ -1459,7 +1578,12 @@ export async function snapToNearestRoad(lat, lng) {
   })
   try {
     const res = await fetch(`${BASE}/road/nearestRoad?${params}`, { headers: { Accept: 'application/json' } })
+    if (res.status === 403) {
+      nearestRoadCircuit.blockedUntil = Date.now() + NEAREST_ROAD_COOLDOWN_MS
+      return null
+    }
     if (!res.ok) return null
+    nearestRoadCircuit.blockedUntil = 0
     const json = await res.json()
     const coord = json?.resultData?.coordinate
     if (!coord) return null
@@ -1470,6 +1594,10 @@ export async function snapToNearestRoad(lat, lng) {
 }
 
 async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
+  guardRouteRequestBudget()
+  if (!hasFiniteCoord(startLat, startLng) || !hasFiniteCoord(endLat, endLng)) {
+    throw new Error('출발지 또는 목적지 좌표가 올바르지 않습니다.')
+  }
   let lastMessage = 'TMAP 경로 응답 실패'
   for (const searchOption of buildSearchOptionAttempts(option.searchOption)) {
     const bodies = [
@@ -1484,8 +1612,6 @@ async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
         reqCoordType: 'WGS84GEO',
         resCoordType: 'WGS84GEO',
         searchOption,
-        sort: 'index',
-        trafficInfo: 'Y',
       },
       {
         startX: String(startLng),
@@ -1498,7 +1624,8 @@ async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
       },
     ]
 
-    for (const body of bodies) {
+    for (let bodyIndex = 0; bodyIndex < bodies.length; bodyIndex += 1) {
+      const body = bodies[bodyIndex]
       const res = await fetch(`${BASE}/routes?version=1`, {
         method: 'POST',
         headers: {
@@ -1521,7 +1648,11 @@ async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
       }
 
       if (res.status === 429) {
-        throw new Error(lastMessage)
+        throw markRouteRateLimited()
+      }
+
+      if (bodyIndex === 0 && !shouldRetryWithFallbackBody(res.status, lastMessage)) {
+        break
       }
     }
   }
@@ -1758,7 +1889,7 @@ function parseRouteResponse(json, option) {
     recommended: option.isBaseline === true || option.searchOption === '2',
     tag: option.tag,
     tagColor: option.tagColor,
-    routeColor: option.isBaseline === true ? '#0064FF' : '#8E8E93',
+    routeColor: option.isBaseline === true ? '#FF89AC' : '#808080',
     isBaseline: option.isBaseline === true,
     polyline,
     segmentStats,

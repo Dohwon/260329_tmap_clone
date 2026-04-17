@@ -286,32 +286,56 @@ export default function NavigationOverlay() {
   const route = routes.find(r => r.id === selectedRouteId) ?? null
   const hasActiveRoute = Array.isArray(route?.polyline) && route.polyline.length > 1
   const guidanceLocation = navigationMatchedLocation ?? userLocation
-  const { progress: routeProgress, nextAction } = hasActiveRoute
-    ? getGuidancePriority(route, guidanceLocation, mergeOptions)
-    : {
-        progress: {
-          progressKm: 0,
-          remainingKm: Number(route?.distance ?? 0),
-          distanceToRouteM: null,
-          matchedLocation: null,
-          matchedSegmentIndex: -1,
-        },
-        nextAction: null,
-      }
-  const guidanceList = hasActiveRoute ? getUpcomingGuidanceList(route, guidanceLocation, mergeOptions, 5) : []
-  const offRouteProgress = hasActiveRoute
-    ? analyzeRouteProgress(route, userLocation)
-    : {
+  const navigationSnapshot = useMemo(() => {
+    const emptyState = {
+      progress: {
         progressKm: 0,
         remainingKm: Number(route?.distance ?? 0),
         distanceToRouteM: null,
         matchedLocation: null,
         matchedSegmentIndex: -1,
+      },
+      nextAction: null,
+      guidanceList: [],
+      offRouteProgress: {
+        progressKm: 0,
+        remainingKm: Number(route?.distance ?? 0),
+        distanceToRouteM: null,
+        matchedLocation: null,
+        matchedSegmentIndex: -1,
+      },
+      currentRouteSegment: null,
+      liveMergeOptions: [],
+      remainingEta: null,
+    }
+
+    if (!hasActiveRoute) return emptyState
+
+    try {
+      const guidancePriority = getGuidancePriority(route, guidanceLocation, mergeOptions)
+      const progress = guidancePriority?.progress ?? emptyState.progress
+      return {
+        progress,
+        nextAction: guidancePriority?.nextAction ?? null,
+        guidanceList: getUpcomingGuidanceList(route, guidanceLocation, mergeOptions, 5),
+        offRouteProgress: analyzeRouteProgress(route, userLocation),
+        currentRouteSegment: getCurrentRouteSegment(route, guidanceLocation),
+        liveMergeOptions: getUpcomingMergeOptions(mergeOptions, progress.progressKm),
+        remainingEta: getRemainingEta(route, progress.remainingKm),
       }
-  const currentRouteSegment = hasActiveRoute ? getCurrentRouteSegment(route, guidanceLocation) : null
-  const liveMergeOptions = getUpcomingMergeOptions(mergeOptions, routeProgress.progressKm)
+    } catch (error) {
+      console.error('NavigationOverlay guidance snapshot failed', error)
+      return emptyState
+    }
+  }, [guidanceLocation, hasActiveRoute, mergeOptions, route, userLocation])
+  const routeProgress = navigationSnapshot.progress
+  const nextAction = navigationSnapshot.nextAction
+  const guidanceList = navigationSnapshot.guidanceList
+  const offRouteProgress = navigationSnapshot.offRouteProgress
+  const currentRouteSegment = navigationSnapshot.currentRouteSegment
+  const liveMergeOptions = navigationSnapshot.liveMergeOptions
   const nextMergeOpt = liveMergeOptions.find((option) => option.remainingDistanceKm > 0.03) ?? liveMergeOptions[0]
-  const remainingEta = hasActiveRoute ? getRemainingEta(route, routeProgress.remainingKm) : null
+  const remainingEta = navigationSnapshot.remainingEta
   const nextCameraInfo = useMemo(() => {
     if (!userLocation) return null
     const nearest = (route?.cameras ?? [])
@@ -1502,10 +1526,10 @@ function CameraReportDialog({ camera, cameraReports, onReport, onClose }) {
 
 function SegmentChip({ seg }) {
   const typeStyles = {
-    highway: { bg: 'bg-blue-50', text: 'text-tmap-blue', icon: '🛣️' },
-    junction: { bg: 'bg-yellow-50', text: 'text-yellow-600', icon: '🔀' },
-    exit: { bg: 'bg-green-50', text: 'text-tmap-green', icon: '↗️' },
-    section: { bg: 'bg-orange-50', text: 'text-tmap-orange', icon: '🚧' },
+    highway: { bg: 'bg-rose-50', text: 'text-rose-400', icon: '🛣️' },
+    junction: { bg: 'bg-emerald-50', text: 'text-emerald-300', icon: '🔀' },
+    exit: { bg: 'bg-sky-50', text: 'text-sky-400', icon: '↗️' },
+    section: { bg: 'bg-gray-100', text: 'text-gray-500', icon: '🚧' },
   }
   const style = typeStyles[seg.type] ?? typeStyles.highway
   return (
