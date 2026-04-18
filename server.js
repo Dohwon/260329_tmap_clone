@@ -1448,6 +1448,72 @@ app.post('/api/tts/google', express.json({ limit: '256kb' }), async (req, res) =
   }
 })
 
+app.get('/api/tmap/road/nearestRoad', async (req, res, next) => {
+  if (!TMAP_KEY) {
+    return res.status(503).json({ error: { code: 'NO_KEY', message: 'TMAP_API_KEY 환경변수 미설정' } })
+  }
+
+  const host = req.headers['host'] || 'localhost'
+  const origin = req.headers['origin'] || `https://${host}`
+  const referer = req.headers['referer'] || `https://${host}/`
+  const query = new URLSearchParams(req.query).toString()
+  const tmapPath = `/tmap/road/nearestRoad${query ? `?${query}` : ''}`
+
+  try {
+    const result = await tmapFetch(tmapPath, 'GET', { origin, referer }, null)
+    if (Number(result.status) >= 400) {
+      let parsed = null
+      try { parsed = JSON.parse(result.body.toString()) } catch { /* noop */ }
+      console.warn('[TMAP nearestRoad] fallback to null coordinate', {
+        status: result.status,
+        errorCode: parsed?.error?.code ?? parsed?.error?.errorCode ?? null,
+        errorMessage: parsed?.error?.message ?? parsed?.error?.errorMessage ?? null,
+      })
+      return res.status(200).json({ resultData: { coordinate: null }, fallback: 'nearest-road-disabled' })
+    }
+    res.status(result.status)
+    res.set('Content-Type', result.rawHeaders['content-type'] || 'application/json')
+    return res.send(result.body)
+  } catch (error) {
+    return next(error)
+  }
+})
+
+app.get('/api/tmap/pois', async (req, res, next) => {
+  const searchKeyword = String(req.query.searchKeyword ?? '')
+  const shouldAbsorbBroadCategory400 = ['음식점', '맛집', '주유소', '휴게소', '주차장', '병원', '초등학교', '유치원', '방지턱'].includes(searchKeyword)
+
+  if (!TMAP_KEY) {
+    return res.status(503).json({ error: { code: 'NO_KEY', message: 'TMAP_API_KEY 환경변수 미설정' } })
+  }
+
+  const host = req.headers['host'] || 'localhost'
+  const origin = req.headers['origin'] || `https://${host}`
+  const referer = req.headers['referer'] || `https://${host}/`
+  const query = new URLSearchParams(req.query).toString()
+  const tmapPath = `/tmap/pois${query ? `?${query}` : ''}`
+
+  try {
+    const result = await tmapFetch(tmapPath, 'GET', { origin, referer }, null)
+    if (shouldAbsorbBroadCategory400 && Number(result.status) >= 400) {
+      let parsed = null
+      try { parsed = JSON.parse(result.body.toString()) } catch { /* noop */ }
+      console.warn('[TMAP pois] fallback to empty response', {
+        status: result.status,
+        searchKeyword,
+        errorCode: parsed?.error?.code ?? parsed?.error?.errorCode ?? null,
+        errorMessage: parsed?.error?.message ?? parsed?.error?.errorMessage ?? null,
+      })
+      return res.status(200).json(buildEmptyPoiResponse())
+    }
+    res.status(result.status)
+    res.set('Content-Type', result.rawHeaders['content-type'] || 'application/json')
+    return res.send(result.body)
+  } catch (error) {
+    return next(error)
+  }
+})
+
 // TMAP API 프록시 (GET + POST 모두 처리)
 // app.use 방식 → Express 4/5 모두 호환, req.url = 마운트 이후 경로+쿼리
 app.use('/api/tmap', express.json({ limit: '2mb' }), async (req, res) => {
