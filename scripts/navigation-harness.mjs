@@ -149,6 +149,27 @@ run('guidance text prefers real TMAP instruction wording when available', () => 
     }),
     '우회전'
   )
+  assert.equal(
+    getGuidanceInstruction({
+      turnType: 112,
+      instructionText: '서안산IC 방면 오른쪽 고속도로 출구입니다',
+    }),
+    '우측 진출'
+  )
+  assert.equal(
+    getGuidanceInstruction({
+      turnType: 17,
+      instructionText: '판교JC에서 경부고속도로 방면으로 우측 분기입니다',
+    }),
+    '우측 분기'
+  )
+  assert.equal(
+    getGuidanceInstruction({
+      turnType: 16,
+      instructionText: '본선 합류 후 경부고속도로를 따라 이동합니다',
+    }),
+    '본선 유지'
+  )
 })
 
 run('nearest guidance is preferred over distant merge actions', () => {
@@ -258,6 +279,70 @@ run('synthetic close turn beats a far merge when live guidance points are sparse
   assert.ok(result.nextAction, 'expected a nearby guidance action')
   assert.equal(result.nextAction.turnType, 12)
   assert.ok((result.nextAction.remainingDistanceKm ?? 9) < 0.5)
+})
+
+run('highway context suppresses local turn guidance in favor of merge and exit guidance', () => {
+  const route = ensureLiveRouteSource({
+    id: 'route-highway-filter',
+    distance: 25,
+    eta: 21,
+    highwayRatio: 92,
+    nationalRoadRatio: 5,
+    localRoadRatio: 3,
+    polyline: [
+      [37.5, 127.0],
+      [37.5, 127.03],
+      [37.5006, 127.04],
+      [37.5012, 127.052],
+    ],
+    maneuvers: [
+      {
+        id: 'local-underpass',
+        turnType: 13,
+        distanceFromStart: 0.18,
+        instructionText: '100m 후 지하차도 오른쪽 방향',
+      },
+    ],
+    junctions: [
+      {
+        id: 'hw-jct',
+        turnType: 17,
+        lat: 37.5006,
+        lng: 127.04,
+        distanceFromStart: 0.42,
+        afterRoadType: 'highway',
+        afterRoadName: '경부고속도로',
+      },
+    ],
+    segmentStats: [
+      {
+        id: 'seg-highway-main',
+        roadType: 'highway',
+        speedLimit: 100,
+        positions: [
+          [37.5, 127.0],
+          [37.5, 127.03],
+        ],
+        startProgressKm: 0,
+        endProgressKm: 3,
+      },
+      {
+        id: 'seg-highway-jct',
+        roadType: 'junction',
+        speedLimit: 80,
+        positions: [
+          [37.5, 127.03],
+          [37.5006, 127.04],
+        ],
+        startProgressKm: 3,
+        endProgressKm: 4.2,
+      },
+    ],
+  })
+
+  const result = getGuidancePriority(route, { lat: 37.5, lng: 127.028, speedKmh: 92 })
+  assert.ok(result.nextAction, 'expected a next action in highway context')
+  assert.equal(result.nextAction.turnType, 17)
 })
 
 run('remaining ETA shrinks with route progress', () => {

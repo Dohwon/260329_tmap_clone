@@ -110,6 +110,112 @@ function stripLaneMention(text = '') {
     .trim()
 }
 
+function isHighwayGuidance(guidance) {
+  if (!guidance) return false
+  const turnType = Number(guidance?.turnType)
+  const text = `${guidance?.instructionText ?? ''} ${guidance?.description ?? ''} ${guidance?.afterRoadName ?? ''}`
+  return (
+    turnType === 16 ||
+    turnType === 17 ||
+    turnType === 18 ||
+    turnType === 19 ||
+    turnType >= 100 ||
+    /합류|분기|진출|출구|IC|JC|램프|고속도로|본선/.test(text)
+  )
+}
+
+function getHighwayInsetDirection(turnType) {
+  const t = Number(turnType)
+  if (t === 16 || t === 18) return 'left'
+  if (t === 17 || t === 19 || t >= 100) return 'right'
+  return 'straight'
+}
+
+function shortenRoadLabel(label = '') {
+  return String(label)
+    .replace(/\s*\(\d+호선\)/g, '')
+    .replace(/고속도로|도시고속도로|자동차전용도로|국도/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function HighwayInsetCard({ guidance, focusSegments = [] }) {
+  if (!guidance) return null
+
+  const direction = getHighwayInsetDirection(guidance.turnType)
+  const nextRoadLabel = shortenRoadLabel(guidance.afterRoadName || guidance.nextRoadName || guidance.name || '')
+  const currentRoadLabel = shortenRoadLabel(focusSegments[0]?.name || '')
+  const previewSegments = focusSegments.slice(0, 3)
+
+  return (
+    <div className="rounded-2xl bg-white/95 backdrop-blur shadow-xl border border-white/80 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-[11px] font-bold text-emerald-700">분기 확대 안내</div>
+          <div className="mt-0.5 text-[12px] font-black text-gray-900">
+            {formatGuidanceDistance(guidance.remainingDistanceKm)} 후 {getGuidanceInstruction(guidance)}
+          </div>
+        </div>
+        <div className="text-[10px] font-bold text-gray-400">TMAP식 미리보기</div>
+      </div>
+
+      <div className="mt-2 rounded-xl bg-slate-900 px-2 py-2">
+        <svg viewBox="0 0 168 88" className="w-full h-[84px]">
+          <path d="M20 78 L84 44 L148 10" stroke="#334155" strokeWidth="22" strokeLinecap="round" fill="none" opacity="0.9" />
+          <path d="M48 78 L92 44 L136 10" stroke="#334155" strokeWidth="22" strokeLinecap="round" fill="none" opacity="0.45" />
+          <path
+            d={direction === 'left' ? 'M96 76 L82 54 L68 34' : 'M72 76 L86 54 L100 34'}
+            stroke="#FF89AC"
+            strokeWidth="14"
+            strokeLinecap="round"
+            fill="none"
+          />
+          <path
+            d={direction === 'left' ? 'M120 76 L102 56 L80 36' : 'M48 76 L66 56 L88 36'}
+            stroke="#B8FFE9"
+            strokeWidth="10"
+            strokeLinecap="round"
+            fill="none"
+            opacity="0.95"
+          />
+          <path d="M84 82 L84 18" stroke="#E2E8F0" strokeWidth="6" strokeDasharray="6 7" strokeLinecap="round" fill="none" opacity="0.45" />
+          <circle cx={direction === 'left' ? 72 : 96} cy="38" r="6" fill="#22D3EE" />
+        </svg>
+      </div>
+
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <div className="rounded-xl bg-gray-50 px-2.5 py-2">
+          <div className="text-[10px] font-bold text-gray-400">현재 본선</div>
+          <div className="mt-0.5 text-[11px] font-bold text-gray-800 truncate">{currentRoadLabel || '현재 주행 구간'}</div>
+        </div>
+        <div className="rounded-xl bg-emerald-50 px-2.5 py-2">
+          <div className="text-[10px] font-bold text-emerald-600">연결 방향</div>
+          <div className="mt-0.5 text-[11px] font-bold text-emerald-800 truncate">{nextRoadLabel || '연결 도로'}</div>
+        </div>
+      </div>
+
+      {previewSegments.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {previewSegments.map((segment, index) => (
+            <span
+              key={`${segment.id}-${index}`}
+              className={`rounded-full px-2 py-1 text-[10px] font-bold ${
+                index === 0
+                  ? 'bg-cyan-100 text-cyan-800'
+                  : segment.roadType === 'junction'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : 'bg-rose-100 text-rose-700'
+              }`}
+            >
+              {index === 0 ? '현재' : `다음${index}`} · {shortenRoadLabel(segment.name || segment.roadType)}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function createBrowserSpeech(text) {
   const utterance = new SpeechSynthesisUtterance(text)
   utterance.lang = 'ko-KR'
@@ -372,6 +478,16 @@ export default function NavigationOverlay() {
   const liveMergeOptions = navigationSnapshot.liveMergeOptions
   const nextMergeOpt = liveMergeOptions.find((option) => option.remainingDistanceKm > 0.03) ?? liveMergeOptions[0]
   const remainingEta = navigationSnapshot.remainingEta
+  const currentSegmentIndex = useMemo(() => {
+    if (!route?.segmentStats?.length || !currentRouteSegment?.id) return 0
+    const foundIndex = route.segmentStats.findIndex((segment) => segment.id === currentRouteSegment.id)
+    return foundIndex >= 0 ? foundIndex : 0
+  }, [currentRouteSegment?.id, route?.segmentStats])
+  const focusSegments = useMemo(() => (
+    (route?.segmentStats ?? [])
+      .slice(Math.max(0, currentSegmentIndex), Math.max(0, currentSegmentIndex) + 3)
+      .filter((segment) => Array.isArray(segment?.positions) && segment.positions.length > 1)
+  ), [currentSegmentIndex, route?.segmentStats])
   const nextCameraInfo = useMemo(() => {
     if (!userLocation) return null
     const nearest = (route?.cameras ?? [])
@@ -749,19 +865,10 @@ export default function NavigationOverlay() {
     : '목적지 안내'
   const bannerTurnType = nextGuidance?.turnType ?? 11
   const isHighwayStyleGuidance = Boolean(
-    nextGuidance && (
-      bannerTurnType === 16 ||
-      bannerTurnType === 17 ||
-      bannerTurnType === 18 ||
-      bannerTurnType === 19 ||
-      bannerTurnType >= 100 ||
-      /합류|분기|진출|출구|IC|JC|램프|고속도로|본선/.test(
-        `${nextGuidance?.instructionText ?? ''} ${nextGuidance?.description ?? ''} ${nextGuidance?.afterRoadName ?? ''}`
-      )
-    )
+    nextGuidance && isHighwayGuidance(nextGuidance)
   )
   const laneSource = nextGuidance ?? nextMergeOpt ?? null
-  const isNearLaneDecision = Number(nextGuidance?.remainingDistanceKm) <= 0.35
+  const isNearLaneDecision = Number(nextGuidance?.remainingDistanceKm) <= 0.9
   const nearbyFuelSummary = nearbyCategory === '주유소' && nearbyPOIs.length > 0
     ? {
         nearbyLowestPoi: [...nearbyPOIs].sort((a, b) => getDiscountedFuelPrice(a, settings) - getDiscountedFuelPrice(b, settings))[0] ?? null,
@@ -1022,14 +1129,9 @@ export default function NavigationOverlay() {
         })()}
       </div>
 
-      {isNearLaneDecision && laneSource && (
-        <div className="absolute top-[122px] right-4 z-20 max-w-[160px]">
-          <div className="rounded-2xl bg-white/92 backdrop-blur shadow-lg border border-white/70 px-3 py-2">
-            <div className="text-[11px] font-bold text-emerald-700">분기 확대중</div>
-            <div className="mt-1 text-[11px] font-semibold text-gray-600 line-clamp-2">
-              {cleanedInstructionText || bannerSub}
-            </div>
-          </div>
+      {isNearLaneDecision && laneSource && isHighwayStyleGuidance && (
+        <div className="absolute top-[122px] right-4 z-20 w-[228px]">
+          <HighwayInsetCard guidance={nextGuidance ?? laneSource} focusSegments={focusSegments} />
         </div>
       )}
 

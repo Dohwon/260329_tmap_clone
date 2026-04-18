@@ -677,6 +677,15 @@ export default function MapView({ darkMode = false }) {
     if (driverFollowMode) return segments.slice(startIndex, startIndex + 8)
     return segments.slice(startIndex)
   }, [currentSegmentIndex, driverFollowMode, isNavigating, selectedRoute?.segmentStats])
+  const driverFocusSegments = useMemo(() => {
+    if (!driverFollowMode) return []
+    const segments = selectedRoute?.segmentStats ?? []
+    if (segments.length === 0) return []
+    const startIndex = Math.max(0, currentSegmentIndex)
+    return segments
+      .slice(startIndex, startIndex + 3)
+      .filter((segment) => Array.isArray(segment?.positions) && segment.positions.length > 1)
+  }, [currentSegmentIndex, driverFollowMode, selectedRoute?.segmentStats])
   const remainingRoutePath = useMemo(() => {
     if (!selectedRoute) return []
     if (!isNavigating) return getRoutePath(selectedRoute, 0.1)
@@ -1016,6 +1025,33 @@ export default function MapView({ darkMode = false }) {
               />
             </>
           )}
+
+          {driverFollowMode && driverFocusSegments.slice(1).map((segment, index) => {
+            const color = segment.roadType === 'junction'
+              ? '#B8FFE9'
+              : '#FF89AC'
+            const positions = smoothPath(segment.positions, 0.025)
+            return (
+              <React.Fragment key={`driver-focus-${segment.id}`}>
+                <Polyline
+                  positions={positions}
+                  pathOptions={{
+                    color: '#0F172A',
+                    weight: showMinimalNavigationMap ? 10 - index : 8 - index,
+                    opacity: 0.18 + (index * 0.04),
+                  }}
+                />
+                <Polyline
+                  positions={positions}
+                  pathOptions={{
+                    color,
+                    weight: showMinimalNavigationMap ? 7 - index : 6 - index,
+                    opacity: index === 0 ? 0.86 : 0.62,
+                  }}
+                />
+              </React.Fragment>
+            )
+          })}
 
           {isNavigating && remainingRoutePath.length > 1 && (
             <Polyline
