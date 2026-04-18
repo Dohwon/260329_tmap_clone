@@ -10,6 +10,7 @@ import {
   formatGuidanceDistance,
   getEffectiveCurrentSpeedContext,
   getGuidanceInstruction,
+  getLaneGuidance,
   getGuidancePriority,
   getCurrentRouteSegment,
   getRemainingEta,
@@ -139,13 +140,137 @@ function shortenRoadLabel(label = '') {
     .trim()
 }
 
+function dedupeInsetPoints(points = []) {
+  const deduped = []
+  for (const point of points) {
+    if (!Array.isArray(point) || point.length < 2) continue
+    const lat = Number(point[0])
+    const lng = Number(point[1])
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
+    const prev = deduped[deduped.length - 1]
+    if (prev && haversineM(prev[0], prev[1], lat, lng) <= 5) continue
+    deduped.push([lat, lng])
+  }
+  return deduped
+}
+
+function pointsToSvgPath(points = [], projectPoint) {
+  if (!Array.isArray(points) || points.length < 2) return ''
+  return points
+    .map((point, index) => {
+      const [x, y] = projectPoint(point)
+      return `${index === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`
+    })
+    .join(' ')
+}
+
+function buildHighwayInsetGeometry(focusSegments = []) {
+  const currentPoints = dedupeInsetPoints(focusSegments[0]?.positions ?? [])
+  const upcomingPoints = dedupeInsetPoints(
+    focusSegments.slice(1, 3).flatMap((segment) => segment?.positions ?? [])
+  )
+  const routePoints = dedupeInsetPoints([...currentPoints, ...upcomingPoints])
+
+  if (routePoints.length < 2) return null
+
+  const ghostMainline = (() => {
+    if (currentPoints.length < 2) return []
+    const tail = currentPoints[currentPoints.length - 1]
+    const prev = currentPoints[currentPoints.length - 2]
+    const deltaLat = tail[0] - prev[0]
+    const deltaLng = tail[1] - prev[1]
+    if (Math.abs(deltaLat) < 0.000001 && Math.abs(deltaLng) < 0.000001) return []
+    return dedupeInsetPoints([
+      tail,
+      [tail[0] + (deltaLat * 1.2), tail[1] + (deltaLng * 1.2)],
+      [tail[0] + (deltaLat * 2.6), tail[1] + (deltaLng * 2.6)],
+    ])
+  })()
+
+  const allPoints = dedupeInsetPoints([...routePoints, ...ghostMainline])
+  const lngs = allPoints.map((point) => point[1])
+  const lats = allPoints.map((point) => point[0])
+  const minLng = Math.min(...lngs)
+  const maxLng = Math.max(...lngs)
+  const minLat = Math.min(...lats)
+  const maxLat = Math.max(...lats)
+  const width = 176
+  const height = 112
+  const padding = 12
+  const lngSpan = Math.max(0.0001, maxLng - minLng)
+  const latSpan = Math.max(0.0001, maxLat - minLat)
+  const scale = Math.min((width - (padding * 2)) / lngSpan, (height - (padding * 2)) / latSpan)
+
+  const projectPoint = ([lat, lng]) => ([
+    padding + ((lng - minLng) * scale),
+    height - padding - ((lat - minLat) * scale),
+  ])
+
+  const junctionPoint = currentPoints[currentPoints.length - 1] ?? routePoints[Math.max(0, Math.min(routePoints.length - 1, currentPoints.length - 1))]
+
+  return {
+    width,
+    height,
+    projectPoint,
+    routePath: pointsToSvgPath(routePoints, projectPoint),
+    currentPath: pointsToSvgPath(currentPoints, projectPoint),
+    ghostPath: pointsToSvgPath(ghostMainline, projectPoint),
+    junctionPoint: junctionPoint ? projectPoint(junctionPoint) : null,
+  }
+}
+
+function getGuidanceDirectionLabel(guidance) {
+  const text = `${guidance?.laneHint ?? ''} ${guidance?.instructionText ?? ''} ${guidance?.description ?? ''}`
+  const turnType = Number(guidance?.turnType)
+  if (/좌측|왼쪽/.test(text) || turnType === 12 || turnType === 16 || turnType === 18) return '좌측'
+  if (/우측|오른쪽/.test(text) || turnType === 13 || turnType === 17 || turnType === 19 || turnType >= 100) return '우측'
+  return '전방'
+}
+
+function getGuideLineMeta(guidance) {
+  const extcVoiceCode = Number(guidance?.extcVoiceCode ?? guidance?.nExtcVoiceCode)
+  const laneText = getLaneGuidance(guidance)
+  const direction = getGuidanceDirectionLabel(guidance)
+  const palette = {
+    65: { label: '초록색', color: '#B8FFE9', textColor: '#0F766E', bgClass: 'bg-emerald-50 border-emerald-100' },
+    66: { label: '분홍색', color: '#FF89AC', textColor: '#BE185D', bgClass: 'bg-rose-50 border-rose-100' },
+    67: { label: '파란색', color: '#54C7FC', textColor: '#0369A1', bgClass: 'bg-sky-50 border-sky-100' },
+    68: { label: '노란색', color: '#FACC15', textColor: '#A16207', bgClass: 'bg-amber-50 border-amber-100' },
+    90: { label: '지정', color: '#A78BFA', textColor: '#6D28D9', bgClass: 'bg-violet-50 border-violet-100' },
+  }[extcVoiceCode] ?? null
+
+  if (palette) {
+    return {
+      ...palette,
+      text: direction === '전방'
+        ? `${palette.label} 유도선을 따라가세요`
+        : `${direction} ${palette.label} 유도선을 따라가세요`,
+    }
+  }
+
+  if (!laneText) return null
+  return {
+    label: '유도',
+    color: '#22D3EE',
+    textColor: '#0F766E',
+    bgClass: 'bg-cyan-50 border-cyan-100',
+    text: laneText,
+  }
+}
+
+function buildGuideLineSpeech(guidance) {
+  const guideLineMeta = getGuideLineMeta(guidance)
+  return guideLineMeta?.text ?? null
+}
+
 function HighwayInsetCard({ guidance, focusSegments = [] }) {
   if (!guidance) return null
 
-  const direction = getHighwayInsetDirection(guidance.turnType)
   const nextRoadLabel = shortenRoadLabel(guidance.afterRoadName || guidance.nextRoadName || guidance.name || '')
   const currentRoadLabel = shortenRoadLabel(focusSegments[0]?.name || '')
   const previewSegments = focusSegments.slice(0, 3)
+  const insetGeometry = buildHighwayInsetGeometry(focusSegments)
+  const guideLineMeta = getGuideLineMeta(guidance)
 
   return (
     <div className="rounded-2xl bg-white/95 backdrop-blur shadow-xl border border-white/80 p-3">
@@ -156,32 +281,73 @@ function HighwayInsetCard({ guidance, focusSegments = [] }) {
             {formatGuidanceDistance(guidance.remainingDistanceKm)} 후 {getGuidanceInstruction(guidance)}
           </div>
         </div>
-        <div className="text-[10px] font-bold text-gray-400">TMAP식 미리보기</div>
+        <div className="text-[10px] font-bold text-gray-400">실제 경로 확대</div>
       </div>
 
       <div className="mt-2 rounded-xl bg-slate-900 px-2 py-2">
-        <svg viewBox="0 0 168 88" className="w-full h-[84px]">
-          <path d="M20 78 L84 44 L148 10" stroke="#334155" strokeWidth="22" strokeLinecap="round" fill="none" opacity="0.9" />
-          <path d="M48 78 L92 44 L136 10" stroke="#334155" strokeWidth="22" strokeLinecap="round" fill="none" opacity="0.45" />
-          <path
-            d={direction === 'left' ? 'M96 76 L82 54 L68 34' : 'M72 76 L86 54 L100 34'}
-            stroke="#FF89AC"
-            strokeWidth="14"
-            strokeLinecap="round"
-            fill="none"
-          />
-          <path
-            d={direction === 'left' ? 'M120 76 L102 56 L80 36' : 'M48 76 L66 56 L88 36'}
-            stroke="#B8FFE9"
-            strokeWidth="10"
-            strokeLinecap="round"
-            fill="none"
-            opacity="0.95"
-          />
-          <path d="M84 82 L84 18" stroke="#E2E8F0" strokeWidth="6" strokeDasharray="6 7" strokeLinecap="round" fill="none" opacity="0.45" />
-          <circle cx={direction === 'left' ? 72 : 96} cy="38" r="6" fill="#22D3EE" />
+        <svg viewBox={`0 0 ${insetGeometry?.width ?? 176} ${insetGeometry?.height ?? 112}`} className="w-full h-[92px]">
+          {insetGeometry?.ghostPath && (
+            <path
+              d={insetGeometry.ghostPath}
+              stroke="#CBD5E1"
+              strokeWidth="14"
+              strokeLinecap="round"
+              fill="none"
+              opacity="0.38"
+              strokeDasharray="10 9"
+            />
+          )}
+          {insetGeometry?.routePath && (
+            <path
+              d={insetGeometry.routePath}
+              stroke="#334155"
+              strokeWidth="22"
+              strokeLinecap="round"
+              fill="none"
+              opacity="0.88"
+            />
+          )}
+          {insetGeometry?.currentPath && (
+            <path
+              d={insetGeometry.currentPath}
+              stroke="#22D3EE"
+              strokeWidth="10"
+              strokeLinecap="round"
+              fill="none"
+              opacity="0.92"
+            />
+          )}
+          {insetGeometry?.routePath && (
+            <path
+              d={insetGeometry.routePath}
+              stroke="#FF89AC"
+              strokeWidth="8"
+              strokeLinecap="round"
+              fill="none"
+            />
+          )}
+          {insetGeometry?.junctionPoint && (
+            <>
+              <circle cx={insetGeometry.junctionPoint[0]} cy={insetGeometry.junctionPoint[1]} r="8" fill="#ffffff" opacity="0.18" />
+              <circle cx={insetGeometry.junctionPoint[0]} cy={insetGeometry.junctionPoint[1]} r="5" fill="#B8FFE9" />
+            </>
+          )}
         </svg>
       </div>
+
+      {guideLineMeta && (
+        <div className={`mt-2 rounded-xl border px-3 py-2 ${guideLineMeta.bgClass}`}>
+          <div className="flex items-center gap-2">
+            <span
+              className="inline-flex h-2.5 w-8 rounded-full"
+              style={{ backgroundColor: guideLineMeta.color }}
+            />
+            <div className="text-[11px] font-black" style={{ color: guideLineMeta.textColor }}>
+              {guideLineMeta.text}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="mt-2 grid grid-cols-2 gap-2">
         <div className="rounded-xl bg-gray-50 px-2.5 py-2">
@@ -254,12 +420,43 @@ function buildCameraAlertSpeech(camera, distanceM, threshold) {
     : camera?.type === 'section_end'
       ? '구간단속 종료'
       : '과속카메라'
+  const speedLimitText = Number.isFinite(Number(camera?.speedLimit)) && Number(camera.speedLimit) > 0
+    ? ` 제한속도 ${camera.speedLimit}킬로입니다.`
+    : ''
 
   if (threshold === '100m') {
-    return `100미터 앞 ${cameraLabel}입니다.`
+    return `100미터 앞 ${cameraLabel}입니다.${speedLimitText}`
   }
 
-  return `${roundedDistance}미터 앞 ${cameraLabel}입니다.`
+  return `${roundedDistance}미터 앞 ${cameraLabel}입니다.${speedLimitText}`
+}
+
+function getCameraAlertThreshold(distanceM, speedLimit = null, isHighwayContext = false) {
+  if (distanceM <= 120) return '100m'
+  if (distanceM <= 320) return '300m'
+  if (isHighwayContext || Number(speedLimit) >= 80) {
+    if (distanceM <= 1500) return '1.5km'
+    return null
+  }
+  if (distanceM <= 600) return '600m'
+  return null
+}
+
+function getCameraBannerMeta(camera) {
+  if (!camera) return null
+  if (Number(camera.distanceM) > 1600) return null
+  const cameraTitle = camera.type === 'section_start'
+    ? '구간단속 시작'
+    : camera.type === 'section_end'
+      ? '구간단속 종료'
+      : '과속카메라'
+  const speedLimitLabel = Number.isFinite(Number(camera.speedLimit)) && Number(camera.speedLimit) > 0
+    ? `제한 ${camera.speedLimit}km/h`
+    : '제한속도 정보 없음'
+  return {
+    title: cameraTitle,
+    subtitle: `${camera.distanceLabel} 앞 · ${speedLimitLabel}`,
+  }
 }
 
 function buildHazardAlertSpeech(hazard, distanceM, threshold) {
@@ -508,6 +705,10 @@ export default function NavigationOverlay() {
   }, [route?.cameras, userLocation])
   const nextSectionInfo = useMemo(
     () => (nextCameraInfo?.type === 'section_start' ? nextCameraInfo : null),
+    [nextCameraInfo]
+  )
+  const cameraBanner = useMemo(
+    () => getCameraBannerMeta(nextCameraInfo),
     [nextCameraInfo]
   )
 
@@ -895,10 +1096,13 @@ export default function NavigationOverlay() {
     spokenGuidanceRef.current.add(key)
 
     const guidanceText = getGuidanceInstruction(nextGuidance)
+    const guideLineSpeech = (threshold === '100m' || threshold === '300m')
+      ? buildGuideLineSpeech(nextGuidance)
+      : null
     const speech = threshold === '100m'
-      ? `100미터 후 ${guidanceText}입니다.`
+      ? `100미터 후 ${guidanceText}입니다.${guideLineSpeech ? ` ${guideLineSpeech}.` : ''}`
       : threshold === '300m'
-        ? `${Math.max(200, remainingM)}미터 후 ${guidanceText}입니다.`
+        ? `${Math.max(200, remainingM)}미터 후 ${guidanceText}입니다.${guideLineSpeech ? ` ${guideLineSpeech}.` : ''}`
         : `${Math.max(500, Math.round(remainingM / 10) * 10)}미터 앞 ${guidanceText}입니다.`
 
     enqueueSpeech(speech)
@@ -907,11 +1111,12 @@ export default function NavigationOverlay() {
   useEffect(() => {
     if (!isNavigating || !userLocation) return
     const cameras = route?.cameras ?? []
+    const isHighwaySegment = currentRouteSegment?.roadType === 'highway' || currentRouteSegment?.roadType === 'junction'
 
     for (const camera of cameras) {
       if (!hasValidCoordPair(camera?.coord)) continue
       const distanceM = haversineM(userLocation.lat, userLocation.lng, camera.coord[0], camera.coord[1])
-      const threshold = distanceM <= 120 ? '100m' : distanceM <= 600 ? '600m' : null
+      const threshold = getCameraAlertThreshold(distanceM, camera?.speedLimit, isHighwaySegment)
       if (!threshold) continue
 
       const key = `${camera.id}:${threshold}`
@@ -924,7 +1129,7 @@ export default function NavigationOverlay() {
       })
       break
     }
-  }, [isNavigating, route?.cameras, settings.voiceGuidance, userLocation])
+  }, [currentRouteSegment?.roadType, isNavigating, route?.cameras, settings.voiceGuidance, userLocation])
 
   useEffect(() => {
     if (!isNavigating || !userLocation) return
@@ -1127,10 +1332,25 @@ export default function NavigationOverlay() {
             </div>
           )
         })()}
+
+        {cameraBanner && (
+          <div className="bg-red-50 border-t border-red-100 px-5 py-2.5 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[11px] font-black text-red-600">단속 안내</div>
+              <div className="text-sm font-black text-gray-900 truncate">{cameraBanner.title}</div>
+            </div>
+            <div className="text-[11px] font-bold text-red-500 text-right whitespace-nowrap">
+              {cameraBanner.subtitle}
+            </div>
+          </div>
+        )}
       </div>
 
       {isNearLaneDecision && laneSource && isHighwayStyleGuidance && (
-        <div className="absolute top-[122px] right-4 z-20 w-[228px]">
+        <div
+          className="absolute right-4 z-20 w-[228px]"
+          style={{ top: cameraBanner ? '164px' : '122px' }}
+        >
           <HighwayInsetCard guidance={nextGuidance ?? laneSource} focusSegments={focusSegments} />
         </div>
       )}
