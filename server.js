@@ -314,6 +314,19 @@ function summarizeTmapBody(rawBody = null) {
   }
 }
 
+function buildEmptyPoiResponse() {
+  return {
+    searchPoiInfo: {
+      totalCount: '0',
+      count: '0',
+      page: '1',
+      pois: {
+        poi: [],
+      },
+    },
+  }
+}
+
 function haversineKm(lat1, lng1, lat2, lng2) {
   const R = 6371
   const dLat = ((lat2 - lat1) * Math.PI) / 180
@@ -1461,6 +1474,21 @@ app.use('/api/tmap', express.json({ limit: '2mb' }), async (req, res) => {
   try {
     const result = await tmapFetch(tmapPath, req.method, { origin, referer }, body)
     console.log(`[TMAP proxy] → ${result.status}`)
+    if (tmapPath.includes('/road/nearestRoad') && Number(result.status) === 403) {
+      let parsed = null
+      try { parsed = JSON.parse(result.body.toString()) } catch { /* noop */ }
+      const errorCode = parsed?.error?.code ?? parsed?.error?.errorCode ?? null
+      if (errorCode === 'MISSING_AUTHENTICATION_TOKEN') {
+        return res.status(200).json({ resultData: { coordinate: null }, fallback: 'nearest-road-disabled' })
+      }
+    }
+    if (tmapPath.includes('/pois') && Number(result.status) === 400) {
+      const url = new URL(`https://dummy.local${tmapPath}`)
+      const searchKeyword = String(url.searchParams.get('searchKeyword') ?? '')
+      if (['음식점', '맛집', '주유소', '휴게소', '주차장', '병원', '초등학교', '유치원', '방지턱'].includes(searchKeyword)) {
+        return res.status(200).json(buildEmptyPoiResponse())
+      }
+    }
     if (shouldTrace && [400, 403, 429].includes(Number(result.status))) {
       let parsed = null
       try { parsed = JSON.parse(result.body.toString()) } catch { /* noop */ }
