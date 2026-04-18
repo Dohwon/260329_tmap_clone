@@ -748,6 +748,18 @@ export default function NavigationOverlay() {
     ? '다음 안내'
     : '목적지 안내'
   const bannerTurnType = nextGuidance?.turnType ?? 11
+  const isHighwayStyleGuidance = Boolean(
+    nextGuidance && (
+      bannerTurnType === 16 ||
+      bannerTurnType === 17 ||
+      bannerTurnType === 18 ||
+      bannerTurnType === 19 ||
+      bannerTurnType >= 100 ||
+      /합류|분기|진출|출구|IC|JC|램프|고속도로|본선/.test(
+        `${nextGuidance?.instructionText ?? ''} ${nextGuidance?.description ?? ''} ${nextGuidance?.afterRoadName ?? ''}`
+      )
+    )
+  )
   const laneSource = nextGuidance ?? nextMergeOpt ?? null
   const isNearLaneDecision = Number(nextGuidance?.remainingDistanceKm) <= 0.35
   const nearbyFuelSummary = nearbyCategory === '주유소' && nearbyPOIs.length > 0
@@ -946,14 +958,14 @@ export default function NavigationOverlay() {
 
       {/* 상단 방향 배너 */}
       <div className="absolute top-0 left-0 right-0 z-20">
-        <div className="bg-tmap-blue px-5 pt-14 pb-4">
+        <div className={`${isHighwayStyleGuidance ? 'bg-[#0D8F55]' : 'bg-tmap-blue'} px-5 pt-14 pb-4`}>
           <div className="flex items-center gap-4">
-            <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center flex-shrink-0">
+            <div className="w-16 h-16 bg-white/18 rounded-2xl flex items-center justify-center flex-shrink-0">
               <TurnArrow turnType={bannerTurnType} />
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-white/70 text-sm mb-0.5">{bannerLabel}</div>
-              <div className="text-white text-xl font-black truncate">{bannerTitle}</div>
+              <div className="text-white text-2xl font-black truncate">{bannerTitle}</div>
               <div className="text-white/70 text-sm mt-0.5 truncate">{bannerSub}</div>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
@@ -1606,31 +1618,51 @@ function getArrivalTime(minutesFromNow) {
 function TurnArrow({ turnType }) {
   // 직진(11), 좌회전(12), 우회전(13), 유턴(14), 좌측합류(16), 우측합류(17), 좌분기(18), 우분기(19), IC/JC램프(100+)
   const t = Number(turnType)
-  if (t === 12 || t === 16 || t === 18) {
-    // 좌회전
+  if (t === 12) {
     return (
       <svg className="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"/>
       </svg>
     )
   }
-  if (t === 13 || t === 17 || t === 19 || t >= 100) {
-    // 우회전 / IC 램프 (오른쪽 진출)
+  if (t === 13) {
     return (
       <svg className="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 16l4-4m0 0l-4-4m4 4H3m5 4v1a3 3 0 003 3h7a3 3 0 003-3V7a3 3 0 00-3-3h-7a3 3 0 00-3 3v1"/>
       </svg>
     )
   }
+  if (t === 16 || t === 18) {
+    return (
+      <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3.2} d="M19 18V8h-6" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3.2} d="M13 8l-4 4m4-4l-4-4" />
+      </svg>
+    )
+  }
+  if (t === 17 || t === 19) {
+    return (
+      <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3.2} d="M5 18V8h6" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3.2} d="M11 8l4 4m-4-4l4-4" />
+      </svg>
+    )
+  }
+  if (t >= 100) {
+    return (
+      <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3.2} d="M6 20V6h7" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3.2} d="M13 6l5 5m-5-5v10" />
+      </svg>
+    )
+  }
   if (t === 14) {
-    // 유턴
     return (
       <svg className="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/>
       </svg>
     )
   }
-  // 기본: 직진
   return (
     <svg className="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 10l7-7m0 0l7 7m-7-7v18"/>

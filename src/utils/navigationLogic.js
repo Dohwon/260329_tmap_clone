@@ -224,6 +224,23 @@ function getGuidanceActionPriority(candidate = {}) {
   return 5
 }
 
+function isHighwayContext(route, userLocation) {
+  const currentSegment = getCurrentRouteSegment(route, userLocation)
+  if (currentSegment?.roadType === 'highway') return true
+  return getRoutePrimaryRoadType(route) === 'highway'
+}
+
+function isHighwayRelevantGuidance(candidate = {}) {
+  const turnType = Number(candidate?.turnType)
+  const text = String(candidate?.instructionText ?? candidate?.description ?? '').trim()
+
+  if (turnType === 16 || turnType === 17 || turnType === 18 || turnType === 19) return true
+  if (turnType >= 100) return true
+  if (turnType >= 125 && turnType <= 130) return true
+
+  return /합류|분기|진출|출구|램프|JC|IC|나들목|톨게이트|휴게소|본선|고속도로|도시고속/.test(text)
+}
+
 function dedupeGuidanceCandidates(candidates = []) {
   const sorted = [...candidates].sort((a, b) => {
     const distanceGap = (a.remainingDistanceKm ?? Infinity) - (b.remainingDistanceKm ?? Infinity)
@@ -655,9 +672,9 @@ export function getNavigationCameraState(guidance) {
   if (!Number.isFinite(remainingDistanceKm)) {
     return {
       mode: 'cruise',
-      zoom: 20.4,
-      lookAheadOffsetY: -340,
-      recenterThresholdM: 12,
+      zoom: 21.1,
+      lookAheadOffsetY: -420,
+      recenterThresholdM: 10,
       panDuration: 0.22,
       viewDuration: 0.28,
     }
@@ -666,9 +683,9 @@ export function getNavigationCameraState(guidance) {
   if (remainingDistanceKm <= 0.04) {
     return {
       mode: 'confirm',
-      zoom: 23.2,
-      lookAheadOffsetY: -250,
-      recenterThresholdM: 7,
+      zoom: 23.8,
+      lookAheadOffsetY: -315,
+      recenterThresholdM: 6,
       panDuration: 0.18,
       viewDuration: 0.2,
     }
@@ -677,9 +694,9 @@ export function getNavigationCameraState(guidance) {
   if (remainingDistanceKm <= 0.12) {
     return {
       mode: 'decision',
-      zoom: 22.8,
-      lookAheadOffsetY: -270,
-      recenterThresholdM: 8,
+      zoom: 23.3,
+      lookAheadOffsetY: -345,
+      recenterThresholdM: 7,
       panDuration: 0.2,
       viewDuration: 0.22,
     }
@@ -688,9 +705,9 @@ export function getNavigationCameraState(guidance) {
   if (remainingDistanceKm <= 0.35) {
     return {
       mode: 'approach',
-      zoom: 22.1,
-      lookAheadOffsetY: -305,
-      recenterThresholdM: 10,
+      zoom: 22.5,
+      lookAheadOffsetY: -385,
+      recenterThresholdM: 8,
       panDuration: 0.22,
       viewDuration: 0.25,
     }
@@ -699,9 +716,9 @@ export function getNavigationCameraState(guidance) {
   if (remainingDistanceKm <= 0.8) {
     return {
       mode: 'prepare',
-      zoom: 21.3,
-      lookAheadOffsetY: -325,
-      recenterThresholdM: 11,
+      zoom: 21.9,
+      lookAheadOffsetY: -405,
+      recenterThresholdM: 9,
       panDuration: 0.24,
       viewDuration: 0.28,
     }
@@ -709,9 +726,9 @@ export function getNavigationCameraState(guidance) {
 
   return {
     mode: 'cruise',
-    zoom: 20.4,
-    lookAheadOffsetY: -340,
-    recenterThresholdM: 12,
+    zoom: 21.1,
+    lookAheadOffsetY: -420,
+    recenterThresholdM: 10,
     panDuration: 0.24,
     viewDuration: 0.3,
   }
@@ -947,10 +964,15 @@ export function buildDrivingHabitSummary(savedRoutes = []) {
 export function getGuidancePriority(route, userLocation, mergeOptions = []) {
   const { progress } = getUpcomingJunction(route, userLocation)
   const actions = getUpcomingGuidanceList(route, userLocation, mergeOptions, 4)
+  const highwayContext = isHighwayContext(route, userLocation)
   const nextAction = actions.find((action) => {
     const priority = getGuidanceActionPriority(action)
+    if (highwayContext && !isHighwayRelevantGuidance(action)) return false
     return priority <= 3 && Number(action?.remainingDistanceKm) <= 1.6
-  }) ?? actions.find((action) => Number(action?.remainingDistanceKm) <= 3) ?? null
+  }) ?? actions.find((action) => {
+    if (highwayContext && !isHighwayRelevantGuidance(action)) return false
+    return Number(action?.remainingDistanceKm) <= 3
+  }) ?? null
   const nextManeuver = actions.find((action) => action.source === 'maneuver') ?? null
   const nextJunction = actions.find((action) => action.source === 'junction') ?? null
   const nextMergeOption = actions.find((action) => action.source === 'merge') ?? null
@@ -1013,6 +1035,7 @@ export function getUpcomingJunction(route, userLocation) {
 export function getUpcomingGuidanceList(route, userLocation, mergeOptions = [], limit = 3) {
   const progress = analyzeRouteProgress(route, userLocation)
   const routePolyline = route?.polyline ?? []
+  const highwayContext = isHighwayContext(route, userLocation)
   const maneuverCandidates = (route?.maneuvers ?? [])
     .map((maneuver) => ({
       ...maneuver,
@@ -1027,6 +1050,10 @@ export function getUpcomingGuidanceList(route, userLocation, mergeOptions = [], 
       ),
     }))
     .filter((maneuver) => maneuver.remainingDistanceKm > 0.005)
+    .filter((maneuver) => {
+      if (!highwayContext) return true
+      return isHighwayRelevantGuidance(maneuver) || Number(maneuver.remainingDistanceKm) <= 0.12
+    })
 
   const junctionCandidates = (route?.junctions ?? [])
     .map((junction) => ({
@@ -1055,6 +1082,10 @@ export function getUpcomingGuidanceList(route, userLocation, mergeOptions = [], 
     .filter((option) => option.remainingDistanceKm > 0.01 && !option.isCurrent)
 
   const syntheticCandidates = buildSyntheticGuidanceCandidates(route, userLocation, progress)
+    .filter((candidate) => {
+      if (!highwayContext) return true
+      return isHighwayRelevantGuidance(candidate) && Number(candidate.remainingDistanceKm) <= 0.18
+    })
 
   return dedupeGuidanceCandidates([
     ...maneuverCandidates,

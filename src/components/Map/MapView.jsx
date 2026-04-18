@@ -157,7 +157,7 @@ function getLookAheadCenter(map, location, zoom = 19.2, enabled = true, cameraSt
   if (!location) return null
   const latLng = L.latLng(location.lat, location.lng)
   if (!enabled) return latLng
-  const offsetY = Number(cameraState?.lookAheadOffsetY) || -520
+  const offsetY = Number(cameraState?.lookAheadOffsetY) || -620
   const projected = map.project(latLng, zoom)
   return map.unproject(projected.add([0, offsetY]), zoom)
 }
@@ -402,8 +402,8 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
       smoothedHeadingRef.current = smoothedHeading
 
       const rotationDeg = -smoothedHeading
-      rotationLayer.style.transformOrigin = '50% 58%'
-      rotationLayer.style.transform = `rotate(${rotationDeg}deg) scale(1.34)`
+      rotationLayer.style.transformOrigin = '50% 68%'
+      rotationLayer.style.transform = `rotate(${rotationDeg}deg) scale(1.42)`
       rotationLayer.style.setProperty('--driver-map-rotation', `${rotationDeg}deg`)
     } catch {
       rotationLayer.style.transformOrigin = '50% 50%'
