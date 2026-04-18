@@ -166,10 +166,10 @@ export default function HighwayExplorer({ onClose }) {
                       </button>
                     </div>
                     <button
-                      onClick={(e) => { e.stopPropagation(); goWholeRoad({ id: `${hw.id}-start`, name: hw.startName, address: hw.startAddress ?? hw.startName, lat: hw.startCoord[0], lng: hw.startCoord[1] }) }}
+                      onClick={(e) => { e.stopPropagation(); goWholeRoad() }}
                       className="mt-2 w-full py-2.5 rounded-xl bg-gray-900 text-white text-xs font-bold"
                     >
-                      🛣️ 시점 진입 후 {hw.endName}까지 계속 주행
+                      🛣️ 가장 빠른 진입로로 {hw.name} 타러 가기
                     </button>
                   </div>
                 )}

@@ -11,6 +11,67 @@
 - 사용자가 놓치기 쉬운 리스크는 `숨은 리스크`에 별도로 적는다.
 - 장애 치명도와 MVP 가치 우선순위가 다를 수 있으면 둘을 분리해서 적는다.
 
+## 2026-04-19
+
+### 실제 반영 포인트
+
+- 실제 카메라/돌발상황 보강 레이어를 서버에 추가했다.
+  - `server.js`
+  - `ITS_API_KEY` 기반 `eventInfo` 프록시와 `DATA_GO_KR_API_KEY` 기반 공공 무인단속카메라 프록시를 추가했다.
+  - `POST /api/road/actual-meta`
+  - `GET /api/road/events/nearby`
+  - route polyline/bbox 기준으로 실제 카메라와 ITS 돌발상황을 필터링하는 구조를 넣었다.
+
+- live route에 공공 master camera를 덧붙이는 hydrate 단계를 추가했다.
+  - `src/services/tmapService.js`
+  - route fetch 후 `hydrateRoutesWithActualMeta()`를 통해
+    - TMAP live camera
+    - 공공 카메라 master
+    - ITS 도로 이벤트
+    를 하나의 route에 합치도록 바꿨다.
+
+- 안전운전모드가 학교/방지턱만 보던 상태에서 실제 도로 이벤트를 함께 보게 바꿨다.
+  - `src/services/tmapService.js`
+  - safety hazard 검색에 `roadwork`, `accident`, `weather`, `disaster`를 추가했다.
+
+- 지도와 음성 안내에도 실제 도로 이벤트를 연결했다.
+  - `src/components/Map/MapView.jsx`
+  - `src/components/Navigation/NavigationOverlay.jsx`
+  - 경로/선택 도로에 공사·사고·기상·재난 마커를 표시하고, 내비 중 가까운 실제 이벤트를 TTS로 알리도록 연결했다.
+
+- TMAP route camera 캐시를 무기한 저장하지 않도록 24시간 TTL을 걸었다.
+  - `src/store/appStore.js`
+  - TMAP 약관상 장기 축적 리스크를 줄이기 위해 localStorage camera cache를 24시간 기준으로 정리하도록 변경했다.
+
+### 재확인된 병목
+
+- 공공 카메라와 ITS 이벤트는 붙였지만, 전국 단위 `모든 도로/휴게소/공사/차로제어`를 완전히 커버하는 master는 아직 아니다.
+- ITS/API 키가 배포 환경에 빠져 있으면 이번 레이어는 자동으로 비활성 상태가 된다.
+- 실제 차선 레벨 geometry와 운전자 시점 벡터 렌더링은 여전히 별도 스택 전환 이슈다.
+
+### 해결 방식
+
+- TMAP route 단일 소스에만 의존하지 않고
+  - 실시간 route 응답
+  - 공공 카메라 master
+  - ITS 돌발상황
+  을 겹치는 구조로 바꿨다.
+- 경로 요청마다 외부 API fan-out이 커지지 않도록 server/runtime cache와 client actual-meta cache를 같이 두었다.
+- 안전운전 hazard도 `POI 기반 가짜 위험요소` 중심에서 `실제 운영 이벤트`를 포함하는 방향으로 확장했다.
+
+### 숨은 리스크
+
+- 공공 카메라 표준데이터는 반기 갱신이라, 실시간 단속 on/off 여부까지 100% 보장하지 않는다.
+- ITS 이벤트는 실시간성이 높지만, API 키와 기관 운영 상태에 따라 빈 응답이 올 수 있다.
+- 현재 actual-meta는 route polyline과 bbox 기반 필터라, 아주 넓은 경로에서는 일부 누락이 생길 수 있다.
+
+### 다음 액션
+
+1. Railway dev에 `ITS_API_KEY` 존재 여부 확인 후 실제 도로 이벤트가 표시되는지 확인
+2. 선택 도로 상세(`selectedRoad`)에도 휴게소/공사/카메라 master data를 더 촘촘하게 보강
+3. 실제 route preview 카드의 카메라 수와 actual meta count를 어떻게 병기할지 UI 정리
+4. 차로제어/VSL까지 넣을지 결정 후 `actual-meta` 응답 스키마 확장
+
 ## 2026-04-18
 
 ### 실제 반영 포인트

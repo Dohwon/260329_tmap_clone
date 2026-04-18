@@ -87,6 +87,10 @@ const junctionIcon = makeBadgeIcon({ text: '분', background: '#FF6B00', size: 2
 const schoolZoneIcon = makeBadgeIcon({ text: '30', background: '#F59E0B', size: 30 })
 const speedBumpIcon = makeBadgeIcon({ text: '턱', background: '#0EA5E9', size: 30 })
 const restaurantIcon = makeBadgeIcon({ text: '맛', background: COLORS.restaurant, size: 30 })
+const roadworkIcon = makeBadgeIcon({ text: '공', background: '#FB923C', size: 30 })
+const accidentIcon = makeBadgeIcon({ text: '사', background: '#EF4444', size: 30 })
+const weatherIcon = makeBadgeIcon({ text: '기', background: '#38BDF8', size: 30 })
+const disasterIcon = makeBadgeIcon({ text: '재', background: '#A855F7', size: 30 })
 
 function getBearingDeg(fromLat, fromLng, toLat, toLng) {
   const fromLatRad = (fromLat * Math.PI) / 180
@@ -256,7 +260,7 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
     fn()
     programmaticMotionTimerRef.current = window.setTimeout(() => {
       programmaticMotionRef.current = false
-    }, 260)
+    }, 180)
   }
 
   const isSameFollowTarget = (target, targetZoom, toleranceM = 4) => {
@@ -330,7 +334,7 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
     const target = getLookAheadCenter(map, followLocation, navZoom, settings.navigationLookAhead, cameraState) ?? L.latLng(followLocation.lat, followLocation.lng)
     if (isSameFollowTarget(target, navZoom)) return
     const centerDistance = map.distance(map.getCenter(), target)
-    if (Math.abs(map.getZoom() - navZoom) > 0.08 || centerDistance > (cameraState.recenterThresholdM ?? 28)) {
+    if (Math.abs(map.getZoom() - navZoom) > 0.04 || centerDistance > (cameraState.recenterThresholdM ?? 18)) {
       rememberFollowTarget(target, navZoom)
       runProgrammaticMotion(() => {
         map.stop()
@@ -391,13 +395,13 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
       )
       const previousHeading = smoothedHeadingRef.current
       const headingDelta = getHeadingDelta(nextHeading, previousHeading)
-      const smoothing = Math.abs(headingDelta) >= 30 ? 0.9 : 0.72
+      const smoothing = Math.abs(headingDelta) >= 30 ? 0.94 : 0.82
       const smoothedHeading = previousHeading + (headingDelta * smoothing)
       smoothedHeadingRef.current = smoothedHeading
 
       const rotationDeg = -smoothedHeading
-      rotationLayer.style.transformOrigin = '50% 50%'
-      rotationLayer.style.transform = `rotate(${rotationDeg}deg) scale(1.18)`
+      rotationLayer.style.transformOrigin = '50% 58%'
+      rotationLayer.style.transform = `rotate(${rotationDeg}deg) scale(1.34)`
       rotationLayer.style.setProperty('--driver-map-rotation', `${rotationDeg}deg`)
     } catch {
       rotationLayer.style.transformOrigin = '50% 50%'
@@ -571,6 +575,24 @@ function getRouteSegmentColor(roadType) {
   if (roadType === 'local') return COLORS.routeLocal
   if (roadType === 'junction') return COLORS.routeJunction
   return COLORS.secondaryRoute
+}
+
+function getHazardIcon(type = '') {
+  if (type === 'school_zone') return schoolZoneIcon
+  if (type === 'speed_bump') return speedBumpIcon
+  if (type === 'roadwork') return roadworkIcon
+  if (type === 'accident') return accidentIcon
+  if (type === 'weather') return weatherIcon
+  if (type === 'disaster') return disasterIcon
+  return speedBumpIcon
+}
+
+function getRouteEventIcon(eventType = '') {
+  if (eventType === '공사') return roadworkIcon
+  if (eventType === '교통사고') return accidentIcon
+  if (eventType === '기상') return weatherIcon
+  if (eventType === '재난') return disasterIcon
+  return junctionIcon
 }
 
 function formatSpeedLimitLabel(speedLimit) {
@@ -892,6 +914,21 @@ export default function MapView({ darkMode = false }) {
             </Marker>
           ))}
 
+          {(selectedRoad.actualEvents ?? []).map((event) => (
+            <Marker
+              key={`road-event-${selectedRoad.id}-${event.id}`}
+              position={event.coord}
+              icon={getRouteEventIcon(event.eventType)}
+            >
+              <Popup>
+                <div className="text-sm font-bold">{event.eventType || '도로 이벤트'}</div>
+                <div className="text-xs text-gray-500">{event.roadName || selectedRoad.name}</div>
+                {event.message ? <div className="text-xs text-gray-400 mt-0.5">{event.message}</div> : null}
+                {event.lanesBlocked ? <div className="text-xs text-gray-400 mt-0.5">통제 차로 {event.lanesBlocked}</div> : null}
+              </Popup>
+            </Marker>
+          ))}
+
           {visibleLayers.speedLimits && roadSpeedMarkers.map((marker) => (
             <Marker
               key={marker.id}
@@ -1025,6 +1062,32 @@ export default function MapView({ darkMode = false }) {
               </Marker>
             )
           })}
+
+          {(selectedRoute.actualRoadEvents ?? [])
+            .filter((event) => {
+              if (!hasValidCoordPair(event?.coord)) return false
+              if (!driverFollowMode || !userLocation) return true
+              return haversineM(userLocation.lat, userLocation.lng, event.coord[0], event.coord[1]) <= 3000
+            })
+            .slice(0, driverFollowMode ? 6 : 18)
+            .map((event) => (
+              <Marker
+                key={`route-event-${event.id}`}
+                position={event.coord}
+                icon={getRouteEventIcon(event.eventType)}
+              >
+                <Popup>
+                  <div className="text-sm font-bold">{event.eventType || '도로 이벤트'}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">{event.roadName || '경로 주변'}</div>
+                  {event.message ? (
+                    <div className="text-xs text-gray-400 mt-0.5">{event.message}</div>
+                  ) : null}
+                  {event.lanesBlocked ? (
+                    <div className="text-xs text-gray-400 mt-0.5">통제 차로 {event.lanesBlocked}</div>
+                  ) : null}
+                </Popup>
+              </Marker>
+            ))}
         </>
       )}
 
@@ -1101,10 +1164,24 @@ export default function MapView({ darkMode = false }) {
         <Marker
           key={`hazard-${hazard.id}`}
           position={[hazard.lat, hazard.lng]}
-          icon={hazard.type === 'school_zone' ? schoolZoneIcon : speedBumpIcon}
+          icon={getHazardIcon(hazard.type)}
         >
           <Popup>
-            <div className="text-sm font-bold">{hazard.type === 'school_zone' ? '어린이보호구역' : '방지턱 주의'}</div>
+            <div className="text-sm font-bold">
+              {hazard.type === 'school_zone'
+                ? '어린이보호구역'
+                : hazard.type === 'speed_bump'
+                  ? '방지턱 주의'
+                  : hazard.type === 'roadwork'
+                    ? '공사 구간'
+                    : hazard.type === 'accident'
+                      ? '사고 주의'
+                      : hazard.type === 'weather'
+                        ? '기상 주의'
+                        : hazard.type === 'disaster'
+                          ? '재난 주의'
+                          : '도로 이벤트'}
+            </div>
             <div className="text-xs text-gray-500">{hazard.name}</div>
             {hazard.address && <div className="text-xs text-gray-400 mt-0.5">{hazard.address}</div>}
           </Popup>

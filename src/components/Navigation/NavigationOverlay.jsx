@@ -8,6 +8,7 @@ import { fetchUpcomingFuelContext, getDiscountedFuelPrice, searchNearbyPOIs } fr
 import {
   analyzeRouteProgress,
   formatGuidanceDistance,
+  getEffectiveCurrentSpeedContext,
   getGuidanceInstruction,
   getGuidancePriority,
   getCurrentRouteSegment,
@@ -164,9 +165,42 @@ function buildHazardAlertSpeech(hazard, distanceM, threshold) {
       : `${roundedDistance}미터 앞 어린이 보호구역입니다. 감속하세요.`
   }
 
+  if (hazard?.type === 'roadwork') {
+    return threshold === '100m'
+      ? '100미터 앞 공사 구간입니다. 주의하세요.'
+      : `${roundedDistance}미터 앞 공사 구간입니다. 주의하세요.`
+  }
+
+  if (hazard?.type === 'accident') {
+    return threshold === '100m'
+      ? '100미터 앞 사고 구간입니다. 감속하세요.'
+      : `${roundedDistance}미터 앞 사고 구간입니다. 감속하세요.`
+  }
+
+  if (hazard?.type === 'weather') {
+    return threshold === '100m'
+      ? '100미터 앞 기상 주의 구간입니다.'
+      : `${roundedDistance}미터 앞 기상 주의 구간입니다.`
+  }
+
+  if (hazard?.type === 'disaster') {
+    return threshold === '100m'
+      ? '100미터 앞 재난 주의 구간입니다.'
+      : `${roundedDistance}미터 앞 재난 주의 구간입니다.`
+  }
+
   return threshold === '100m'
     ? '100미터 앞 과속방지턱입니다. 감속하세요.'
     : `${roundedDistance}미터 앞 과속방지턱입니다. 감속하세요.`
+}
+
+function buildRoadEventAlertSpeech(event, distanceM, threshold) {
+  const roundedDistance = Math.max(100, Math.round(distanceM / 10) * 10)
+  const eventLabel = event?.eventType || '도로 이벤트'
+  const roadName = event?.roadName ? `${event.roadName} ` : ''
+  return threshold === '100m'
+    ? `100미터 앞 ${roadName}${eventLabel}입니다.`
+    : `${roundedDistance}미터 앞 ${roadName}${eventLabel}입니다.`
 }
 
 function formatRestaurantMeta(poi = {}) {
@@ -217,6 +251,7 @@ export default function NavigationOverlay() {
   const routeSheetTouchStartRef = useRef(null)
   const routeSheetTouchHandledRef = useRef(false)
   const flashTimerRef = useRef(null)
+  const cameraReportTimerRef = useRef(null)
   const speechQueueRef = useRef([])
   const speechBusyRef = useRef(false)
   const activeAudioRef = useRef(null)
@@ -320,6 +355,7 @@ export default function NavigationOverlay() {
         guidanceList: getUpcomingGuidanceList(route, guidanceLocation, mergeOptions, 5),
         offRouteProgress: analyzeRouteProgress(route, userLocation),
         currentRouteSegment: getCurrentRouteSegment(route, guidanceLocation),
+        speedContext: getEffectiveCurrentSpeedContext(route, guidanceLocation),
         liveMergeOptions: getUpcomingMergeOptions(mergeOptions, progress.progressKm),
         remainingEta: getRemainingEta(route, progress.remainingKm),
       }
@@ -333,6 +369,7 @@ export default function NavigationOverlay() {
   const guidanceList = navigationSnapshot.guidanceList
   const offRouteProgress = navigationSnapshot.offRouteProgress
   const currentRouteSegment = navigationSnapshot.currentRouteSegment
+  const speedContext = navigationSnapshot.speedContext
   const liveMergeOptions = navigationSnapshot.liveMergeOptions
   const nextMergeOpt = liveMergeOptions.find((option) => option.remainingDistanceKm > 0.03) ?? liveMergeOptions[0]
   const remainingEta = navigationSnapshot.remainingEta
@@ -491,6 +528,17 @@ export default function NavigationOverlay() {
     }
     setIsRouteSheetCollapsed(true)
   }, [isNavigating, selectedRouteId])
+
+  useEffect(() => {
+    if (!showCameraReport) return
+    if (cameraReportTimerRef.current) window.clearTimeout(cameraReportTimerRef.current)
+    cameraReportTimerRef.current = window.setTimeout(() => {
+      setShowCameraReport(null)
+    }, 10000)
+    return () => {
+      if (cameraReportTimerRef.current) window.clearTimeout(cameraReportTimerRef.current)
+    }
+  }, [showCameraReport, nextAction?.id])
 
   useEffect(() => {
     if (!isNavigating || !route?.polyline?.length || !userLocation) return
@@ -704,6 +752,7 @@ export default function NavigationOverlay() {
   const laneSource = nextGuidance ?? nextMergeOpt ?? null
   const laneGuidance = getLaneGuidance(laneSource)
   const lanePattern = getLanePattern(laneSource)
+  const isNearLaneDecision = Number(nextGuidance?.remainingDistanceKm) <= 0.35
   const nearbyFuelSummary = nearbyCategory === '주유소' && nearbyPOIs.length > 0
     ? {
         nearbyLowestPoi: [...nearbyPOIs].sort((a, b) => getDiscountedFuelPrice(a, settings) - getDiscountedFuelPrice(b, settings))[0] ?? null,
@@ -780,6 +829,27 @@ export default function NavigationOverlay() {
       flashTone: nearestHazard.type === 'school_zone' ? 'amber' : 'sky',
     })
   }, [isNavigating, safetyHazards, settings.voiceGuidance, userLocation])
+
+  useEffect(() => {
+    if (!isNavigating || !userLocation) return
+    const nearestEvent = (route?.actualRoadEvents ?? []).find((event) => {
+      if (!hasValidCoordPair(event?.coord)) return false
+      const distanceM = haversineM(userLocation.lat, userLocation.lng, event.coord[0], event.coord[1])
+      return distanceM <= 900
+    })
+    if (!nearestEvent) return
+
+    const distanceM = haversineM(userLocation.lat, userLocation.lng, nearestEvent.coord[0], nearestEvent.coord[1])
+    const threshold = distanceM <= 120 ? '100m' : '900m'
+    const key = `${nearestEvent.id}:${threshold}`
+    if (spokenSafetyRef.current.has(key)) return
+    spokenSafetyRef.current.add(key)
+
+    speakAlert(buildRoadEventAlertSpeech(nearestEvent, distanceM, threshold), {
+      chimeRepeat: nearestEvent.eventType === '공사' ? 2 : 1,
+      flashTone: nearestEvent.eventType === '공사' ? 'amber' : 'sky',
+    })
+  }, [isNavigating, route?.actualRoadEvents, settings.voiceGuidance, userLocation])
 
   if (!isNavigating || showRoutePanel || !hasActiveRoute) return null
 
@@ -944,7 +1014,7 @@ export default function NavigationOverlay() {
         {/* 통계 바 */}
         {(() => {
           const currentSpeed = Math.round(userLocation?.speedKmh ?? 0)
-          const speedLimit = currentRouteSegment?.speedLimit ?? null
+          const speedLimit = speedContext?.displaySpeedLimit ?? currentRouteSegment?.speedLimit ?? null
           const overLimit = speedLimit && currentSpeed > speedLimit
           return (
             <div className="bg-white px-5 py-3 flex items-center shadow-md">
@@ -972,6 +1042,35 @@ export default function NavigationOverlay() {
           )
         })()}
       </div>
+
+      {isNearLaneDecision && laneSource && (
+        <div className="absolute top-[170px] left-4 right-4 z-20">
+          <div className="rounded-2xl bg-white/95 backdrop-blur shadow-xl border border-white/70 px-4 py-3">
+            <div className="text-[11px] font-bold text-emerald-700">분기 확대 안내</div>
+            <div className="mt-2 flex items-center gap-2">
+              {lanePattern.map((lane, index) => {
+                const active = lane.startsWith('active')
+                return (
+                  <div
+                    key={`inset-${lane}-${index}`}
+                    className={`flex-1 h-14 rounded-xl flex items-center justify-center text-xl font-black border ${
+                      active
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-gray-100 text-gray-400 border-gray-200'
+                    }`}
+                  >
+                    {getLaneArrow(lane)}
+                  </div>
+                )
+              })}
+            </div>
+            <div className="mt-2 text-sm font-black text-gray-900 truncate">{laneGuidance ?? '진행 방향 차로 유지'}</div>
+            <div className="text-xs text-gray-500 truncate">
+              {cleanedInstructionText || bannerSub}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 하단 분기점 바 */}
       {isRouteSheetCollapsed && (
@@ -1301,8 +1400,8 @@ export default function NavigationOverlay() {
         <CameraReportDialog
           camera={showCameraReport}
           cameraReports={cameraReports}
-          onReport={(type) => {
-            reportCamera({ id: showCameraReport.id, coord: showCameraReport.coord, type })
+          onReport={(payload) => {
+            reportCamera({ id: showCameraReport.id, coord: showCameraReport.coord, ...payload })
             setShowCameraReport(null)
           }}
           onClose={() => setShowCameraReport(null)}
@@ -1493,25 +1592,25 @@ function CameraReportDialog({ camera, cameraReports, onReport, onClose }) {
           </div>
         </div>
 
-        {existingReport ? (
+        {existingReport && existingReport.operational != null ? (
           <div className="mt-4 bg-gray-50 rounded-xl p-3 text-sm text-gray-500 text-center">
-            이미 신고됨: {existingReport.type === 'off' ? '꺼진 카메라' : '없는 카메라'}
+            최근 확인: {existingReport.operational ? '실제 운영 카메라' : '현재 운영 안 함'}
           </div>
         ) : (
           <>
-            <div className="text-sm text-gray-500 mt-3 mb-4">이 카메라의 상태를 신고하세요</div>
+            <div className="text-sm text-gray-500 mt-3 mb-4">실제 운영되는 단속카메라였는지 선택하세요. 10초 안에 선택하지 않으면 자동으로 넘어갑니다.</div>
             <div className="flex gap-3">
               <button
-                onClick={() => onReport('off')}
-                className="flex-1 py-3 rounded-2xl bg-amber-50 border border-amber-200 text-sm font-bold text-amber-700"
+                onClick={() => onReport({ type: 'operational', operational: true })}
+                className="flex-1 py-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-sm font-bold text-emerald-700"
               >
-                🟡 꺼진 카메라
+                ⭕ 운영 중
               </button>
               <button
-                onClick={() => onReport('fake')}
+                onClick={() => onReport({ type: 'not_operational', operational: false })}
                 className="flex-1 py-3 rounded-2xl bg-red-50 border border-red-200 text-sm font-bold text-red-600"
               >
-                ❌ 없는 카메라
+                ❌ 없음
               </button>
             </div>
           </>

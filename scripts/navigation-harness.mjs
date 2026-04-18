@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import {
+  buildRoadDriveEntryCandidates,
+  buildRoadDriveWaypoints,
   buildSearchOptionAttempts,
   fetchDirectRoute,
   fetchRoutes,
@@ -16,6 +18,7 @@ import {
   buildDrivingHabitSummary,
   ensureLiveRouteSource,
   formatGuidanceDistance,
+  getEffectiveCurrentSpeedContext,
   getCurrentRouteSegment,
   getGuidanceInstruction,
   getGuidancePriority,
@@ -224,6 +227,39 @@ run('projected guidance point on route is prioritized even without distanceFromS
   assert.ok((result.nextAction?.remainingDistanceKm ?? 1) < 0.2)
 })
 
+run('synthetic close turn beats a far merge when live guidance points are sparse', () => {
+  const route = ensureLiveRouteSource({
+    id: 'route-synthetic-turn',
+    distance: 2.2,
+    eta: 6,
+    highwayRatio: 0,
+    nationalRoadRatio: 0,
+    localRoadRatio: 100,
+    polyline: [
+      [37.5, 127.0],
+      [37.5, 127.0025],
+      [37.5007, 127.0025],
+      [37.5015, 127.0025],
+    ],
+    maneuvers: [],
+    junctions: [
+      {
+        id: 'jct-far-highway',
+        lat: 37.62,
+        lng: 127.3,
+        turnType: 17,
+        distanceFromStart: 61,
+        afterRoadType: 'highway',
+      },
+    ],
+  })
+
+  const result = getGuidancePriority(route, { lat: 37.5, lng: 127.0008, speedKmh: 22 })
+  assert.ok(result.nextAction, 'expected a nearby guidance action')
+  assert.equal(result.nextAction.turnType, 12)
+  assert.ok((result.nextAction.remainingDistanceKm ?? 9) < 0.5)
+})
+
 run('remaining ETA shrinks with route progress', () => {
   const { progress } = getUpcomingJunction(liveRoute, userLocationNearFirstJunction)
   const remainingEta = getRemainingEta(liveRoute, progress.remainingKm)
@@ -258,6 +294,50 @@ run('current route segment is selected from the nearest actual segment', () => {
   assert.ok(currentSegment, 'expected a current segment')
   assert.equal(currentSegment.id, 'seg-local')
   assert.equal(currentSegment.speedLimit, 50)
+})
+
+run('effective speed context prefers the near highway segment over a short local connector', () => {
+  const route = ensureLiveRouteSource({
+    id: 'route-speed-context',
+    distance: 8,
+    eta: 9,
+    highwayRatio: 82,
+    nationalRoadRatio: 10,
+    localRoadRatio: 8,
+    polyline: [
+      [37.5, 127.0],
+      [37.5, 127.002],
+      [37.5, 127.01],
+    ],
+    segmentStats: [
+      {
+        id: 'seg-local-ramp',
+        roadType: 'local',
+        speedLimit: 40,
+        positions: [
+          [37.5, 127.0],
+          [37.5, 127.0018],
+        ],
+        startProgressKm: 0,
+        endProgressKm: 0.18,
+      },
+      {
+        id: 'seg-highway-main',
+        roadType: 'highway',
+        speedLimit: 100,
+        positions: [
+          [37.5, 127.0018],
+          [37.5, 127.01],
+        ],
+        startProgressKm: 0.18,
+        endProgressKm: 1.2,
+      },
+    ],
+  })
+
+  const context = getEffectiveCurrentSpeedContext(route, { lat: 37.5, lng: 127.0012, speedKmh: 84 })
+  assert.equal(context.displaySpeedLimit, 100)
+  assert.equal(context.primaryRoadType, 'highway')
 })
 
 run('lane guidance prefers explicit laneInfo patterns when available', () => {
@@ -466,6 +546,65 @@ run('instant search does not crash on roads without rest stop arrays', () => {
 run('instant search returns fast candidates for known places', () => {
   const results = searchInstantPlaceCandidates('양화대교', 37.54, 126.9)
   assert.ok(results.some((item) => item.name === '양화대교'), 'expected 양화대교 in results')
+})
+
+run('road drive entry candidates include the road start and nearby entry nodes', () => {
+  const road = {
+    id: 'test-road',
+    name: '테스트고속도로',
+    roadClass: 'expressway',
+    totalKm: 100,
+    startName: '테스트 시점',
+    endName: '테스트 종점',
+    startAddress: '서울',
+    endAddress: '부산',
+    startCoord: [37.0, 127.0],
+    endCoord: [36.0, 128.0],
+    majorJunctions: [
+      { name: '가까운IC', coord: [36.75, 127.25], km: 28 },
+      { name: '중간JC', coord: [36.5, 127.5], km: 55 },
+      { name: '먼IC', coord: [36.25, 127.75], km: 82 },
+    ],
+  }
+  const origin = { lat: 36.74, lng: 127.24 }
+  const candidates = buildRoadDriveEntryCandidates(origin, road, 'forward', 3)
+
+  assert.ok(candidates.length >= 2)
+  assert.equal(candidates[0].id, 'test-road-start')
+  assert.ok(candidates.some((item) => item.name === '가까운IC'))
+})
+
+run('road drive waypoints keep the chosen entry and downstream anchors', () => {
+  const road = {
+    id: 'test-road',
+    name: '테스트국도',
+    roadClass: 'national',
+    totalKm: 120,
+    startName: '시점',
+    endName: '종점',
+    startAddress: 'A',
+    endAddress: 'B',
+    startCoord: [37.0, 127.0],
+    endCoord: [36.0, 128.0],
+    majorJunctions: [
+      { name: 'IC-1', coord: [36.8, 127.2], km: 20 },
+      { name: 'IC-2', coord: [36.6, 127.4], km: 40 },
+      { name: 'IC-3', coord: [36.3, 127.7], km: 80 },
+    ],
+  }
+  const entry = {
+    id: 'test-road-junction-1',
+    name: 'IC-2',
+    lat: 36.6,
+    lng: 127.4,
+    km: 40,
+  }
+
+  const waypoints = buildRoadDriveWaypoints(road, entry, 'forward')
+  assert.ok(waypoints.length >= 1)
+  assert.equal(waypoints[0].roadDriveRole, 'entry')
+  assert.equal(waypoints[0].name, 'IC-2')
+  assert.ok(waypoints.every((item) => item.roadDriveRoadId === 'test-road'))
 })
 
 if (process.exitCode) {

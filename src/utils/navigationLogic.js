@@ -3,6 +3,8 @@ export function ensureLiveRouteSource(route) {
   return { ...route, source: route.source ?? 'live' }
 }
 
+const JUNCTION_TURN_TYPES = new Set([125, 126, 127, 128, 129, 130])
+
 export function shouldUseRawRoutePolyline(route) {
   return route?.source === 'live' || route?.source === 'recorded'
 }
@@ -196,8 +198,9 @@ function normalizeLaneText(text = '') {
 
 function getGuidanceSourcePriority(source = '') {
   if (source === 'maneuver') return 0
-  if (source === 'junction') return 1
-  if (source === 'merge') return 2
+  if (source === 'synthetic') return 1
+  if (source === 'junction') return 2
+  if (source === 'merge') return 3
   return 3
 }
 
@@ -414,6 +417,142 @@ export function getCurrentRouteSegment(route, userLocation) {
   return bestSegment
 }
 
+function getRoutePrimaryRoadType(route = {}) {
+  if (Number(route?.highwayRatio) >= 50) return 'highway'
+  if (Number(route?.nationalRoadRatio) >= 45) return 'national'
+  return 'local'
+}
+
+export function getEffectiveCurrentSpeedContext(route, userLocation) {
+  const currentSegment = getCurrentRouteSegment(route, userLocation)
+  const progress = analyzeRouteProgress(route, userLocation)
+  const progressKm = Number(progress?.progressKm)
+  const segments = Array.isArray(route?.segmentStats) ? route.segmentStats : []
+  const primaryRoadType = getRoutePrimaryRoadType(route)
+  const visibleSegments = segments
+    .filter((segment) => Number.isFinite(Number(segment?.startProgressKm)) && Number.isFinite(Number(segment?.endProgressKm)))
+    .filter((segment) => Number(segment.endProgressKm) >= progressKm - 0.05 && Number(segment.startProgressKm) <= progressKm + 0.7)
+
+  const primaryUpcoming = visibleSegments.find((segment) => segment.roadType === primaryRoadType)
+    ?? visibleSegments.find((segment) => segment.roadType === 'highway')
+    ?? visibleSegments.find((segment) => segment.roadType === 'national')
+    ?? currentSegment
+    ?? null
+
+  let displaySegment = currentSegment ?? primaryUpcoming ?? null
+  const currentSpeedLimit = Number(currentSegment?.speedLimit)
+  const primarySpeedLimit = Number(primaryUpcoming?.speedLimit)
+
+  if (
+    displaySegment &&
+    primaryUpcoming &&
+    displaySegment.roadType !== primaryRoadType &&
+    Number.isFinite(currentSpeedLimit) &&
+    currentSpeedLimit > 0 &&
+    currentSpeedLimit < 60 &&
+    Number.isFinite(primarySpeedLimit) &&
+    primarySpeedLimit >= 70
+  ) {
+    displaySegment = primaryUpcoming
+  }
+
+  const displaySpeedLimit = Number(displaySegment?.speedLimit)
+  return {
+    currentSegment,
+    displaySegment,
+    displaySpeedLimit: Number.isFinite(displaySpeedLimit) && displaySpeedLimit > 0 ? displaySpeedLimit : null,
+    primaryRoadType,
+    progressKm: Number.isFinite(progressKm) ? progressKm : 0,
+  }
+}
+
+function getSegmentHeadingDeg(start, end) {
+  return (((Math.atan2(end.lng - start.lng, end.lat - start.lat) * 180) / Math.PI) + 360) % 360
+}
+
+function classifySyntheticTurn(headingDelta) {
+  const absDelta = Math.abs(headingDelta)
+  if (absDelta < 28) return null
+  if (absDelta >= 58) {
+    return headingDelta < 0
+      ? { turnType: 12, instructionText: '좌회전' }
+      : { turnType: 13, instructionText: '우회전' }
+  }
+  return headingDelta < 0
+    ? { turnType: 16, instructionText: '좌측 방향' }
+    : { turnType: 17, instructionText: '우측 방향' }
+}
+
+function buildSyntheticGuidanceCandidates(route, userLocation, progress) {
+  const polyline = route?.polyline ?? []
+  if (!userLocation || !Array.isArray(polyline) || polyline.length < 3) return []
+
+  const currentHeading = (() => {
+    const nearbyPoint = toPoint(userLocation)
+    if (!nearbyPoint) return null
+    const baseProgressKm = Number(progress?.progressKm ?? 0)
+    let travelledM = 0
+
+    for (let index = 0; index < polyline.length - 1; index += 1) {
+      const start = toPoint(polyline[index])
+      const end = toPoint(polyline[index + 1])
+      if (!start || !end) continue
+      const segmentLengthM = haversineM(start.lat, start.lng, end.lat, end.lng)
+      const nextTravelledM = travelledM + segmentLengthM
+      if ((baseProgressKm * 1000) <= nextTravelledM) {
+        return getSegmentHeadingDeg(start, end)
+      }
+      travelledM = nextTravelledM
+    }
+
+    const tailStart = toPoint(polyline[polyline.length - 2])
+    const tailEnd = toPoint(polyline[polyline.length - 1])
+    return tailStart && tailEnd ? getSegmentHeadingDeg(tailStart, tailEnd) : null
+  })()
+
+  if (!Number.isFinite(currentHeading)) return []
+
+  const synthetic = []
+  let travelledM = 0
+  const currentProgressM = Number(progress?.progressKm ?? 0) * 1000
+
+  for (let index = 0; index < polyline.length - 1; index += 1) {
+    const start = toPoint(polyline[index])
+    const end = toPoint(polyline[index + 1])
+    if (!start || !end) continue
+
+    const segmentLengthM = haversineM(start.lat, start.lng, end.lat, end.lng)
+    const segmentStartM = travelledM
+    const segmentEndM = travelledM + segmentLengthM
+    travelledM = segmentEndM
+
+    if (segmentEndM <= currentProgressM + 30) continue
+    const distanceAheadM = Math.max(0, segmentStartM - currentProgressM)
+    if (distanceAheadM > 1400) break
+
+    const segmentHeading = getSegmentHeadingDeg(start, end)
+    const headingDelta = ((segmentHeading - currentHeading + 540) % 360) - 180
+    const syntheticTurn = classifySyntheticTurn(headingDelta)
+    if (!syntheticTurn) continue
+
+    synthetic.push({
+      id: `synthetic-${index}`,
+      source: 'synthetic',
+      lat: start.lat,
+      lng: start.lng,
+      turnType: syntheticTurn.turnType,
+      instructionText: syntheticTurn.instructionText,
+      laneHint: syntheticTurn.turnType === 12 || syntheticTurn.turnType === 16
+        ? '좌측 차로 준비'
+        : '우측 차로 준비',
+      remainingDistanceKm: Number((distanceAheadM / 1000).toFixed(3)),
+    })
+    break
+  }
+
+  return synthetic
+}
+
 export function formatGuidanceDistance(distanceKm) {
   if (distanceKm == null) return '--'
   if (distanceKm < 1) return `${Math.max(10, Math.round((distanceKm * 1000) / 10) * 10)}m`
@@ -516,9 +655,9 @@ export function getNavigationCameraState(guidance) {
   if (!Number.isFinite(remainingDistanceKm)) {
     return {
       mode: 'cruise',
-      zoom: 18.8,
-      lookAheadOffsetY: -340,
-      recenterThresholdM: 28,
+      zoom: 19.6,
+      lookAheadOffsetY: -170,
+      recenterThresholdM: 18,
       panDuration: 0.22,
       viewDuration: 0.28,
     }
@@ -527,9 +666,9 @@ export function getNavigationCameraState(guidance) {
   if (remainingDistanceKm <= 0.04) {
     return {
       mode: 'confirm',
-      zoom: 21.6,
-      lookAheadOffsetY: -170,
-      recenterThresholdM: 16,
+      zoom: 22.6,
+      lookAheadOffsetY: -120,
+      recenterThresholdM: 10,
       panDuration: 0.18,
       viewDuration: 0.2,
     }
@@ -538,9 +677,9 @@ export function getNavigationCameraState(guidance) {
   if (remainingDistanceKm <= 0.12) {
     return {
       mode: 'decision',
-      zoom: 21.1,
-      lookAheadOffsetY: -150,
-      recenterThresholdM: 20,
+      zoom: 22.1,
+      lookAheadOffsetY: -130,
+      recenterThresholdM: 12,
       panDuration: 0.2,
       viewDuration: 0.22,
     }
@@ -549,9 +688,9 @@ export function getNavigationCameraState(guidance) {
   if (remainingDistanceKm <= 0.35) {
     return {
       mode: 'approach',
-      zoom: 20.3,
-      lookAheadOffsetY: -120,
-      recenterThresholdM: 24,
+      zoom: 21.2,
+      lookAheadOffsetY: -140,
+      recenterThresholdM: 14,
       panDuration: 0.22,
       viewDuration: 0.25,
     }
@@ -560,9 +699,9 @@ export function getNavigationCameraState(guidance) {
   if (remainingDistanceKm <= 0.8) {
     return {
       mode: 'prepare',
-      zoom: 19.6,
-      lookAheadOffsetY: -90,
-      recenterThresholdM: 28,
+      zoom: 20.4,
+      lookAheadOffsetY: -150,
+      recenterThresholdM: 16,
       panDuration: 0.24,
       viewDuration: 0.28,
     }
@@ -570,9 +709,9 @@ export function getNavigationCameraState(guidance) {
 
   return {
     mode: 'cruise',
-    zoom: 18.8,
-    lookAheadOffsetY: -60,
-    recenterThresholdM: 32,
+    zoom: 19.6,
+    lookAheadOffsetY: -170,
+    recenterThresholdM: 18,
     panDuration: 0.24,
     viewDuration: 0.3,
   }
@@ -811,7 +950,7 @@ export function getGuidancePriority(route, userLocation, mergeOptions = []) {
   const nextAction = actions.find((action) => {
     const priority = getGuidanceActionPriority(action)
     return priority <= 3 && Number(action?.remainingDistanceKm) <= 1.6
-  }) ?? actions[0] ?? null
+  }) ?? actions.find((action) => Number(action?.remainingDistanceKm) <= 3) ?? null
   const nextManeuver = actions.find((action) => action.source === 'maneuver') ?? null
   const nextJunction = actions.find((action) => action.source === 'junction') ?? null
   const nextMergeOption = actions.find((action) => action.source === 'merge') ?? null
@@ -915,8 +1054,11 @@ export function getUpcomingGuidanceList(route, userLocation, mergeOptions = [], 
     }))
     .filter((option) => option.remainingDistanceKm > 0.01 && !option.isCurrent)
 
+  const syntheticCandidates = buildSyntheticGuidanceCandidates(route, userLocation, progress)
+
   return dedupeGuidanceCandidates([
     ...maneuverCandidates,
+    ...syntheticCandidates,
     ...junctionCandidates,
     ...mergeCandidates,
   ]).slice(0, limit)

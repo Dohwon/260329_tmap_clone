@@ -5,6 +5,7 @@ import crypto from 'crypto'
 import proj4 from 'proj4'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
+import { HIGHWAYS } from './src/data/highwayData.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -48,15 +49,24 @@ const GOOGLE_TTS_KEY = process.env.GOOGLE_TTS_API_KEY
   || localEnv.GOOGLE_TTS_API_KEY
   || localEnv.GOOGLE_API_KEY
   || ''
+const ITS_KEY = process.env.ITS_API_KEY
+  || localEnv.ITS_API_KEY
+  || ''
 const GOOGLE_TTS_VOICE = process.env.GOOGLE_TTS_VOICE_NAME
   || localEnv.GOOGLE_TTS_VOICE_NAME
   || 'ko-KR-Chirp3-HD-Despina'
+const DEFAULT_RUNTIME_CACHE_ROOT = fs.existsSync('/data')
+  ? '/data'
+  : join(__dirname, '.runtime-cache')
 const TTS_CACHE_DIR = process.env.TTS_CACHE_DIR
   || localEnv.TTS_CACHE_DIR
-  || join(__dirname, '.runtime-cache', 'tts-google')
+  || join(DEFAULT_RUNTIME_CACHE_ROOT, 'tts-google')
 
 const WGS84 = 'EPSG:4326'
 const KATEC = 'KATEC'
+const ACTUAL_META_CACHE = new Map()
+const ACTUAL_META_CACHE_TTL_MS = 1000 * 60 * 10
+const TMAP_CAMERA_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 24
 
 proj4.defs(
   KATEC,
@@ -185,6 +195,48 @@ function googleTtsFetch(path, method, extraHeaders, body) {
   })
 }
 
+function itsFetch(servicePath, query = {}) {
+  return new Promise((resolve, reject) => {
+    const path = `${servicePath}?${new URLSearchParams({
+      apiKey: ITS_KEY,
+      getType: 'json',
+      ...query,
+    }).toString()}`
+
+    const req = https.request(
+      { hostname: 'openapi.its.go.kr', port: 9443, path, method: 'GET', headers: { Accept: 'application/json' } },
+      (res) => {
+        const chunks = []
+        res.on('data', (chunk) => chunks.push(chunk))
+        res.on('end', () => resolve({ status: res.statusCode, rawHeaders: res.headers, body: Buffer.concat(chunks) }))
+      }
+    )
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+function publicStandardDataFetch(servicePath, query = {}) {
+  return new Promise((resolve, reject) => {
+    const path = `${servicePath}?${new URLSearchParams({
+      serviceKey: MEDICAL_DATA_KEY,
+      type: 'json',
+      ...query,
+    }).toString()}`
+
+    const req = https.request(
+      { hostname: 'api.data.go.kr', path, method: 'GET', headers: { Accept: 'application/json' } },
+      (res) => {
+        const chunks = []
+        res.on('data', (chunk) => chunks.push(chunk))
+        res.on('end', () => resolve({ status: res.statusCode, rawHeaders: res.headers, body: Buffer.concat(chunks) }))
+      }
+    )
+    req.on('error', reject)
+    req.end()
+  })
+}
+
 function withQuery(path, query = {}) {
   const params = new URLSearchParams(query)
   const qs = params.toString()
@@ -259,6 +311,328 @@ function summarizeTmapBody(rawBody = null) {
     }
   } catch {
     return null
+  }
+}
+
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371
+  const dLat = ((lat2 - lat1) * Math.PI) / 180
+  const dLng = ((lng2 - lng1) * Math.PI) / 180
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(a))
+}
+
+function normalizeCoordPair(coord) {
+  if (!Array.isArray(coord) || coord.length < 2) return null
+  const lat = Number(coord[0])
+  const lng = Number(coord[1])
+  return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null
+}
+
+function normalizeRoadQueryText(value = '') {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/고속도로|국도|지방도|도시고속|자동차전용도로/g, '')
+    .replace(/[()\-_/.,]/g, '')
+}
+
+function normalizePolyline(polyline = []) {
+  return (polyline ?? [])
+    .map((point) => normalizeCoordPair(point))
+    .filter(Boolean)
+}
+
+function samplePolyline(polyline = [], limit = 160) {
+  if (!Array.isArray(polyline) || polyline.length <= limit) return polyline
+  return Array.from({ length: limit }, (_, index) => {
+    const ratio = index / Math.max(1, limit - 1)
+    return polyline[Math.min(polyline.length - 1, Math.round((polyline.length - 1) * ratio))]
+  })
+}
+
+function distanceKmToPolyline(lat, lng, polyline = []) {
+  if (!Array.isArray(polyline) || polyline.length === 0) return null
+  let best = Infinity
+  for (const point of polyline) {
+    if (!Array.isArray(point) || point.length < 2) continue
+    const distance = haversineKm(lat, lng, point[0], point[1])
+    if (distance < best) best = distance
+  }
+  return Number.isFinite(best) ? best : null
+}
+
+function getPolylineBounds(polyline = [], paddingDeg = 0.08) {
+  const normalized = normalizePolyline(polyline)
+  if (normalized.length === 0) return null
+  let minLat = Infinity
+  let maxLat = -Infinity
+  let minLng = Infinity
+  let maxLng = -Infinity
+
+  for (const point of normalized) {
+    minLat = Math.min(minLat, point[0])
+    maxLat = Math.max(maxLat, point[0])
+    minLng = Math.min(minLng, point[1])
+    maxLng = Math.max(maxLng, point[1])
+  }
+
+  return {
+    minLat: Number((minLat - paddingDeg).toFixed(6)),
+    maxLat: Number((maxLat + paddingDeg).toFixed(6)),
+    minLng: Number((minLng - paddingDeg).toFixed(6)),
+    maxLng: Number((maxLng + paddingDeg).toFixed(6)),
+  }
+}
+
+function buildNearbyBounds(lat, lng, radiusKm = 8) {
+  const safeRadiusKm = Math.max(1, Number(radiusKm) || 8)
+  const latDelta = safeRadiusKm / 111
+  const lngDelta = safeRadiusKm / Math.max(20, 111 * Math.cos((Number(lat) * Math.PI) / 180))
+  return {
+    minLat: Number((lat - latDelta).toFixed(6)),
+    maxLat: Number((lat + latDelta).toFixed(6)),
+    minLng: Number((lng - lngDelta).toFixed(6)),
+    maxLng: Number((lng + lngDelta).toFixed(6)),
+  }
+}
+
+function getRuntimeCache(cacheKey, ttlMs = ACTUAL_META_CACHE_TTL_MS) {
+  const entry = ACTUAL_META_CACHE.get(cacheKey)
+  if (!entry) return null
+  if (Date.now() - entry.savedAt > ttlMs) {
+    ACTUAL_META_CACHE.delete(cacheKey)
+    return null
+  }
+  return entry.value
+}
+
+function setRuntimeCache(cacheKey, value) {
+  ACTUAL_META_CACHE.set(cacheKey, { savedAt: Date.now(), value })
+  return value
+}
+
+function extractResponseItems(parsed = null) {
+  if (!parsed || typeof parsed !== 'object') return []
+  if (Array.isArray(parsed)) return parsed
+  if (Array.isArray(parsed.items)) return parsed.items
+  if (Array.isArray(parsed.items?.item)) return parsed.items.item
+  if (Array.isArray(parsed.body?.items)) return parsed.body.items
+  if (Array.isArray(parsed.body?.items?.item)) return parsed.body.items.item
+  if (Array.isArray(parsed.response?.body?.items)) return parsed.response.body.items
+  if (Array.isArray(parsed.response?.body?.items?.item)) return parsed.response.body.items.item
+  return []
+}
+
+function buildRoadQueryCandidates(roads = []) {
+  const explicit = (roads ?? [])
+    .map((road) => ({
+      name: String(road?.name ?? '').trim(),
+      number: String(road?.number ?? '').trim(),
+      roadClass: String(road?.roadClass ?? '').trim(),
+    }))
+    .filter((road) => road.name || road.number)
+
+  if (explicit.length > 0) {
+    return explicit.slice(0, 4)
+  }
+
+  return HIGHWAYS.slice(0, 4).map((road) => ({
+    name: road.name,
+    number: road.number,
+    roadClass: road.roadClass,
+  }))
+}
+
+function matchesRoadQuery(item = {}, query = {}) {
+  const haystack = normalizeRoadQueryText([
+    item.roadRouteNm,
+    item.roadName,
+    item.rdnmadr,
+    item.lnmadr,
+    item.itlpc,
+    item.message,
+  ].filter(Boolean).join(' '))
+  const routeName = normalizeRoadQueryText(query?.name)
+  const routeNumber = String(query?.number ?? '').trim()
+  if (routeName && haystack.includes(routeName)) return true
+  if (routeNumber && String(item?.roadRouteNo ?? item?.roadNo ?? '').trim() === routeNumber) return true
+  return !routeName && !routeNumber
+}
+
+function normalizePublicCameraItem(item = {}) {
+  const lat = Number(item.latitude)
+  const lng = Number(item.longitude)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+
+  const roadRouteNm = String(item.roadRouteNm ?? '').trim()
+  const roadRouteNo = String(item.roadRouteNo ?? '').trim()
+  const regltSe = String(item.regltSe ?? '').trim()
+  const sectionLength = Number(item.ovrspdRegltSctnLt)
+  const speedLimit = Number(item.lmttVe)
+  const isSection = /구간/.test(regltSe) || /구간/.test(String(item.regltSctnLcSe ?? ''))
+
+  return {
+    id: item.mnlssRegltCameraManageNo ?? `public-camera-${lat}-${lng}`,
+    coord: [lat, lng],
+    type: isSection ? 'section_start' : 'fixed',
+    speedLimit: Number.isFinite(speedLimit) && speedLimit > 0 ? speedLimit : null,
+    sectionLength: Number.isFinite(sectionLength) && sectionLength > 0 ? sectionLength : null,
+    label: isSection ? '공공 구간단속' : '공공 지점단속',
+    roadName: roadRouteNm || item.rdnmadr || '',
+    roadNo: roadRouteNo || '',
+    address: item.rdnmadr || item.lnmadr || '',
+    enforcementType: regltSe || null,
+    source: 'public-master-camera',
+  }
+}
+
+function normalizeItsEventItem(item = {}) {
+  const lat = Number(item.coordY)
+  const lng = Number(item.coordX)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  return {
+    id: item.eventId ?? `${item.linkId ?? 'event'}-${lat}-${lng}-${item.startDate ?? ''}`,
+    lat,
+    lng,
+    coord: [lat, lng],
+    eventType: item.eventType ?? '기타돌발',
+    eventDetailType: item.eventDetailType ?? '',
+    roadName: item.roadName ?? '',
+    roadNo: item.roadNo ?? '',
+    roadDrcType: item.roadDrcType ?? '',
+    message: item.message ?? '',
+    lanesBlockType: item.lanesBlockType ?? '',
+    lanesBlocked: item.lanesBlocked ?? '',
+    startDate: item.startDate ?? null,
+    endDate: item.endDate ?? null,
+    source: 'its-event',
+  }
+}
+
+async function fetchPublicMasterCameras({ roads = [], polyline = [] } = {}) {
+  if (!MEDICAL_DATA_KEY) return []
+
+  const normalizedPolyline = samplePolyline(normalizePolyline(polyline), 180)
+  const queries = buildRoadQueryCandidates(roads)
+  if (queries.length === 0) return []
+
+  const cacheKey = JSON.stringify({
+    type: 'public-master-cameras',
+    roads: queries.map((query) => `${query.name}:${query.number}:${query.roadClass}`),
+    polyline: normalizedPolyline.slice(0, 40),
+  })
+  const cached = getRuntimeCache(cacheKey)
+  if (cached) return cached
+
+  const collected = []
+  for (const query of queries) {
+    const requestQuery = {
+      pageNo: '1',
+      numOfRows: '200',
+      type: 'json',
+    }
+    if (query.name) requestQuery.roadRouteNm = query.name
+    if (query.number) requestQuery.roadRouteNo = query.number
+
+    try {
+      const response = await publicStandardDataFetch('/openapi/tn_pubr_public_unmanned_traffic_camera_api', requestQuery)
+      const parsed = parseJsonBuffer(response.body)
+      const items = extractResponseItems(parsed)
+      const normalized = items
+        .map(normalizePublicCameraItem)
+        .filter(Boolean)
+        .filter((item) => matchesRoadQuery(item, query))
+        .filter((item) => {
+          const distance = distanceKmToPolyline(item.coord[0], item.coord[1], normalizedPolyline)
+          return distance != null && distance <= 0.7
+        })
+
+      collected.push(...normalized)
+    } catch {
+      // 다음 도로 계속
+    }
+  }
+
+  const deduped = collected.filter((item, index, all) =>
+    all.findIndex((other) =>
+      other.id === item.id ||
+      haversineKm(other.coord[0], other.coord[1], item.coord[0], item.coord[1]) <= 0.05
+    ) === index
+  )
+
+  return setRuntimeCache(cacheKey, deduped.slice(0, 180))
+}
+
+async function fetchItsRoadEvents({ bounds = null, roads = [] } = {}) {
+  if (!ITS_KEY || !bounds) return []
+
+  const queries = buildRoadQueryCandidates(roads)
+  const cacheKey = JSON.stringify({
+    type: 'its-events',
+    bounds,
+    roads: queries.map((query) => `${query.name}:${query.number}:${query.roadClass}`),
+  })
+  const cached = getRuntimeCache(cacheKey, 1000 * 60 * 3)
+  if (cached) return cached
+
+  try {
+    const response = await itsFetch('/eventInfo', {
+      type: 'all',
+      eventType: 'all',
+      minX: String(bounds.minLng),
+      maxX: String(bounds.maxLng),
+      minY: String(bounds.minLat),
+      maxY: String(bounds.maxLat),
+    })
+    const parsed = parseJsonBuffer(response.body)
+    const items = extractResponseItems(parsed)
+    const normalized = items
+      .map(normalizeItsEventItem)
+      .filter(Boolean)
+      .filter((item) => queries.some((query) => matchesRoadQuery(item, query)))
+    return setRuntimeCache(cacheKey, normalized.slice(0, 120))
+  } catch {
+    return []
+  }
+}
+
+async function buildRoadActualMeta({ roads = [], polyline = [], nearbyCenter = null, nearbyRadiusKm = 8 } = {}) {
+  const normalizedPolyline = samplePolyline(normalizePolyline(polyline), 220)
+  const bounds = normalizedPolyline.length > 0
+    ? getPolylineBounds(normalizedPolyline, 0.08)
+    : (nearbyCenter && Number.isFinite(nearbyCenter.lat) && Number.isFinite(nearbyCenter.lng)
+      ? buildNearbyBounds(nearbyCenter.lat, nearbyCenter.lng, nearbyRadiusKm)
+      : null)
+
+  const [cameras, events] = await Promise.all([
+    normalizedPolyline.length > 1
+      ? fetchPublicMasterCameras({ roads, polyline: normalizedPolyline })
+      : Promise.resolve([]),
+    fetchItsRoadEvents({ bounds, roads }),
+  ])
+
+  const filteredEvents = events.filter((event) => {
+    if (normalizedPolyline.length > 1) {
+      const distance = distanceKmToPolyline(event.lat, event.lng, normalizedPolyline)
+      return distance != null && distance <= 1.2
+    }
+    if (nearbyCenter && Number.isFinite(nearbyCenter.lat) && Number.isFinite(nearbyCenter.lng)) {
+      return haversineKm(nearbyCenter.lat, nearbyCenter.lng, event.lat, event.lng) <= nearbyRadiusKm
+    }
+    return true
+  })
+
+  return {
+    cameras,
+    events: filteredEvents.slice(0, 40),
+    coverage: {
+      cameraSource: MEDICAL_DATA_KEY ? 'public-master' : 'unavailable',
+      eventSource: ITS_KEY ? 'its-live' : 'unavailable',
+      cameraTtlHours: TMAP_CAMERA_CACHE_MAX_AGE_MS / (1000 * 60 * 60),
+    },
   }
 }
 
@@ -950,6 +1324,60 @@ app.get('/api/meta/tmap-diag', async (req, res) => {
     : `오류 — POI:${report.tests.poi?.ok?'✅':'❌'} 경로:${report.tests.routes?.ok?'✅':'❌'} / errorCode: ${report.tests.routes?.errorCode ?? report.tests.poi?.errorCode}`
 
   res.json(report)
+})
+
+app.get('/api/road/events/nearby', async (req, res) => {
+  const lat = Number(req.query.lat)
+  const lng = Number(req.query.lng)
+  const radiusKm = Math.max(1, Math.min(30, Number(req.query.radiusKm ?? req.query.radius ?? 8)))
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: { code: 'INVALID_COORD', message: 'lat/lng가 필요합니다.' } })
+  }
+
+  try {
+    const meta = await buildRoadActualMeta({
+      roads: [],
+      polyline: [],
+      nearbyCenter: { lat, lng },
+      nearbyRadiusKm: radiusKm,
+    })
+    return res.json({
+      source: meta.coverage.eventSource,
+      radiusKm,
+      items: meta.events,
+    })
+  } catch (error) {
+    return res.status(502).json({ error: { code: 'ROAD_EVENT_PROXY_ERROR', message: error.message } })
+  }
+})
+
+app.post('/api/road/actual-meta', express.json({ limit: '1mb' }), async (req, res) => {
+  const routes = Array.isArray(req.body?.routes) ? req.body.routes.slice(0, 3) : []
+  if (routes.length === 0) {
+    return res.status(400).json({ error: { code: 'INVALID_ROUTES', message: 'routes 배열이 필요합니다.' } })
+  }
+
+  try {
+    const items = await Promise.all(routes.map(async (route) => {
+      const polyline = normalizePolyline(route?.polyline)
+      const roads = Array.isArray(route?.roads) ? route.roads.slice(0, 6) : []
+      const meta = await buildRoadActualMeta({ roads, polyline })
+      return {
+        routeId: route?.routeId ?? null,
+        cameras: meta.cameras,
+        events: meta.events,
+        coverage: meta.coverage,
+      }
+    }))
+
+    return res.json({
+      items,
+      generatedAt: new Date().toISOString(),
+    })
+  } catch (error) {
+    return res.status(502).json({ error: { code: 'ROAD_ACTUAL_META_ERROR', message: error.message } })
+  }
 })
 
 app.post('/api/tts/google', express.json({ limit: '256kb' }), async (req, res) => {

@@ -10,6 +10,8 @@ const RESTAURANT_META_CACHE = new Map()
 const SEARCH_CACHE_TTL = 1000 * 60 * 5
 const NEAREST_ROAD_COOLDOWN_MS = 1000 * 60 * 5
 const ROUTE_RATE_LIMIT_COOLDOWN_MS = 1000 * 15
+const ROUTE_ACTUAL_META_CACHE = new Map()
+const ROUTE_ACTUAL_META_TTL_MS = 1000 * 60 * 10
 const nearestRoadCircuit = {
   blockedUntil: 0,
 }
@@ -261,6 +263,146 @@ function getRoadCoordByKm(road, targetKm) {
 function resolveRoadStopCoord(road, stop) {
   if (Array.isArray(stop?.coord) && stop.coord.length >= 2) return stop.coord
   return getRoadCoordByKm(road, stop?.km)
+}
+
+function buildRoadNodeAddress(road, node) {
+  if (node.kind === 'start') return road.startAddress ?? road.startName ?? road.name
+  if (node.kind === 'end') return road.endAddress ?? road.endName ?? road.name
+  return `${road.name} ${node.name}`
+}
+
+export function getRoadDriveOrderedNodes(road, direction = 'forward') {
+  if (!road) return []
+  const totalKm = Number(road.totalKm ?? 0)
+  const ordered = [
+    {
+      id: `${road.id}-start`,
+      name: road.startName ?? `${road.name} 시점`,
+      lat: Number(road.startCoord?.[0]),
+      lng: Number(road.startCoord?.[1]),
+      km: 0,
+      kind: 'start',
+    },
+    ...((road.majorJunctions ?? [])
+      .filter((junction) => Array.isArray(junction?.coord) && junction.coord.length >= 2)
+      .map((junction, index) => ({
+        id: `${road.id}-junction-${index}`,
+        name: junction.name,
+        lat: Number(junction.coord[0]),
+        lng: Number(junction.coord[1]),
+        km: Number(junction.km ?? 0),
+        kind: 'junction',
+      }))),
+    {
+      id: `${road.id}-end`,
+      name: road.endName ?? `${road.name} 종점`,
+      lat: Number(road.endCoord?.[0]),
+      lng: Number(road.endCoord?.[1]),
+      km: totalKm,
+      kind: 'end',
+    },
+  ]
+    .filter((node) => hasFiniteCoord(node.lat, node.lng))
+    .sort((a, b) => a.km - b.km)
+    .map((node, index) => ({
+      ...node,
+      roadName: road.name,
+      roadClass: road.roadClass,
+      address: buildRoadNodeAddress(road, node),
+      orderIndex: index,
+    }))
+
+  if (direction === 'reverse') {
+    return [...ordered]
+      .reverse()
+      .map((node, index) => ({
+        ...node,
+        directionOrderIndex: index,
+        remainingRoadKm: Number(Math.max(0, totalKm - Number(node.km ?? 0)).toFixed(1)),
+      }))
+  }
+
+  return ordered.map((node, index) => ({
+    ...node,
+    directionOrderIndex: index,
+    remainingRoadKm: Number(Math.max(0, totalKm - Number(node.km ?? 0)).toFixed(1)),
+  }))
+}
+
+export function buildRoadDriveEntryCandidates(origin, road, direction = 'forward', maxCandidates = 3) {
+  if (!road || !hasFiniteCoord(origin?.lat, origin?.lng)) return []
+  const orderedNodes = getRoadDriveOrderedNodes(road, direction)
+  if (orderedNodes.length < 2) return []
+
+  const candidatePool = orderedNodes.slice(0, -1)
+  if (candidatePool.length === 0) return []
+
+  const rankedByDistance = candidatePool
+    .map((node) => ({
+      ...node,
+      directDistanceKm: Number(haversineKm(origin.lat, origin.lng, node.lat, node.lng).toFixed(1)),
+    }))
+    .sort((a, b) => {
+      const distanceGap = a.directDistanceKm - b.directDistanceKm
+      if (distanceGap !== 0) return distanceGap
+      return a.directionOrderIndex - b.directionOrderIndex
+    })
+
+  const picks = []
+  const alwaysInclude = candidatePool[0]
+  if (alwaysInclude) picks.push(alwaysInclude)
+
+  for (const candidate of rankedByDistance) {
+    const duplicated = picks.some((picked) => picked.id === candidate.id)
+    if (!duplicated) picks.push(candidate)
+    if (picks.length >= maxCandidates) break
+  }
+
+  return picks.map((candidate) => ({
+    ...candidate,
+    directDistanceKm: Number(haversineKm(origin.lat, origin.lng, candidate.lat, candidate.lng).toFixed(1)),
+  }))
+}
+
+export function buildRoadDriveWaypoints(road, entryCandidate, direction = 'forward') {
+  if (!road || !entryCandidate) return []
+  const orderedNodes = getRoadDriveOrderedNodes(road, direction)
+  if (orderedNodes.length < 2) return []
+
+  const destinationNode = orderedNodes[orderedNodes.length - 1]
+  const entryIndex = orderedNodes.findIndex((node) => node.id === entryCandidate.id)
+  if (entryIndex < 0) return []
+
+  const futureNodes = orderedNodes.slice(entryIndex, -1)
+  const anchorIndexes = [
+    0,
+    Math.min(futureNodes.length - 1, 1),
+    Math.max(0, Math.floor((futureNodes.length - 1) * 0.55)),
+  ]
+
+  const picked = []
+  for (const index of anchorIndexes) {
+    const node = futureNodes[index]
+    if (!node) continue
+    const duplicated = picked.some((item) => haversineKm(item.lat, item.lng, node.lat, node.lng) <= 0.3)
+    const sameAsDestination = haversineKm(node.lat, node.lng, destinationNode.lat, destinationNode.lng) <= 0.08
+    if (!duplicated && !sameAsDestination) {
+      picked.push(node)
+    }
+  }
+
+  return picked.map((node, index) => ({
+    id: `${road.id}-drive-${direction}-${index}-${node.id}`,
+    name: node.name,
+    address: node.address,
+    lat: node.lat,
+    lng: node.lng,
+    roadDriveRole: index === 0 ? 'entry' : 'anchor',
+    roadDriveRoadId: road.id,
+    roadDriveRoadName: road.name,
+    roadDriveDirection: direction,
+    routeOrderKm: Number(node.km ?? 0),
+  }))
 }
 
 function buildRoadSearchPlaces() {
@@ -593,6 +735,196 @@ function distanceKmToPolyline(lat, lng, polyline = []) {
     if (distance < best) best = distance
   }
   return Number.isFinite(best) ? Number(best.toFixed(1)) : null
+}
+
+function samplePolyline(polyline = [], limit = 160) {
+  if (!Array.isArray(polyline) || polyline.length <= limit) return polyline
+  return Array.from({ length: limit }, (_, index) => {
+    const ratio = index / Math.max(1, limit - 1)
+    return polyline[Math.min(polyline.length - 1, Math.round((polyline.length - 1) * ratio))]
+  })
+}
+
+function normalizeRoadQueryText(value = '') {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/고속도로|국도|지방도|도시고속|자동차전용도로/g, '')
+    .replace(/[()\-_/.,]/g, '')
+}
+
+function buildRoadDescriptorsFromRoute(route = {}) {
+  const segments = Array.isArray(route?.segmentStats) ? route.segmentStats : []
+  const segmentNames = segments
+    .map((segment) => String(segment?.name ?? '').trim())
+    .filter(Boolean)
+
+  const candidates = segmentNames
+    .map((name) => {
+      const matchedRoad = HIGHWAYS.find((road) =>
+        normalizeRoadQueryText(road.name).includes(normalizeRoadQueryText(name))
+        || normalizeRoadQueryText(name).includes(normalizeRoadQueryText(road.name))
+      )
+      return {
+        name: matchedRoad?.name ?? name,
+        number: matchedRoad?.number ?? '',
+        roadClass: matchedRoad?.roadClass ?? '',
+      }
+    })
+    .filter((road) => road.name)
+
+  return candidates.filter((road, index, all) =>
+    all.findIndex((other) =>
+      normalizeRoadQueryText(other.name) === normalizeRoadQueryText(road.name)
+      && String(other.number ?? '') === String(road.number ?? '')
+    ) === index
+  ).slice(0, 6)
+}
+
+function buildRouteActualMetaKey(route = {}) {
+  return JSON.stringify({
+    routeId: route?.id ?? 'route',
+    roads: buildRoadDescriptorsFromRoute(route),
+    polyline: samplePolyline(route?.polyline ?? [], 48),
+  })
+}
+
+function mergeCameraLists(base = [], incoming = []) {
+  const merged = [...(base ?? [])]
+
+  for (const camera of incoming ?? []) {
+    if (!Array.isArray(camera?.coord) || camera.coord.length < 2) continue
+    const duplicated = merged.some((existing) => (
+      existing?.id === camera.id
+      || (
+        Array.isArray(existing?.coord)
+        && haversineKm(existing.coord[0], existing.coord[1], camera.coord[0], camera.coord[1]) <= 0.08
+      )
+    ))
+    if (duplicated) continue
+    merged.push(camera)
+  }
+
+  return merged
+}
+
+function mergeRouteActualMeta(route = {}, meta = null) {
+  if (!meta) return route
+
+  const mergedCameras = mergeCameraLists(
+    (route.cameras ?? []).map((camera) => ({ ...camera, source: camera?.source ?? 'tmap-live' })),
+    (meta.cameras ?? []).map((camera) => ({ ...camera, source: camera?.source ?? 'public-master-camera' }))
+  )
+  const fixedCameraCount = mergedCameras.filter((camera) => camera.type === 'fixed').length
+  const sectionCameraCount = mergedCameras.filter((camera) => camera.type === 'section_start').length
+
+  return {
+    ...route,
+    cameras: mergedCameras,
+    fixedCameraCount,
+    sectionCameraCount,
+    actualRoadEvents: Array.isArray(meta?.events) ? meta.events : [],
+    actualRoadCoverage: meta?.coverage ?? null,
+  }
+}
+
+async function fetchRouteActualMetaBatch(routes = []) {
+  const requestRoutes = routes
+    .filter((route) => Array.isArray(route?.polyline) && route.polyline.length > 1)
+    .slice(0, 3)
+
+  if (requestRoutes.length === 0) return new Map()
+
+  const metaMap = new Map()
+  const pendingRoutes = []
+
+  for (const route of requestRoutes) {
+    const cacheKey = buildRouteActualMetaKey(route)
+    const cached = ROUTE_ACTUAL_META_CACHE.get(cacheKey)
+    if (cached && Date.now() - cached.savedAt <= ROUTE_ACTUAL_META_TTL_MS) {
+      metaMap.set(route.id, cached.meta)
+      continue
+    }
+    pendingRoutes.push({ route, cacheKey })
+  }
+
+  if (pendingRoutes.length === 0) return metaMap
+
+  const response = await fetch('/api/road/actual-meta', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      routes: pendingRoutes.map(({ route }) => ({
+        routeId: route.id,
+        roads: buildRoadDescriptorsFromRoute(route),
+        polyline: samplePolyline(route.polyline ?? [], 180),
+      })),
+    }),
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}))
+    throw new Error(errorBody?.error?.message ?? errorBody?.error?.code ?? `HTTP ${response.status}`)
+  }
+
+  const json = await response.json().catch(() => ({}))
+  const items = Array.isArray(json?.items) ? json.items : []
+  for (const pending of pendingRoutes) {
+    const matched = items.find((item) => item.routeId === pending.route.id) ?? null
+    if (!matched) continue
+    ROUTE_ACTUAL_META_CACHE.set(pending.cacheKey, {
+      savedAt: Date.now(),
+      meta: matched,
+    })
+    metaMap.set(pending.route.id, matched)
+  }
+
+  return metaMap
+}
+
+async function hydrateRoutesWithActualMeta(routes = []) {
+  if (!Array.isArray(routes) || routes.length === 0) return routes
+
+  try {
+    const metaMap = await fetchRouteActualMetaBatch(routes)
+    return routes.map((route) => mergeRouteActualMeta(route, metaMap.get(route.id) ?? null))
+  } catch {
+    return routes
+  }
+}
+
+async function fetchNearbyRoadEvents(lat, lng, radiusKm = 8) {
+  const params = new URLSearchParams({
+    lat: String(lat),
+    lng: String(lng),
+    radiusKm: String(radiusKm),
+  })
+  const response = await fetch(`/api/road/events/nearby?${params}`, {
+    headers: { Accept: 'application/json' },
+  })
+  if (!response.ok) return []
+  const json = await response.json().catch(() => ({}))
+  return Array.isArray(json?.items) ? json.items : []
+}
+
+export async function fetchRoadActualMetaForRoad(road) {
+  if (!road || !Array.isArray(road?.startCoord) || !Array.isArray(road?.endCoord)) return null
+  const path = [
+    road.startCoord,
+    ...((road.majorJunctions ?? []).map((junction) => junction.coord)),
+    road.endCoord,
+  ].filter((coord) => Array.isArray(coord) && coord.length >= 2)
+
+  const metaMap = await fetchRouteActualMetaBatch([{
+    id: `road-${road.id}`,
+    polyline: path,
+    segmentStats: [{ name: road.name }],
+  }])
+
+  return metaMap.get(`road-${road.id}`) ?? null
 }
 
 function enrichFuelStops(results, routePolyline = [], settings = {}) {
@@ -1365,10 +1697,11 @@ export async function searchNearbyPOIs(category, lat, lng, options = {}) {
 }
 
 export async function searchSafetyHazards(lat, lng) {
-  const [schools, kindergartens, bumps] = await Promise.all([
+  const [schools, kindergartens, bumps, roadEvents] = await Promise.all([
     fetchPoiSearch('초등학교', lat, lng, 'A').catch(() => []),
     fetchPoiSearch('유치원', lat, lng, 'A').catch(() => []),
     fetchPoiSearch('방지턱', lat, lng, 'A').catch(() => []),
+    fetchNearbyRoadEvents(lat, lng, 8).catch(() => []),
   ])
 
   const schoolHazards = [...schools, ...kindergartens]
@@ -1399,7 +1732,30 @@ export async function searchSafetyHazards(lat, lng) {
       alertText: `${poi.name || '방지턱'} 인근 감속`,
     }))
 
-  return [...schoolHazards, ...bumpHazards]
+  const roadEventHazards = (roadEvents ?? [])
+    .slice(0, 8)
+    .map((event) => ({
+      id: `event-${event.id}`,
+      name: event.roadName || event.eventType || '도로 이벤트',
+      address: event.message || '',
+      lat: event.lat,
+      lng: event.lng,
+      type: event.eventType === '공사'
+        ? 'roadwork'
+        : event.eventType === '교통사고'
+          ? 'accident'
+          : event.eventType === '기상'
+            ? 'weather'
+            : event.eventType === '재난'
+              ? 'disaster'
+              : 'road_event',
+      distanceKm: Number(haversineKm(lat, lng, event.lat, event.lng).toFixed(1)),
+      speedLimit: null,
+      alertText: `${event.roadName || '전방 도로'} ${event.eventType || '돌발상황'} 주의`,
+      eventMessage: event.message || '',
+    }))
+
+  return [...schoolHazards, ...bumpHazards, ...roadEventHazards]
     .filter((item, index, all) =>
       all.findIndex((other) => other.type === item.type && Math.abs(other.lat - item.lat) < 0.00015 && Math.abs(other.lng - item.lng) < 0.00015) === index
     )
@@ -1494,7 +1850,8 @@ export async function fetchRoutes(startLat, startLng, endLat, endLng, preference
     ) === index
   )
 
-  return dedupedRoutes.slice(0, routeRequestMode === 'navigation' ? 1 : 2)
+  const limitedRoutes = dedupedRoutes.slice(0, routeRequestMode === 'navigation' ? 1 : 2)
+  return hydrateRoutesWithActualMeta(limitedRoutes)
 }
 
 export async function fetchRouteByWaypoints(start, destination, wayPoints = [], option = {}) {
@@ -1543,7 +1900,9 @@ export async function fetchRouteByWaypoints(start, destination, wayPoints = [], 
 
     if (res.ok) {
       const json = await res.json()
-      return parseRouteResponse(json, { ...option, searchOption })
+      const parsedRoute = parseRouteResponse(json, { ...option, searchOption })
+      const [hydratedRoute] = await hydrateRoutesWithActualMeta([{ ...parsedRoute, source: 'live' }])
+      return hydratedRoute ?? parsedRoute
     }
 
     try {

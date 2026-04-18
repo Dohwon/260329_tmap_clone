@@ -41,9 +41,9 @@ html, body, #root {
 }
 .map-rotation-layer {
   position: absolute;
-  inset: -52%;
-  width: 204%;
-  height: 204%;
+  inset: -66%;
+  width: 232%;
+  height: 232%;
   transform-origin: 50% 50%;
   transition: none;
   will-change: transform;
