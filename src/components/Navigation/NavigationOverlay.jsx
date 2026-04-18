@@ -12,7 +12,6 @@ import {
   getGuidanceInstruction,
   getGuidancePriority,
   getCurrentRouteSegment,
-  getLaneGuidance,
   getRemainingEta,
   getUpcomingGuidanceList,
   getUpcomingMergeOptions,
@@ -750,8 +749,6 @@ export default function NavigationOverlay() {
     : '목적지 안내'
   const bannerTurnType = nextGuidance?.turnType ?? 11
   const laneSource = nextGuidance ?? nextMergeOpt ?? null
-  const laneGuidance = getLaneGuidance(laneSource)
-  const lanePattern = getLanePattern(laneSource)
   const isNearLaneDecision = Number(nextGuidance?.remainingDistanceKm) <= 0.35
   const nearbyFuelSummary = nearbyCategory === '주유소' && nearbyPOIs.length > 0
     ? {
@@ -981,36 +978,6 @@ export default function NavigationOverlay() {
           </div>
         </div>
 
-        {(nextGuidance || laneGuidance || nextMergeOpt) && (
-          <div className="bg-emerald-700 px-5 py-3 shadow-md">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-1.5 flex-shrink-0">
-                {lanePattern.map((lane, index) => {
-                  const active = lane.startsWith('active')
-                  return (
-                    <div
-                      key={`${lane}-${index}`}
-                      className={`w-8 h-10 rounded-lg flex items-center justify-center text-base font-black border ${
-                        active
-                          ? 'bg-white text-emerald-700 border-white'
-                          : 'bg-white/12 text-white/70 border-white/20'
-                      }`}
-                    >
-                      {getLaneArrow(lane)}
-                    </div>
-                  )
-                })}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-[11px] font-bold text-emerald-100">차선 준비</div>
-                <div className="text-sm font-black text-white truncate">
-                  {laneGuidance ?? '지금 진행 방향 차로 유지'}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* 통계 바 */}
         {(() => {
           const currentSpeed = Math.round(userLocation?.speedKmh ?? 0)
@@ -1044,28 +1011,10 @@ export default function NavigationOverlay() {
       </div>
 
       {isNearLaneDecision && laneSource && (
-        <div className="absolute top-[170px] left-4 right-4 z-20">
-          <div className="rounded-2xl bg-white/95 backdrop-blur shadow-xl border border-white/70 px-4 py-3">
-            <div className="text-[11px] font-bold text-emerald-700">분기 확대 안내</div>
-            <div className="mt-2 flex items-center gap-2">
-              {lanePattern.map((lane, index) => {
-                const active = lane.startsWith('active')
-                return (
-                  <div
-                    key={`inset-${lane}-${index}`}
-                    className={`flex-1 h-14 rounded-xl flex items-center justify-center text-xl font-black border ${
-                      active
-                        ? 'bg-emerald-600 text-white border-emerald-600'
-                        : 'bg-gray-100 text-gray-400 border-gray-200'
-                    }`}
-                  >
-                    {getLaneArrow(lane)}
-                  </div>
-                )
-              })}
-            </div>
-            <div className="mt-2 text-sm font-black text-gray-900 truncate">{laneGuidance ?? '진행 방향 차로 유지'}</div>
-            <div className="text-xs text-gray-500 truncate">
+        <div className="absolute top-[122px] right-4 z-20 max-w-[160px]">
+          <div className="rounded-2xl bg-white/92 backdrop-blur shadow-lg border border-white/70 px-3 py-2">
+            <div className="text-[11px] font-bold text-emerald-700">분기 확대중</div>
+            <div className="mt-1 text-[11px] font-semibold text-gray-600 line-clamp-2">
               {cleanedInstructionText || bannerSub}
             </div>
           </div>

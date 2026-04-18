@@ -155,7 +155,7 @@ function getLookAheadCenter(map, location, zoom = 19.2, enabled = true, cameraSt
   if (!location) return null
   const latLng = L.latLng(location.lat, location.lng)
   if (!enabled) return latLng
-  const offsetY = Number(cameraState?.lookAheadOffsetY) || -340
+  const offsetY = Number(cameraState?.lookAheadOffsetY) || -420
   const projected = map.project(latLng, zoom)
   return map.unproject(projected.add([0, offsetY]), zoom)
 }

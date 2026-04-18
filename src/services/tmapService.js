@@ -1360,27 +1360,60 @@ export async function fetchTmapStatus() {
 }
 
 async function fetchPoiSearch(keyword, nearLat, nearLng, searchtypCd = 'A') {
-  const params = new URLSearchParams({
-    version: '1',
-    searchKeyword: keyword,
-    searchType: 'all',
-    searchtypCd,
-    page: '1',
-    resCoordType: 'WGS84GEO',
-    reqCoordType: 'WGS84GEO',
-    multiPoint: 'N',
-    poiGroupYn: 'N',
-    count: '20',
-    ...(nearLat != null && nearLng != null ? { centerLat: String(nearLat), centerLon: String(nearLng) } : {}),
-  })
-  const res = await fetch(`${BASE}/pois?${params}`, { headers: { Accept: 'application/json' } })
-  if (!res.ok) {
+  const normalizedKeyword = String(keyword ?? '').trim()
+  const isBroadCategory = ['음식점', '맛집', '주유소', '휴게소', '주차장', '병원', '초등학교', '유치원', '방지턱'].includes(normalizedKeyword)
+  const attempts = [
+    ...(!isBroadCategory && nearLat != null && nearLng != null
+      ? [{
+          searchtypCd,
+          withCenter: true,
+        }]
+      : []),
+    {
+      searchtypCd,
+      withCenter: false,
+    },
+    ...(isBroadCategory
+      ? [{
+          searchtypCd: undefined,
+          withCenter: false,
+        }]
+      : []),
+  ]
+
+  let lastError = null
+  for (const attempt of attempts) {
+    const params = new URLSearchParams({
+      version: '1',
+      searchKeyword: normalizedKeyword,
+      searchType: 'all',
+      page: '1',
+      resCoordType: 'WGS84GEO',
+      reqCoordType: 'WGS84GEO',
+      multiPoint: 'N',
+      poiGroupYn: 'N',
+      count: '20',
+      ...(attempt.searchtypCd ? { searchtypCd: attempt.searchtypCd } : {}),
+      ...(attempt.withCenter ? { centerLat: String(nearLat), centerLon: String(nearLng) } : {}),
+    })
+
+    const res = await fetch(`${BASE}/pois?${params}`, { headers: { Accept: 'application/json' } })
+    if (res.ok) {
+      const json = await res.json()
+      const pois = json?.searchPoiInfo?.pois?.poi ?? []
+      return pois.map(normalizePoi).filter((poi) => Number.isFinite(poi.lat) && Number.isFinite(poi.lng))
+    }
+
     const errJson = await res.json().catch(() => ({}))
-    throw new Error(errJson?.error?.errorMessage ?? errJson?.error?.code ?? `HTTP ${res.status}`)
+    lastError = new Error(errJson?.error?.errorMessage ?? errJson?.error?.code ?? `HTTP ${res.status}`)
+
+    if (res.status !== 400) {
+      throw lastError
+    }
   }
-  const json = await res.json()
-  const pois = json?.searchPoiInfo?.pois?.poi ?? []
-  return pois.map(normalizePoi).filter((poi) => Number.isFinite(poi.lat) && Number.isFinite(poi.lng))
+
+  if (isBroadCategory) return []
+  throw lastError ?? new Error('POI 검색 실패')
 }
 
 function shouldTryBusinessPoiSearch(keyword) {
@@ -2309,7 +2342,7 @@ export async function enrichDestinationTarget(target, options = {}) {
   if (!target || !Number.isFinite(target.lat) || !Number.isFinite(target.lng)) return target
 
   const next = { ...target }
-  const preferRoadSnap = options.preferRoadSnap ?? true
+  const preferRoadSnap = options.preferRoadSnap ?? false
   if (preferRoadSnap) {
     const snapped = await snapToNearestRoad(next.lat, next.lng).catch(() => null)
     if (snapped) {

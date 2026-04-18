@@ -655,9 +655,9 @@ export function getNavigationCameraState(guidance) {
   if (!Number.isFinite(remainingDistanceKm)) {
     return {
       mode: 'cruise',
-      zoom: 19.6,
-      lookAheadOffsetY: -170,
-      recenterThresholdM: 18,
+      zoom: 19.7,
+      lookAheadOffsetY: -250,
+      recenterThresholdM: 14,
       panDuration: 0.22,
       viewDuration: 0.28,
     }
@@ -667,8 +667,8 @@ export function getNavigationCameraState(guidance) {
     return {
       mode: 'confirm',
       zoom: 22.6,
-      lookAheadOffsetY: -120,
-      recenterThresholdM: 10,
+      lookAheadOffsetY: -165,
+      recenterThresholdM: 8,
       panDuration: 0.18,
       viewDuration: 0.2,
     }
@@ -678,8 +678,8 @@ export function getNavigationCameraState(guidance) {
     return {
       mode: 'decision',
       zoom: 22.1,
-      lookAheadOffsetY: -130,
-      recenterThresholdM: 12,
+      lookAheadOffsetY: -185,
+      recenterThresholdM: 10,
       panDuration: 0.2,
       viewDuration: 0.22,
     }
@@ -689,8 +689,8 @@ export function getNavigationCameraState(guidance) {
     return {
       mode: 'approach',
       zoom: 21.2,
-      lookAheadOffsetY: -140,
-      recenterThresholdM: 14,
+      lookAheadOffsetY: -210,
+      recenterThresholdM: 12,
       panDuration: 0.22,
       viewDuration: 0.25,
     }
@@ -700,8 +700,8 @@ export function getNavigationCameraState(guidance) {
     return {
       mode: 'prepare',
       zoom: 20.4,
-      lookAheadOffsetY: -150,
-      recenterThresholdM: 16,
+      lookAheadOffsetY: -230,
+      recenterThresholdM: 13,
       panDuration: 0.24,
       viewDuration: 0.28,
     }
@@ -709,9 +709,9 @@ export function getNavigationCameraState(guidance) {
 
   return {
     mode: 'cruise',
-    zoom: 19.6,
-    lookAheadOffsetY: -170,
-    recenterThresholdM: 18,
+    zoom: 19.7,
+    lookAheadOffsetY: -250,
+    recenterThresholdM: 14,
     panDuration: 0.24,
     viewDuration: 0.3,
   }
