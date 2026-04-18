@@ -359,6 +359,47 @@
 - 검증:
   - dev 배포 후 시뮬레이터/지도/TTS 표시 여부를 바로 판단 가능
 
+## 10. 웹 유지형 정석 아키텍처 전환
+
+### 10-A. MapLibre GL JS 내비 맵 전환
+
+- 우선순위: `P1`
+- 시급성: `높음`
+- 선행: `3-A`, `4-B`
+- 후행: `10-B`, `10-C`
+- 작업:
+  - 내비 전용 화면의 지도 엔진을 `Leaflet + raster`에서 `MapLibre GL JS + vector layer`로 전환
+  - 홈 지도와 내비 지도의 공용/분리 범위를 정리하고 `driver camera state`를 bearing/pitch/offset 기반으로 재구현
+- 검증:
+  - 내비 중 차량이 화면 하단에 고정되고 진행 방향이 화면 상단으로 유지
+  - 분기/합류 직전 확대와 수동 조작 복귀가 상태머신대로 동작
+
+### 10-B. corridor geometry API / NGII 최소 레이어 도입
+
+- 우선순위: `P1`
+- 시급성: `높음`
+- 선행: `10-A`
+- 후행: `10-C`
+- 작업:
+  - NGII 최소 레이어(차로 중심선, 분기/합류 connector, 램프 형상, road boundary)를 corridor 기준으로 잘라오는 API를 설계/구현
+  - route polyline, progressKm, radiusM 기반 spatial query와 TTL cache 정책을 고정
+- 검증:
+  - 현재 경로 주변 geometry만 응답되고, 인셋/지도 본판이 같은 형상 데이터를 공유
+  - 경로 이동만으로 geometry 재계산이 과도하게 반복되지 않음
+
+### 10-C. core route / enrichment 분리와 quota safe mode
+
+- 우선순위: `P1`
+- 시급성: `높음`
+- 선행: `1-C`, `10-A`
+- 후행: 없음
+- 작업:
+  - route core와 맛집/병원/주유/ITS enrichment를 런타임과 UI에서 분리
+  - quota 임계치에서 `TTS cache 우선`, `부가정보 단계 하향`, `기본 타일 fallback`이 동작하는 safe mode를 추가
+- 검증:
+  - 맛집/병원/유가 API 장애가 길찾기와 내비 시작을 막지 않음
+  - free tier 압박 상황에서도 route core는 계속 유지
+
 ## 즉시 개선안
 
 - route/nearestRoad/hazard/fuel을 엔드포인트별 예산으로 나눠서 관리한다. 지금은 기능별 상태가 아니라 API별 예산 통제가 더 중요하다.
@@ -396,7 +437,7 @@
 4. `3-B`, `3-C`, `4-A`, `6-B`, `6-C`, `8-A`, `8-B`, `9-B`
 근거: 품질 체감 개선과 운영 안정화 단계다.
 
-5. `3-D`, `4-B`, `7-B`, `8-C`
+5. `3-D`, `4-B`, `7-B`, `8-C`, `10-A`, `10-B`, `10-C`
 근거: 구조 개선과 master completeness 작업으로, 당장 P0를 막지는 않지만 장기 완성도에 필요하다.
 
 [HANDOFF_PACKET]

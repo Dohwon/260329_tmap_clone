@@ -15,6 +15,26 @@
 
 ### 실제 반영 포인트
 
+- 내비 미니 인셋을 추상 SVG에서 `실제 세그먼트 기반 형상`으로 한 단계 끌어올렸다.
+  - `src/components/Navigation/NavigationOverlay.jsx`
+  - 현재 세그먼트와 다음 세그먼트를 기반으로 경로형 인셋을 다시 그리게 바꿨다.
+
+- 유도선 색상 문구를 인셋/음성까지 연결했다.
+  - `src/components/Navigation/NavigationOverlay.jsx`
+  - `extcVoiceCode`가 있는 경우 `분홍색/초록색 유도선을 따라가세요` 문구를 인셋 카드와 300m/100m 음성 안내에 같이 붙였다.
+
+- 카메라 예고를 고속 구간 기준으로 더 이르게 조정했다.
+  - `src/components/Navigation/NavigationOverlay.jsx`
+  - 기존 `600m/100m` 구조에서 고속/고속제한 구간은 `1.5km/300m/100m`로 확장했고, 상단에 단속 전용 배너를 추가했다.
+
+- 웹 유지형 정석 아키텍처 문서를 새로 고정했다.
+  - `docs/web-architecture-checklist-2026-04-19.md`
+  - `docs/web-first-architecture-2026-04-19.md`
+  - `docs/web-architecture-report-2026-04-19.md`
+  - `docs/open-task-matrix-2026-04-16.md`
+  - `docs/mvp-forward-roadmap-2026-04-16.md`
+  - 웹 유지, MapLibre 전환, corridor geometry, core/enrichment 분리, Railway 역할 경계를 문서에 명시했다.
+
 - 실제 카메라/돌발상황 보강 레이어를 서버에 추가했다.
   - `server.js`
   - `ITS_API_KEY` 기반 `eventInfo` 프록시와 `DATA_GO_KR_API_KEY` 기반 공공 무인단속카메라 프록시를 추가했다.
@@ -45,6 +65,10 @@
 
 ### 재확인된 병목
 
+- 현재 인셋은 실제 세그먼트 기반으로 개선됐지만, 아직 NGII corridor geometry 기반은 아니다.
+- 분홍/초록 유도선 문구는 생겼지만 실제 지도 위 lane-level 선 렌더링은 아직 없다.
+- 웹 유지 전략은 확정했지만, `Leaflet -> MapLibre`, `corridor API`, `core/enrichment 분리`는 구현이 남아 있다.
+
 - 공공 카메라와 ITS 이벤트는 붙였지만, 전국 단위 `모든 도로/휴게소/공사/차로제어`를 완전히 커버하는 master는 아직 아니다.
 - ITS/API 키가 배포 환경에 빠져 있으면 이번 레이어는 자동으로 비활성 상태가 된다.
 - 실제 차선 레벨 geometry와 운전자 시점 벡터 렌더링은 여전히 별도 스택 전환 이슈다.
@@ -67,10 +91,10 @@
 
 ### 다음 액션
 
-1. Railway dev에 `ITS_API_KEY` 존재 여부 확인 후 실제 도로 이벤트가 표시되는지 확인
-2. 선택 도로 상세(`selectedRoad`)에도 휴게소/공사/카메라 master data를 더 촘촘하게 보강
-3. 실제 route preview 카드의 카메라 수와 actual meta count를 어떻게 병기할지 UI 정리
-4. 차로제어/VSL까지 넣을지 결정 후 `actual-meta` 응답 스키마 확장
+1. `MapLibre GL JS` 기반 내비 맵 스파이크 작성
+2. `corridor geometry API` 설계와 NGII 최소 레이어 PoC 착수
+3. route core와 enrichment를 런타임/화면 레벨에서 분리
+4. Railway dev에서 camera banner + inset 회귀와 실제 도로 이벤트 표시를 다시 확인
 
 ## 2026-04-18
 
