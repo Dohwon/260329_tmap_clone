@@ -657,6 +657,14 @@ function parseJsonBuffer(buffer) {
   }
 }
 
+function summarizeBuffer(buffer, limit = 240) {
+  if (!buffer) return ''
+  return String(buffer.toString('utf8') ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, limit)
+}
+
 function decodeXmlEntities(value = '') {
   return String(value)
     .replace(/&lt;/g, '<')
@@ -1013,14 +1021,52 @@ async function fetchNearbyFuelStations({ lat, lng, radius = 5000, productCode = 
   })
 
   const parsed = parseJsonBuffer(result.body)
-  if (result.status !== 200 || !parsed?.RESULT) {
-    const error = new Error(parsed?.RESULT?.ERRCD || parsed?.RESULT?.ERR_MSG || '오피넷 응답을 처리하지 못했습니다.')
+  const resultRoot = parsed?.RESULT ?? parsed?.result ?? null
+  const upstreamErrorCode = resultRoot?.ERRCD ?? resultRoot?.errcd ?? null
+  const upstreamErrorMessage = resultRoot?.ERRMSG ?? resultRoot?.ERR_MSG ?? resultRoot?.errmsg ?? null
+  const rawOil = resultRoot?.OIL ?? resultRoot?.oil ?? parsed?.OIL ?? parsed?.oil ?? []
+  const stationRows = Array.isArray(rawOil)
+    ? rawOil
+    : (rawOil && typeof rawOil === 'object' ? Object.values(rawOil).filter((item) => item && typeof item === 'object') : [])
+
+  if (result.status !== 200) {
+    const error = new Error(upstreamErrorCode || upstreamErrorMessage || '오피넷 응답을 처리하지 못했습니다.')
     error.status = result.status ?? 502
     error.payload = parsed
     throw error
   }
 
-  const stations = (parsed.RESULT?.OIL ?? [])
+  if (!parsed) {
+    console.warn('[fuel/opinet] non-json response, fallback to empty list', {
+      status: result.status,
+      body: summarizeBuffer(result.body),
+    })
+    return {
+      source: 'opinet',
+      productCode,
+      radius: Math.max(1000, Math.min(5000, Number(radius ?? 5000))),
+      items: [],
+      fallback: 'invalid-json',
+    }
+  }
+
+  if (upstreamErrorCode || upstreamErrorMessage) {
+    console.warn('[fuel/opinet] upstream error, fallback to empty list', {
+      status: result.status,
+      code: upstreamErrorCode,
+      message: upstreamErrorMessage,
+      body: summarizeBuffer(result.body),
+    })
+    return {
+      source: 'opinet',
+      productCode,
+      radius: Math.max(1000, Math.min(5000, Number(radius ?? 5000))),
+      items: [],
+      fallback: 'upstream-error',
+    }
+  }
+
+  const stations = stationRows
     .map(normalizeOpinetStation)
     .filter(Boolean)
 
@@ -1064,7 +1110,17 @@ app.get('/api/fuel/nearby', async (req, res) => {
     })
     return res.json(payload)
   } catch (error) {
-    return res.status(error.status ?? 502).json(error.payload ?? { error: { code: 'OPINET_PROXY_ERROR', message: error.message } })
+    console.warn('[fuel/nearby] hard failure, fallback to empty list', {
+      status: error.status ?? 502,
+      message: error.message,
+    })
+    return res.json({
+      source: 'opinet',
+      productCode,
+      radius,
+      items: [],
+      fallback: 'proxy-error',
+    })
   }
 })
 

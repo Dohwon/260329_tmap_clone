@@ -1043,5 +1043,6 @@ const RAW_HIGHWAYS = [
 
 export const HIGHWAYS = RAW_HIGHWAYS.map((road) => ({
   ...road,
-  color: ROAD_CLASS_COLORS[road.roadClass] ?? road.color,
+  color: road.color ?? ROAD_CLASS_COLORS[road.roadClass],
+  classColor: ROAD_CLASS_COLORS[road.roadClass] ?? road.color,
 }))

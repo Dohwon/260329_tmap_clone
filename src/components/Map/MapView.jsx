@@ -3,7 +3,7 @@ import { CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, useMapE
 import L from 'leaflet'
 import useAppStore from '../../store/appStore'
 import { HIGHWAYS } from '../../data/highwayData'
-import { buildRemainingRoutePolyline, getCurrentRouteSegment, getGuidancePriority, getNavigationCameraState, shouldUseRawRoutePolyline } from '../../utils/navigationLogic'
+import { buildRemainingRoutePolyline, getCurrentRouteSegment, getGuidancePriority, getNavigationCameraState, getUpcomingGuidanceList, shouldUseRawRoutePolyline } from '../../utils/navigationLogic'
 
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -84,6 +84,8 @@ const drowsyIcon = makeBadgeIcon({ text: '쉼', background: COLORS.restStop, siz
 const startIcon = makeBadgeIcon({ text: '시', background: '#111827' })
 const endIcon = makeBadgeIcon({ text: '종', background: '#2563EB' })
 const junctionIcon = makeBadgeIcon({ text: '분', background: '#FF6B00', size: 26 })
+const upcomingMergeIcon = makeBadgeIcon({ text: '합', background: '#10B981', size: 32 })
+const upcomingTurnIcon = makeBadgeIcon({ text: '진', background: '#2563EB', size: 32 })
 const schoolZoneIcon = makeBadgeIcon({ text: '30', background: '#F59E0B', size: 30 })
 const speedBumpIcon = makeBadgeIcon({ text: '턱', background: '#0EA5E9', size: 30 })
 const restaurantIcon = makeBadgeIcon({ text: '맛', background: COLORS.restaurant, size: 30 })
@@ -639,6 +641,7 @@ export default function MapView({ darkMode = false }) {
     searchRoute,
     searchRouteAlongRoad,
     addWaypoint,
+    mergeOptions,
     navAutoFollow,
     isNavigating,
     settings,
@@ -657,6 +660,10 @@ export default function MapView({ darkMode = false }) {
   const currentRouteSegment = useMemo(
     () => getCurrentRouteSegment(selectedRoute, guidanceLocation),
     [guidanceLocation, selectedRoute]
+  )
+  const currentGuidance = useMemo(
+    () => getGuidancePriority(selectedRoute, guidanceLocation, mergeOptions).nextAction ?? null,
+    [guidanceLocation, mergeOptions, selectedRoute]
   )
   const currentSegmentIndex = useMemo(() => {
     if (!selectedRoute?.segmentStats?.length || !currentRouteSegment?.id) return -1
@@ -681,6 +688,20 @@ export default function MapView({ darkMode = false }) {
     if (trimmed.length < 2) return trimmed
     return shouldUseRawRoutePolyline(selectedRoute) ? trimmed : smoothPath(trimmed, 0.1)
   }, [isNavigating, navigationMatchedLocation, navigationProgressKm, selectedRoute, userLocation])
+  const activeSegmentPath = useMemo(() => {
+    const positions = currentRouteSegment?.positions
+    if (!Array.isArray(positions) || positions.length < 2) return []
+    return smoothPath(positions, 0.02)
+  }, [currentRouteSegment])
+  const upcomingDriverGuidance = useMemo(() => {
+    if (!isNavigating || !selectedRoute || !guidanceLocation) return []
+    return getUpcomingGuidanceList(selectedRoute, guidanceLocation, mergeOptions, 4)
+      .filter((item) =>
+        Number.isFinite(Number(item?.lat)) &&
+        Number.isFinite(Number(item?.lng)) &&
+        Number(item?.remainingDistanceKm) <= 2.5
+      )
+  }, [guidanceLocation, isNavigating, mergeOptions, selectedRoute])
 
   const routeSpeedMarkers = useMemo(
     () => (selectedRoute ? buildSpeedMarkers(selectedRoute.segmentStats ?? []) : []),
@@ -983,10 +1004,23 @@ export default function MapView({ darkMode = false }) {
             </>
           )}
 
+          {driverFollowMode && activeSegmentPath.length > 1 && (
+            <>
+              <Polyline
+                positions={activeSegmentPath}
+                pathOptions={{ color: '#0F172A', weight: showMinimalNavigationMap ? 11 : 9, opacity: 0.34 }}
+              />
+              <Polyline
+                positions={activeSegmentPath}
+                pathOptions={{ color: '#22D3EE', weight: showMinimalNavigationMap ? 8 : 7, opacity: 0.92 }}
+              />
+            </>
+          )}
+
           {isNavigating && remainingRoutePath.length > 1 && (
             <Polyline
               positions={remainingRoutePath}
-              pathOptions={{ color: COLORS.navigationGuide, weight: showMinimalNavigationMap ? 6 : 5, opacity: 0.98 }}
+              pathOptions={{ color: COLORS.navigationGuide, weight: showMinimalNavigationMap ? 8 : 7, opacity: 0.98 }}
             />
           )}
 
@@ -1036,6 +1070,39 @@ export default function MapView({ darkMode = false }) {
               </Popup>
             </Marker>
           ))}
+
+          {visibleLayers.mergePoints && driverFollowMode && upcomingDriverGuidance.map((guidance, index) => {
+            const markerKey = guidance.id ?? `${guidance.source}-${index}`
+            const position = [Number(guidance.lat), Number(guidance.lng)]
+            const icon = guidance.source === 'junction' || guidance.source === 'merge'
+              ? upcomingMergeIcon
+              : upcomingTurnIcon
+            return (
+              <React.Fragment key={`driver-guidance-${markerKey}`}>
+                <CircleMarker
+                  center={position}
+                  radius={index === 0 ? 34 : 24}
+                  pathOptions={{
+                    color: index === 0 ? '#10B981' : '#60A5FA',
+                    fillColor: index === 0 ? '#D1FAE5' : '#DBEAFE',
+                    fillOpacity: index === 0 ? 0.28 : 0.18,
+                    weight: 2,
+                  }}
+                />
+                <Marker position={position} icon={icon}>
+                  <Popup>
+                    <div className="text-sm font-bold">{guidance.name ?? guidance.instructionText ?? '다음 안내'}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {Math.max(30, Math.round(Number(guidance.remainingDistanceKm ?? 0) * 1000))}m 앞
+                    </div>
+                    <div className="text-xs text-gray-400 mt-0.5">
+                      {guidance.instructionText ?? guidance.description ?? '분기/합류 지점'}
+                    </div>
+                  </Popup>
+                </Marker>
+              </React.Fragment>
+            )
+          })}
 
           {/* 경로 과속카메라 (TMAP safetyFacilityList 기반) */}
           {visibleLayers.speedCameras && (driverFollowMode
@@ -1210,6 +1277,11 @@ export default function MapView({ darkMode = false }) {
             <div className="text-xs text-gray-500 mt-0.5">
               {Math.round(userLocation.speedKmh ?? 0)}km/h · 정확도 {Math.round(userLocation.accuracy ?? 0)}m
             </div>
+            {currentGuidance && (
+              <div className="text-xs text-blue-600 mt-1">
+                다음 안내 {Math.max(30, Math.round(Number(currentGuidance.remainingDistanceKm ?? 0) * 1000))}m 앞
+              </div>
+            )}
           </Popup>
         </Marker>
       )}

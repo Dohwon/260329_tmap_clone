@@ -655,9 +655,9 @@ export function getNavigationCameraState(guidance) {
   if (!Number.isFinite(remainingDistanceKm)) {
     return {
       mode: 'cruise',
-      zoom: 19.7,
-      lookAheadOffsetY: -300,
-      recenterThresholdM: 14,
+      zoom: 20.4,
+      lookAheadOffsetY: -340,
+      recenterThresholdM: 12,
       panDuration: 0.22,
       viewDuration: 0.28,
     }
@@ -666,9 +666,9 @@ export function getNavigationCameraState(guidance) {
   if (remainingDistanceKm <= 0.04) {
     return {
       mode: 'confirm',
-      zoom: 22.6,
-      lookAheadOffsetY: -205,
-      recenterThresholdM: 8,
+      zoom: 23.2,
+      lookAheadOffsetY: -250,
+      recenterThresholdM: 7,
       panDuration: 0.18,
       viewDuration: 0.2,
     }
@@ -677,9 +677,9 @@ export function getNavigationCameraState(guidance) {
   if (remainingDistanceKm <= 0.12) {
     return {
       mode: 'decision',
-      zoom: 22.1,
-      lookAheadOffsetY: -230,
-      recenterThresholdM: 10,
+      zoom: 22.8,
+      lookAheadOffsetY: -270,
+      recenterThresholdM: 8,
       panDuration: 0.2,
       viewDuration: 0.22,
     }
@@ -688,9 +688,9 @@ export function getNavigationCameraState(guidance) {
   if (remainingDistanceKm <= 0.35) {
     return {
       mode: 'approach',
-      zoom: 21.2,
-      lookAheadOffsetY: -255,
-      recenterThresholdM: 12,
+      zoom: 22.1,
+      lookAheadOffsetY: -305,
+      recenterThresholdM: 10,
       panDuration: 0.22,
       viewDuration: 0.25,
     }
@@ -699,9 +699,9 @@ export function getNavigationCameraState(guidance) {
   if (remainingDistanceKm <= 0.8) {
     return {
       mode: 'prepare',
-      zoom: 20.4,
-      lookAheadOffsetY: -280,
-      recenterThresholdM: 13,
+      zoom: 21.3,
+      lookAheadOffsetY: -325,
+      recenterThresholdM: 11,
       panDuration: 0.24,
       viewDuration: 0.28,
     }
@@ -709,9 +709,9 @@ export function getNavigationCameraState(guidance) {
 
   return {
     mode: 'cruise',
-    zoom: 19.7,
-    lookAheadOffsetY: -300,
-    recenterThresholdM: 14,
+    zoom: 20.4,
+    lookAheadOffsetY: -340,
+    recenterThresholdM: 12,
     panDuration: 0.24,
     viewDuration: 0.3,
   }
