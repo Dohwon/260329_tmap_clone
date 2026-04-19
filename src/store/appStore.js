@@ -233,6 +233,12 @@ function haversineKm(lat1, lng1, lat2, lng2) {
   return 2 * R * Math.asin(Math.sqrt(a))
 }
 
+function getHeadingGapDeg(a, b) {
+  if (!Number.isFinite(Number(a)) || !Number.isFinite(Number(b))) return 0
+  const diff = Math.abs(Number(a) - Number(b)) % 360
+  return diff > 180 ? 360 - diff : diff
+}
+
 function areSameCenter(prevCenter, nextCenter) {
   if (!Array.isArray(prevCenter) || !Array.isArray(nextCenter)) return false
   if (prevCenter.length < 2 || nextCenter.length < 2) return false
@@ -1517,6 +1523,11 @@ const useAppStore = create((set, get) => ({
       const rawJumpDistanceM = Number.isFinite(previousRawLat) && Number.isFinite(previousRawLng)
         ? haversineKm(previousRawLat, previousRawLng, location.lat, location.lng) * 1000
         : 0
+      const previousSpeedKmh = Number(previousLocation?.speedKmh ?? 0)
+      const impliedSpeedKmh = Number.isFinite(elapsedSincePrevLocationSec) && elapsedSincePrevLocationSec > 0
+        ? (rawJumpDistanceM / Math.max(elapsedSincePrevLocationSec, 0.2)) * 3.6
+        : 0
+      const headingGapDeg = getHeadingGapDeg(location.heading, previousLocation?.heading)
       const currentAccuracyM = Number(location.accuracy ?? 999)
       const previousAccuracyM = Number(previousLocation?.accuracy ?? 999)
       const plausibleJumpDistanceM = Math.max(
@@ -1524,7 +1535,7 @@ const useAppStore = create((set, get) => ({
         (((Math.max(
           8,
           currentSpeedKmh,
-          Number(previousLocation?.speedKmh ?? 0),
+          previousSpeedKmh,
         ) * 1000) / 3600) * Math.max(0.35, elapsedSincePrevLocationSec) * 2.8) + Math.max(4, currentAccuracyM * 0.45),
       )
       const maxAdvanceKm = Math.max(0.04, ((Math.max(12, currentSpeedKmh) * Math.max(1, elapsedSinceLastSampleSec)) / 3600) * 2.4)
@@ -1536,14 +1547,45 @@ const useAppStore = create((set, get) => ({
       }) : null
       const snapEnterDistanceLimitM = Math.max(18, Math.min(70, Number(location.accuracy ?? 24) * 1.35))
       const snapExitDistanceLimitM = Math.max(34, Math.min(110, Number(location.accuracy ?? 24) * 2.1))
+      const isSimulationJump =
+        state.isDriveSimulation &&
+        Number.isFinite(rawJumpDistanceM) &&
+        Number.isFinite(elapsedSincePrevLocationSec) &&
+        elapsedSincePrevLocationSec <= 3 &&
+        rawJumpDistanceM > Math.max(22, plausibleJumpDistanceM * 1.8)
+      const isHeadingMismatchJump =
+        !state.isDriveSimulation &&
+        Number.isFinite(rawJumpDistanceM) &&
+        Number.isFinite(elapsedSincePrevLocationSec) &&
+        elapsedSincePrevLocationSec <= 4 &&
+        rawJumpDistanceM >= 10 &&
+        headingGapDeg >= 70 &&
+        impliedSpeedKmh > Math.max(18, Math.max(currentSpeedKmh, previousSpeedKmh) + 18)
+      const isRecoveryJump =
+        !state.isDriveSimulation &&
+        Number.isFinite(rawJumpDistanceM) &&
+        Number.isFinite(elapsedSincePrevLocationSec) &&
+        elapsedSincePrevLocationSec >= 8 &&
+        elapsedSincePrevLocationSec <= 45 &&
+        rawJumpDistanceM > Math.max(35, plausibleJumpDistanceM * 1.5) &&
+        currentAccuracyM >= 25
+      const shouldIgnoreSample =
+        Number.isFinite(previousRawLat) &&
+        Number.isFinite(previousRawLng) &&
+        (isHeadingMismatchJump || isRecoveryJump)
+      if (shouldIgnoreSample) {
+        return state
+      }
       const isGeneralGpsJump =
         Number.isFinite(rawJumpDistanceM) &&
         Number.isFinite(elapsedSincePrevLocationSec) &&
         elapsedSincePrevLocationSec <= 4 &&
         rawJumpDistanceM > Math.max(14, plausibleJumpDistanceM) &&
         currentAccuracyM >= Math.min(60, previousAccuracyM + 8) &&
-        Math.max(currentSpeedKmh, Number(previousLocation?.speedKmh ?? 0)) <= 24
+        Math.max(currentSpeedKmh, previousSpeedKmh) <= 24
       const shouldFilterRawJump =
+        isSimulationJump
+        || 
         (state.isNavigating && Number.isFinite(rawJumpDistanceM) &&
           Number.isFinite(elapsedSincePrevLocationSec) &&
           elapsedSincePrevLocationSec <= 4 &&
