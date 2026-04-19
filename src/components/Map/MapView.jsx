@@ -1,9 +1,11 @@
-import React, { useEffect, useMemo, useRef } from 'react'
+import React, { Suspense, lazy, useEffect, useMemo, useRef } from 'react'
 import { CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import useAppStore from '../../store/appStore'
 import { HIGHWAYS } from '../../data/highwayData'
 import { buildRemainingRoutePolyline, getCurrentRouteSegment, getGuidancePriority, getNavigationCameraState, getUpcomingGuidanceList, shouldUseRawRoutePolyline } from '../../utils/navigationLogic'
+
+const NavigationMapLibreView = lazy(() => import('./NavigationMapLibreView'))
 
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -620,7 +622,7 @@ function getRoutePath(route, curvature = 0.1) {
 const reportedOffIcon = makeBadgeIcon({ text: '끔', background: '#F59E0B', size: 28 })
 const reportedFakeIcon = makeBadgeIcon({ text: '없음', background: '#EF4444', size: 32 })
 
-export default function MapView({ darkMode = false }) {
+function LeafletMapView({ darkMode = false }) {
   const {
     mapCenter,
     mapZoom,
@@ -1344,4 +1346,15 @@ export default function MapView({ darkMode = false }) {
       </div>
     </div>
   )
+}
+
+export default function MapView({ darkMode = false }) {
+  const isNavigating = useAppStore((s) => s.isNavigating)
+  return isNavigating
+    ? (
+      <Suspense fallback={<div className="absolute inset-0 bg-[#D8E4DE]" />}>
+        <NavigationMapLibreView darkMode={darkMode} />
+      </Suspense>
+    )
+    : <LeafletMapView darkMode={darkMode} />
 }

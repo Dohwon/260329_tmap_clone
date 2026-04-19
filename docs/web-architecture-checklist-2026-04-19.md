@@ -51,9 +51,9 @@
 
 ### 2-B. MapLibre GL JS 도입
 
-- [ ] `maplibre-gl` 기반 내비 전용 맵 컴포넌트 추가
-- [ ] 내비 모드에서만 MapLibre를 우선 사용
-- [ ] 기존 tile URL/label/fallback 정책을 style source로 재정의
+- [x] `maplibre-gl` 기반 내비 전용 맵 컴포넌트 추가
+- [x] 내비 모드에서만 MapLibre를 우선 사용
+- [x] 기존 tile URL/label/fallback 정책을 style source로 재정의
 
 완료 조건:
 - 내비 화면에서 Leaflet 대신 MapLibre가 렌더링된다.

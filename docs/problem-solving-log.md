@@ -15,6 +15,13 @@
 
 ### 실제 반영 포인트
 
+- 내비 화면에 `MapLibre GL JS` 기반 벡터/WebGL 지도를 첫 단계로 도입했다.
+  - `src/components/Map/NavigationMapLibreView.jsx`
+  - `src/components/Map/MapView.jsx`
+  - 내비 중에는 Leaflet 대신 MapLibre가 렌더링되고, 홈 지도에서는 기존 Leaflet을 유지하도록 분리했다.
+  - 현재/다음 경로, 지나온 길, 카메라, hazard, upcoming guidance를 MapLibre source/layer로 옮겼다.
+  - 번들 부담을 줄이기 위해 내비 시작 시점에만 lazy import되게 분리했다.
+
 - 내비 미니 인셋을 추상 SVG에서 `실제 세그먼트 기반 형상`으로 한 단계 끌어올렸다.
   - `src/components/Navigation/NavigationOverlay.jsx`
   - 현재 세그먼트와 다음 세그먼트를 기반으로 경로형 인셋을 다시 그리게 바꿨다.
@@ -65,6 +72,8 @@
 
 ### 재확인된 병목
 
+- MapLibre 도입은 시작됐지만 아직 `corridor geometry`, `lane geometry`, `실제 지도 위 분홍/초록 유도선`은 붙지 않았다.
+- MapLibre 청크가 커서 내비 시작 시 첫 로드 비용이 크다. 현재는 lazy import로 홈 번들 전파만 막은 상태다.
 - 현재 인셋은 실제 세그먼트 기반으로 개선됐지만, 아직 NGII corridor geometry 기반은 아니다.
 - 분홍/초록 유도선 문구는 생겼지만 실제 지도 위 lane-level 선 렌더링은 아직 없다.
 - 웹 유지 전략은 확정했지만, `Leaflet -> MapLibre`, `corridor API`, `core/enrichment 분리`는 구현이 남아 있다.
@@ -94,7 +103,7 @@
 1. `MapLibre GL JS` 기반 내비 맵 스파이크 작성
 2. `corridor geometry API` 설계와 NGII 최소 레이어 PoC 착수
 3. route core와 enrichment를 런타임/화면 레벨에서 분리
-4. Railway dev에서 camera banner + inset 회귀와 실제 도로 이벤트 표시를 다시 확인
+4. Railway dev에서 MapLibre 내비 추종, camera banner + inset 회귀를 다시 확인
 
 ## 2026-04-18
 
