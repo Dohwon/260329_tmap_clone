@@ -12,6 +12,7 @@ import {
   haversineM,
   shouldUseRawRoutePolyline,
 } from '../../utils/navigationLogic'
+import { validateRouteForNavigation } from '../../utils/routingGuards'
 
 const COLORS = {
   selectedRoute: '#FF89AC',
@@ -315,6 +316,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     mapZoom,
     routes,
     selectedRouteId,
+    driveRouteSnapshot,
     userLocation,
     locationHistory,
     drivePathHistory,
@@ -331,60 +333,62 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     routeOrigin,
   } = useAppStore()
 
-  const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
+  const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? driveRouteSnapshot ?? null
+  const routeValidity = useMemo(() => validateRouteForNavigation(selectedRoute, null), [selectedRoute])
+  const safeRoute = routeValidity.ok ? routeValidity.route : null
   const otherRoutes = useMemo(
     () => routes.filter((route) => route.id !== selectedRouteId),
     [routes, selectedRouteId]
   )
   const guidanceLocation = navigationMatchedLocation ?? userLocation
   const currentRouteSegment = useMemo(
-    () => getCurrentRouteSegment(selectedRoute, guidanceLocation),
-    [guidanceLocation, selectedRoute]
+    () => getCurrentRouteSegment(safeRoute, guidanceLocation),
+    [guidanceLocation, safeRoute]
   )
   const currentGuidance = useMemo(
-    () => getGuidancePriority(selectedRoute, guidanceLocation, mergeOptions).nextAction ?? null,
-    [guidanceLocation, mergeOptions, selectedRoute]
+    () => getGuidancePriority(safeRoute, guidanceLocation, mergeOptions).nextAction ?? null,
+    [guidanceLocation, mergeOptions, safeRoute]
   )
   const currentSegmentIndex = useMemo(() => {
-    if (!selectedRoute?.segmentStats?.length || !currentRouteSegment?.id) return -1
-    return selectedRoute.segmentStats.findIndex((segment) => segment.id === currentRouteSegment.id)
-  }, [currentRouteSegment?.id, selectedRoute?.segmentStats])
+    if (!safeRoute?.segmentStats?.length || !currentRouteSegment?.id) return -1
+    return safeRoute.segmentStats.findIndex((segment) => segment.id === currentRouteSegment.id)
+  }, [currentRouteSegment?.id, safeRoute?.segmentStats])
   const driverFocusSegments = useMemo(() => {
     if (!isNavigating) return []
-    const segments = selectedRoute?.segmentStats ?? []
+    const segments = safeRoute?.segmentStats ?? []
     if (segments.length === 0) return []
     const startIndex = Math.max(0, currentSegmentIndex)
     return segments
       .slice(startIndex, startIndex + 3)
       .filter((segment) => Array.isArray(segment?.positions) && segment.positions.length > 1)
-  }, [currentSegmentIndex, selectedRoute?.segmentStats])
+  }, [currentSegmentIndex, safeRoute?.segmentStats])
   const remainingRoutePath = useMemo(() => {
-    if (!selectedRoute) return []
+    if (!safeRoute) return []
     if (!isNavigating) {
-      return Array.isArray(selectedRoute.polyline) ? selectedRoute.polyline : []
+      return Array.isArray(safeRoute.polyline) ? safeRoute.polyline : []
     }
     const trimmed = buildRemainingRoutePolyline(
-      selectedRoute,
+      safeRoute,
       navigationProgressKm,
       navigationMatchedLocation ?? userLocation
     )
     if (trimmed.length < 2) return trimmed
-    return shouldUseRawRoutePolyline(selectedRoute) ? trimmed : trimmed
-  }, [navigationMatchedLocation, navigationProgressKm, selectedRoute, userLocation])
+    return shouldUseRawRoutePolyline(safeRoute) ? trimmed : trimmed
+  }, [navigationMatchedLocation, navigationProgressKm, safeRoute, userLocation])
   const activeSegmentPath = useMemo(() => {
     const positions = currentRouteSegment?.positions
     if (!Array.isArray(positions) || positions.length < 2) return []
     return positions
   }, [currentRouteSegment])
   const upcomingDriverGuidance = useMemo(() => {
-    if (!selectedRoute || !guidanceLocation) return []
-    return getUpcomingGuidanceList(selectedRoute, guidanceLocation, mergeOptions, 4)
+    if (!safeRoute || !guidanceLocation) return []
+    return getUpcomingGuidanceList(safeRoute, guidanceLocation, mergeOptions, 4)
       .filter((item) =>
         Number.isFinite(Number(item?.lat)) &&
         Number.isFinite(Number(item?.lng)) &&
         Number(item?.remainingDistanceKm) <= 2.5
       )
-  }, [guidanceLocation, mergeOptions, selectedRoute])
+  }, [guidanceLocation, mergeOptions, safeRoute])
   const cameraState = useMemo(() => getNavigationCameraState(currentGuidance), [
     currentGuidance?.id,
     currentGuidance?.remainingDistanceKm,
@@ -439,13 +443,13 @@ export default function NavigationMapLibreView({ darkMode = false }) {
 
   const cameraCollection = useMemo(() => ({
     type: 'FeatureCollection',
-    features: (selectedRoute?.cameras ?? [])
+    features: (safeRoute?.cameras ?? [])
       .filter((camera) => Array.isArray(camera?.coord) && camera.coord.length >= 2)
       .filter((camera) => !guidanceLocation || haversineM(guidanceLocation.lat, guidanceLocation.lng, camera.coord[0], camera.coord[1]) <= 2500)
       .slice(0, 12)
       .map((camera) => buildPointFeature(`camera-${camera.id}`, camera.coord, { type: camera.type ?? 'fixed' }))
       .filter(Boolean),
-  }), [guidanceLocation, selectedRoute?.cameras])
+  }), [guidanceLocation, safeRoute?.cameras])
 
   const otherRoutesCollection = useMemo(() => ({
     type: 'FeatureCollection',
@@ -498,16 +502,16 @@ export default function NavigationMapLibreView({ darkMode = false }) {
   const corridorBoundaryCollection = corridorData?.layers?.roadBoundary ?? { type: 'FeatureCollection', features: [] }
 
   useEffect(() => {
-    if (!selectedRoute?.id || !Array.isArray(selectedRoute?.polyline) || selectedRoute.polyline.length < 2) {
+    if (!safeRoute?.id || !Array.isArray(safeRoute?.polyline) || safeRoute.polyline.length < 2) {
       setCorridorData(null)
       return
     }
 
     let cancelled = false
     fetchRouteCorridor({
-      routeId: selectedRoute.id,
-      polyline: selectedRoute.polyline,
-      segmentStats: selectedRoute.segmentStats ?? [],
+      routeId: safeRoute.id,
+      polyline: safeRoute.polyline,
+      segmentStats: safeRoute.segmentStats ?? [],
       progressKm: navigationProgressKm ?? 0,
       radiusM: 450,
       includeLayers: ['laneCenter', 'connector', 'rampShape', 'roadBoundary'],
@@ -522,7 +526,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     return () => {
       cancelled = true
     }
-  }, [corridorProgressBucket, navigationProgressKm, selectedRoute?.id, selectedRoute?.polyline, selectedRoute?.segmentStats])
+  }, [corridorProgressBucket, navigationProgressKm, safeRoute?.id, safeRoute?.polyline, safeRoute?.segmentStats])
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
@@ -753,32 +757,32 @@ export default function NavigationMapLibreView({ darkMode = false }) {
 
   useEffect(() => {
     const map = mapRef.current
-    if (!map || !loadedRef.current || isNavigating || !selectedRoute?.id) return
-    if (!Array.isArray(selectedRoute.polyline) || selectedRoute.polyline.length < 2) return
-    if (lastPreviewFitRouteIdRef.current === selectedRoute.id) return
+    if (!map || !loadedRef.current || isNavigating || !safeRoute?.id) return
+    if (!Array.isArray(safeRoute.polyline) || safeRoute.polyline.length < 2) return
+    if (lastPreviewFitRouteIdRef.current === safeRoute.id) return
 
-    const bounds = selectedRoute.polyline.reduce((acc, point) => {
+    const bounds = safeRoute.polyline.reduce((acc, point) => {
       if (!Array.isArray(point) || point.length < 2) return acc
       return acc.extend([point[1], point[0]])
     }, new maplibregl.LngLatBounds(
-      [selectedRoute.polyline[0][1], selectedRoute.polyline[0][0]],
-      [selectedRoute.polyline[0][1], selectedRoute.polyline[0][0]]
+      [safeRoute.polyline[0][1], safeRoute.polyline[0][0]],
+      [safeRoute.polyline[0][1], safeRoute.polyline[0][0]]
     ))
 
-    lastPreviewFitRouteIdRef.current = selectedRoute.id
+    lastPreviewFitRouteIdRef.current = safeRoute.id
     map.fitBounds(bounds, {
       padding: { top: 120, right: 40, bottom: 260, left: 40 },
       duration: 0,
       essential: true,
     })
-  }, [isNavigating, selectedRoute?.id, selectedRoute?.polyline])
+  }, [isNavigating, safeRoute?.id, safeRoute?.polyline])
 
   useEffect(() => {
     const map = mapRef.current
     if (!map || !loadedRef.current || !currentMarkerRef.current || !guidanceLocation) return
 
     const nextHeading = getRouteLookAheadHeading(
-      selectedRoute,
+      safeRoute,
       guidanceLocation,
       resolveDriverHeading(userLocation, locationHistory)
     )
@@ -839,7 +843,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     locationHistory,
     mapZoom,
     navAutoFollow,
-    selectedRoute,
+    safeRoute,
     showRoutePanel,
     userLocation,
   ])
@@ -855,6 +859,19 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       essential: true,
     })
   }, [isNavigating, mapCenter, mapZoom])
+
+  if (!safeRoute && isNavigating) {
+    return (
+      <div className="absolute inset-0 bg-[#D8E4DE] flex items-center justify-center">
+        <div className="rounded-3xl bg-white/95 shadow-xl border border-gray-200 px-5 py-4 text-center max-w-xs">
+          <div className="text-sm font-bold text-red-500">안내 경로 복구 중</div>
+          <div className="text-xs text-gray-600 mt-2">
+            유효한 경로를 다시 확인하고 있습니다. 잠시 후 미리보기로 복귀합니다.
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return <div ref={containerRef} className="absolute inset-0" />
 }

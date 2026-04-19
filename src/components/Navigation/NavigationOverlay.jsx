@@ -565,6 +565,7 @@ export default function NavigationOverlay() {
   const lastRestaurantRefreshCoordRef = useRef(null)
   const arrivedRef = useRef(false) // 도착 중복 발동 방지
   const offRouteEvidenceRef = useRef({ count: 0, reason: null })
+  const driveRouteSnapshot = useAppStore((s) => s.driveRouteSnapshot)
 
   // 화면 꺼짐 방지
   useEffect(() => {
@@ -591,7 +592,7 @@ export default function NavigationOverlay() {
   // 카메라 근접 감지 (100m 이내 → 신고 프롬프트)
   useEffect(() => {
     if (!isNavigating || !userLocation) return
-    const route = routes.find(r => r.id === selectedRouteId)
+    const route = routes.find(r => r.id === selectedRouteId) ?? driveRouteSnapshot
     const cameras = route?.cameras ?? []
     for (const cam of cameras) {
       if (!hasValidCoordPair(cam?.coord)) continue
@@ -621,7 +622,7 @@ export default function NavigationOverlay() {
     }
   }, [userLocation, isNavigating])
 
-  const route = routes.find(r => r.id === selectedRouteId) ?? null
+  const route = routes.find(r => r.id === selectedRouteId) ?? driveRouteSnapshot ?? null
   const hasActiveRoute = Array.isArray(route?.polyline) && route.polyline.length > 1
   const guidanceLocation = navigationMatchedLocation ?? userLocation
   const navigationSnapshot = useMemo(() => {
@@ -963,7 +964,7 @@ export default function NavigationOverlay() {
     if (!isNavigating) return
     const id = window.setInterval(() => {
       const s = useAppStore.getState()
-      const currentRoute = s.routes.find((r) => r.id === s.selectedRouteId)
+      const currentRoute = s.routes.find((r) => r.id === s.selectedRouteId) ?? s.driveRouteSnapshot
       if (!currentRoute || currentRoute.source === 'recorded' || s.isRefreshingNavigation || !s.userLocation) return
 
       const probeLocation = s.navigationMatchedLocation ?? s.userLocation

@@ -1790,10 +1790,17 @@ const useAppStore = create((set, get) => ({
       return false
     }
     selectedRoute = navigationRouteValidity.route
+    const stabilizedRoutes = routes.map((route) => (
+      route.id === selectedRoute.id ? selectedRoute : route
+    ))
+    const routeProgress = userLocation && selectedRoute
+      ? analyzeRouteProgress(selectedRoute, userLocation)
+      : null
 
     set({
+      routes: stabilizedRoutes,
+      selectedRouteId: selectedRoute.id,
       navigationMatchedLocation: userLocation && selectedRoute ? (() => {
-        const routeProgress = analyzeRouteProgress(selectedRoute, userLocation)
         if (!routeProgress?.matchedLocation) return null
         return {
           ...userLocation,
@@ -1805,10 +1812,10 @@ const useAppStore = create((set, get) => ({
         }
       })() : null,
       navigationMatchedSegmentIndex: userLocation && selectedRoute
-        ? Number(analyzeRouteProgress(selectedRoute, userLocation).matchedSegmentIndex ?? -1)
+        ? Number(routeProgress?.matchedSegmentIndex ?? -1)
         : -1,
       navigationProgressKm: userLocation && selectedRoute
-        ? Number(analyzeRouteProgress(selectedRoute, userLocation).progressKm ?? 0)
+        ? Number(routeProgress?.progressKm ?? 0)
         : 0,
       isNavigating: true,
       navAutoFollow: true,
