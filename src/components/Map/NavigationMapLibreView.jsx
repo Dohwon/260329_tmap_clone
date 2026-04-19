@@ -7,6 +7,7 @@ import {
   buildRemainingRoutePolyline,
   getNavigationCameraRestoreDelay,
   getCurrentRouteSegment,
+  getGuideLineMeta,
   resolveNavigationCameraMode,
   getGuidancePriority,
   getNavigationCameraState,
@@ -112,6 +113,81 @@ function buildPointFeature(id, coord, properties = {}) {
       coordinates: [lng, lat],
     },
   }
+}
+
+function mapFeatureCollection(collection, extraProperties = {}, idPrefix = 'feature') {
+  if (!collection || collection.type !== 'FeatureCollection' || !Array.isArray(collection.features)) {
+    return { type: 'FeatureCollection', features: [] }
+  }
+
+  return {
+    type: 'FeatureCollection',
+    features: collection.features
+      .filter((feature) => feature?.geometry)
+      .map((feature, index) => ({
+        ...feature,
+        id: feature.id ?? `${idPrefix}-${index}`,
+        properties: {
+          ...(feature.properties ?? {}),
+          ...extraProperties,
+        },
+      })),
+  }
+}
+
+function buildGuideOverlayCollections({
+  guidance,
+  guideLineMeta,
+  corridorData,
+  driverFocusSegments = [],
+  activeSegmentPath = [],
+}) {
+  if (!guidance || !guideLineMeta) {
+    return {
+      guideRouteCollection: { type: 'FeatureCollection', features: [] },
+      guideMainlineCollection: { type: 'FeatureCollection', features: [] },
+    }
+  }
+
+  const remainingDistanceKm = Number(guidance?.remainingDistanceKm)
+  if (!Number.isFinite(remainingDistanceKm) || remainingDistanceKm > 0.9) {
+    return {
+      guideRouteCollection: { type: 'FeatureCollection', features: [] },
+      guideMainlineCollection: { type: 'FeatureCollection', features: [] },
+    }
+  }
+
+  const connectorCollection = corridorData?.layers?.connector
+  const laneCenterCollection = corridorData?.layers?.laneCenter
+  const hasConnector = Array.isArray(connectorCollection?.features) && connectorCollection.features.length > 0
+  const hasLaneCenter = Array.isArray(laneCenterCollection?.features) && laneCenterCollection.features.length > 0
+
+  const guideRouteCollection = hasConnector
+    ? mapFeatureCollection(connectorCollection, { guideColor: guideLineMeta.color, role: 'guide-route' }, 'guide-route')
+    : {
+        type: 'FeatureCollection',
+        features: driverFocusSegments
+          .slice(0, 2)
+          .map((segment, index) => buildLineFeature(`guide-route-${segment.id ?? index}`, segment.positions, {
+            guideColor: guideLineMeta.color,
+            role: 'guide-route',
+          }))
+          .filter(Boolean),
+      }
+
+  const guideMainlineCollection = hasLaneCenter
+    ? mapFeatureCollection(laneCenterCollection, { guideColor: '#E5E7EB', role: 'guide-mainline' }, 'guide-mainline')
+    : {
+        type: 'FeatureCollection',
+        features: activeSegmentPath.length > 1
+          ? [buildLineFeature('guide-mainline-active', activeSegmentPath, {
+              guideColor: '#E5E7EB',
+              role: 'guide-mainline',
+            })].filter(Boolean)
+          : [],
+      }
+
+  return { guideRouteCollection, guideMainlineCollection }
 }
 
 function getRouteLookAheadHeading(route, userLocation, fallbackHeading = 0) {
@@ -351,6 +427,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     () => getGuidancePriority(safeRoute, guidanceLocation, mergeOptions).nextAction ?? null,
     [guidanceLocation, mergeOptions, safeRoute]
   )
+  const guideLineMeta = useMemo(() => getGuideLineMeta(currentGuidance), [currentGuidance])
   const currentSegmentIndex = useMemo(() => {
     if (!safeRoute?.segmentStats?.length || !currentRouteSegment?.id) return -1
     return safeRoute.segmentStats.findIndex((segment) => segment.id === currentRouteSegment.id)
@@ -507,6 +584,15 @@ export default function NavigationMapLibreView({ darkMode = false }) {
   const corridorConnectorCollection = corridorData?.layers?.connector ?? { type: 'FeatureCollection', features: [] }
   const corridorRampCollection = corridorData?.layers?.rampShape ?? { type: 'FeatureCollection', features: [] }
   const corridorBoundaryCollection = corridorData?.layers?.roadBoundary ?? { type: 'FeatureCollection', features: [] }
+  const { guideRouteCollection, guideMainlineCollection } = useMemo(() => (
+    buildGuideOverlayCollections({
+      guidance: currentGuidance,
+      guideLineMeta,
+      corridorData,
+      driverFocusSegments,
+      activeSegmentPath,
+    })
+  ), [activeSegmentPath, corridorData, currentGuidance, driverFocusSegments, guideLineMeta])
 
   useEffect(() => {
     if (!safeRoute?.id || !Array.isArray(safeRoute?.polyline) || safeRoute.polyline.length < 2) {
@@ -566,6 +652,8 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       upsertGeoJsonSource(map, 'corridor-ramp', corridorRampCollection)
       upsertGeoJsonSource(map, 'corridor-connector', corridorConnectorCollection)
       upsertGeoJsonSource(map, 'corridor-lane-center', corridorLaneCenterCollection)
+      upsertGeoJsonSource(map, 'guide-mainline', guideMainlineCollection)
+      upsertGeoJsonSource(map, 'guide-route', guideRouteCollection)
 
       ensureLineLayer(map, 'corridor-boundary-line', 'corridor-boundary', {
         'line-color': '#475569',
@@ -607,6 +695,27 @@ export default function NavigationMapLibreView({ darkMode = false }) {
         'line-color': COLORS.navigationGuide,
         'line-width': 8,
         'line-opacity': 0.97,
+      })
+      ensureLineLayer(map, 'guide-mainline-line', 'guide-mainline', {
+        'line-color': ['coalesce', ['get', 'guideColor'], '#E5E7EB'],
+        'line-width': 8,
+        'line-opacity': 0.72,
+      })
+      ensureLineLayer(map, 'guide-mainline-dash', 'guide-mainline', {
+        'line-color': '#94A3B8',
+        'line-width': 3,
+        'line-opacity': 0.64,
+        'line-dasharray': [1.1, 1.5],
+      })
+      ensureLineLayer(map, 'guide-route-outline', 'guide-route', {
+        'line-color': '#0F172A',
+        'line-width': 14,
+        'line-opacity': 0.34,
+      })
+      ensureLineLayer(map, 'guide-route-line', 'guide-route', {
+        'line-color': ['coalesce', ['get', 'guideColor'], COLORS.navigationGuide],
+        'line-width': 10,
+        'line-opacity': 0.98,
       })
       ensureLineLayer(map, 'focus-route-outline', 'focus-route', {
         'line-color': '#0F172A',
@@ -748,6 +857,8 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     upsertGeoJsonSource(map, 'corridor-ramp', corridorRampCollection)
     upsertGeoJsonSource(map, 'corridor-connector', corridorConnectorCollection)
     upsertGeoJsonSource(map, 'corridor-lane-center', corridorLaneCenterCollection)
+    upsertGeoJsonSource(map, 'guide-mainline', guideMainlineCollection)
+    upsertGeoJsonSource(map, 'guide-route', guideRouteCollection)
   }, [
     activeCollection,
     cameraCollection,
@@ -757,6 +868,8 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     corridorRampCollection,
     destinationCollection,
     focusCollection,
+    guideMainlineCollection,
+    guideRouteCollection,
     guidanceCollection,
     hazardCollection,
     historyCollection,

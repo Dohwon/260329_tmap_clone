@@ -798,6 +798,44 @@ export function getLaneGuidance(guidance) {
   return null
 }
 
+export function getGuideLineMeta(guidance) {
+  const extcVoiceCode = Number(guidance?.extcVoiceCode ?? guidance?.nExtcVoiceCode)
+  const laneText = getLaneGuidance(guidance)
+  const directionLabel = (() => {
+    const text = `${guidance?.laneHint ?? ''} ${guidance?.instructionText ?? ''} ${guidance?.description ?? ''}`
+    const turnType = Number(guidance?.turnType)
+    if (/좌측|왼쪽/.test(text) || turnType === 12 || turnType === 16 || turnType === 18) return '좌측'
+    if (/우측|오른쪽/.test(text) || turnType === 13 || turnType === 17 || turnType === 19 || turnType >= 100) return '우측'
+    return '전방'
+  })()
+
+  const palette = {
+    65: { label: '초록색', color: '#B8FFE9', textColor: '#0F766E', bgClass: 'bg-emerald-50 border-emerald-100' },
+    66: { label: '분홍색', color: '#FF89AC', textColor: '#BE185D', bgClass: 'bg-rose-50 border-rose-100' },
+    67: { label: '파란색', color: '#54C7FC', textColor: '#0369A1', bgClass: 'bg-sky-50 border-sky-100' },
+    68: { label: '노란색', color: '#FACC15', textColor: '#A16207', bgClass: 'bg-amber-50 border-amber-100' },
+    90: { label: '지정', color: '#A78BFA', textColor: '#6D28D9', bgClass: 'bg-violet-50 border-violet-100' },
+  }[extcVoiceCode] ?? null
+
+  if (palette) {
+    return {
+      ...palette,
+      text: directionLabel === '전방'
+        ? `${palette.label} 유도선을 따라가세요`
+        : `${directionLabel} ${palette.label} 유도선을 따라가세요`,
+    }
+  }
+
+  if (!laneText) return null
+  return {
+    label: '유도',
+    color: '#22D3EE',
+    textColor: '#0F766E',
+    bgClass: 'bg-cyan-50 border-cyan-100',
+    text: laneText,
+  }
+}
+
 export function buildLanePatternFromGuidance(guidance) {
   const laneText = normalizeLaneText(guidance?.laneHint ?? guidance?.instructionText ?? guidance?.description ?? '')
   const laneEntries = parseLaneTurnInfo(guidance?.laneTurnInfo ?? guidance?.laneInfoList ?? guidance?.laneGuideInfo)

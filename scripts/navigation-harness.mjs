@@ -21,6 +21,7 @@ import {
   ensureLiveRouteSource,
   formatGuidanceDistance,
   getEffectiveCurrentSpeedContext,
+  getGuideLineMeta,
   getNavigationCameraRestoreDelay,
   getCurrentRouteSegment,
   getGuidanceInstruction,
@@ -234,6 +235,26 @@ run('guidance inset appears only for immediate TBTs within 300m', () => {
     turnType: 200,
     remainingDistanceKm: 0.12,
   }), false)
+})
+
+run('guide line meta keeps overlay and map colors on the same palette', () => {
+  const pinkMeta = getGuideLineMeta({
+    turnType: 17,
+    remainingDistanceKm: 0.22,
+    extcVoiceCode: 66,
+    instructionText: '우측 분기입니다',
+  })
+  assert.equal(pinkMeta?.color, '#FF89AC')
+  assert.match(pinkMeta?.text ?? '', /우측 분홍색 유도선/)
+
+  const greenMeta = getGuideLineMeta({
+    turnType: 16,
+    remainingDistanceKm: 0.18,
+    extcVoiceCode: 65,
+    instructionText: '본선 합류 후 직진합니다',
+  })
+  assert.equal(greenMeta?.color, '#B8FFE9')
+  assert.match(greenMeta?.text ?? '', /초록색 유도선/)
 })
 
 run('guidance text prefers real TMAP instruction wording when available', () => {
