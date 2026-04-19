@@ -2766,15 +2766,17 @@ const useAppStore = create((set, get) => ({
       })
       get().addRecentSearch(normalizedDestination)
 
-      const tmapStatus = await fetchTmapStatus()
-      get().setTmapStatus({ ...tmapStatus, lastError: null })
+      const tmapStatusPromise = fetchTmapStatus()
 
       let liveRoutes = []
       let fallbackRoutes = []
+      let resolvedTmapStatus = { hasApiKey: get().tmapStatus.hasApiKey, mode: get().tmapStatus.mode }
       try {
         liveRoutes = await loadLiveRoutes(origin, normalizedDestination, get().waypoints, routePreferences, {
           routeRequestMode: 'preview',
         })
+        resolvedTmapStatus = await tmapStatusPromise
+        get().setTmapStatus({ ...resolvedTmapStatus, lastError: null })
         if (liveRoutes.length > 0) {
           const reusedRoute = liveRoutes.find((route) => route.reusedFromCache)
           get().setTmapStatus({
@@ -2784,9 +2786,10 @@ const useAppStore = create((set, get) => ({
           })
         }
       } catch (error) {
+        resolvedTmapStatus = await tmapStatusPromise
         fallbackRoutes = buildFallbackRoutes(origin, normalizedDestination, routePreferences, driverPreset)
         get().setTmapStatus({
-          hasApiKey: tmapStatus.hasApiKey,
+          hasApiKey: resolvedTmapStatus.hasApiKey,
           mode: 'simulation',
           lastError: error?.message ?? 'TMAP 경로 응답 실패',
         })
@@ -2812,7 +2815,7 @@ const useAppStore = create((set, get) => ({
           scenicReferencePolyline: [],
         })
         get().setTmapStatus({
-          hasApiKey: tmapStatus.hasApiKey,
+          hasApiKey: resolvedTmapStatus.hasApiKey,
           mode: liveRoutes.length > 0 ? 'live' : 'simulation',
           lastError: get().tmapStatus.lastError ?? '유효한 경로를 만들지 못했습니다.',
         })

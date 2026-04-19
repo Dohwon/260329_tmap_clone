@@ -14,6 +14,7 @@ const ROUTE_ACTUAL_META_CACHE = new Map()
 const ROUTE_ACTUAL_META_TTL_MS = 1000 * 60 * 10
 const ROUTE_CORRIDOR_CACHE = new Map()
 const ROUTE_CORRIDOR_TTL_MS = 1000 * 60 * 2
+const TMAP_STATUS_CACHE_TTL_MS = 1000 * 30
 const ENRICHMENT_SAFE_MODE_TTL_MS = 1000 * 60 * 3
 const ENRICHMENT_SAFE_MODE_FAILURES = 2
 const nearestRoadCircuit = {
@@ -21,6 +22,10 @@ const nearestRoadCircuit = {
 }
 const routeRateLimitState = {
   blockedUntil: 0,
+}
+const tmapStatusCache = {
+  savedAt: 0,
+  value: null,
 }
 const enrichmentSafeModeState = {
   nearby: { failures: 0, blockedUntil: 0 },
@@ -1451,13 +1456,22 @@ export function getDirectRouteOptionsForMode(roadType = 'mixed', routeRequestMod
 }
 
 export async function fetchTmapStatus() {
+  if (tmapStatusCache.value && Date.now() - tmapStatusCache.savedAt <= TMAP_STATUS_CACHE_TTL_MS) {
+    return tmapStatusCache.value
+  }
   try {
     const res = await fetch('/api/meta/tmap-status')
     if (!res.ok) throw new Error('TMAP 상태 조회 실패')
-    return await res.json()
+    const status = await res.json()
+    tmapStatusCache.savedAt = Date.now()
+    tmapStatusCache.value = status
+    return status
   } catch {
     const hasLocalKey = Boolean(import.meta.env.VITE_TMAP_API_KEY || import.meta.env.TMAP_API_KEY)
-    return { hasApiKey: hasLocalKey, mode: hasLocalKey ? 'live' : 'simulation' }
+    const fallbackStatus = { hasApiKey: hasLocalKey, mode: hasLocalKey ? 'live' : 'simulation' }
+    tmapStatusCache.savedAt = Date.now()
+    tmapStatusCache.value = fallbackStatus
+    return fallbackStatus
   }
 }
 
@@ -1949,7 +1963,7 @@ export async function searchSafetyHazards(lat, lng) {
 export async function fetchRoutes(startLat, startLng, endLat, endLng, preferences = {}) {
   const start = { lat: startLat, lng: startLng, name: '출발' }
   const dest = { lat: endLat, lng: endLng, name: '도착' }
-  const { roadType = 'mixed', routeRequestMode = 'preview' } = preferences
+  const { roadType = 'mixed', routeRequestMode = 'preview', enableViaExpansion = false } = preferences
 
   const directOpts = getDirectRouteOptionsForMode(roadType, routeRequestMode)
   const directResults = []
@@ -1978,7 +1992,7 @@ export async function fetchRoutes(startLat, startLng, endLat, endLng, preference
   const baseRoute = routes[0]
   const junctions = baseRoute?.junctions ?? []
 
-  if (routeRequestMode !== 'navigation' && routes.length < 2 && junctions.length >= 2) {
+  if (routeRequestMode !== 'navigation' && enableViaExpansion && routes.length < 2 && junctions.length >= 2) {
     const viaA = junctions[Math.floor(junctions.length * 0.35)]
     const viaB = junctions[Math.floor(junctions.length * 0.65)]
     const viaCandidates = [
