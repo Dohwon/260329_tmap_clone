@@ -28,6 +28,7 @@ import {
   getLaneGuidance,
   resolveNavigationCameraMode,
   getRemainingEta,
+  shouldShowGuidanceInset,
   getTurnInstruction,
   getUpcomingJunction,
   getUpcomingMergeOptions,
@@ -216,6 +217,23 @@ run('navigation camera restore delay matches manual and north-up recovery rules'
     navAutoFollow: false,
     showRoutePanel: false,
   }), null)
+})
+
+run('guidance inset appears only for immediate TBTs within 300m', () => {
+  assert.equal(shouldShowGuidanceInset({
+    turnType: 13,
+    remainingDistanceKm: 0.28,
+  }), true)
+
+  assert.equal(shouldShowGuidanceInset({
+    turnType: 17,
+    remainingDistanceKm: 0.31,
+  }), false)
+
+  assert.equal(shouldShowGuidanceInset({
+    turnType: 200,
+    remainingDistanceKm: 0.12,
+  }), false)
 })
 
 run('guidance text prefers real TMAP instruction wording when available', () => {

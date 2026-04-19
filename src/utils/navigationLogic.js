@@ -948,6 +948,16 @@ export function getNavigationCameraRestoreDelay({
   return null
 }
 
+export function shouldShowGuidanceInset(guidance) {
+  if (!guidance) return false
+  const remainingDistanceKm = Number(guidance?.remainingDistanceKm)
+  const turnType = Number(guidance?.turnType)
+  if (!Number.isFinite(remainingDistanceKm)) return false
+  if (remainingDistanceKm > 0.3) return false
+  if (turnType === 200 || turnType === 201) return false
+  return true
+}
+
 export function analyzeRecordedDrive(recordedPolyline = [], recordedSamples = [], plannedRoute = {}) {
   const actualPolyline = (recordedPolyline ?? []).map(toPoint).filter(Boolean)
   const plannedPolyline = (plannedRoute?.originalRoutePolyline ?? plannedRoute?.polyline ?? []).map(toPoint).filter(Boolean)

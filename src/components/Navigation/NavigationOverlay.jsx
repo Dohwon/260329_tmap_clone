@@ -15,6 +15,7 @@ import {
   getGuidancePriority,
   getCurrentRouteSegment,
   getRemainingEta,
+  shouldShowGuidanceInset,
   getUpcomingGuidanceList,
   getUpcomingMergeOptions,
   haversineM,
@@ -233,7 +234,7 @@ function buildGuideLineSpeech(guidance) {
   return guideLineMeta?.text ?? null
 }
 
-function HighwayInsetCard({ guidance, focusSegments = [] }) {
+function GuidanceInsetCard({ guidance, afterNextGuidance = null, focusSegments = [] }) {
   if (!guidance) return null
 
   const nextRoadLabel = shortenRoadLabel(guidance.afterRoadName || guidance.nextRoadName || guidance.name || '')
@@ -242,14 +243,22 @@ function HighwayInsetCard({ guidance, focusSegments = [] }) {
   const insetGeometry = buildHighwayInsetGeometry(focusSegments)
   const guideLineMeta = getGuideLineMeta(guidance)
   const lanePattern = getLanePattern(guidance)
+  const nextActionLabel = getGuidanceInstruction(guidance)
+  const isHighwayStyle = isHighwayGuidance(guidance)
+  const afterNextLabel = afterNextGuidance ? getGuidanceInstruction(afterNextGuidance) : null
+  const afterNextRoadLabel = shortenRoadLabel(
+    afterNextGuidance?.afterRoadName || afterNextGuidance?.nextRoadName || afterNextGuidance?.name || ''
+  )
 
   return (
     <div className="rounded-2xl bg-white/95 backdrop-blur shadow-xl border border-white/80 p-3">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <div className="text-[11px] font-bold text-emerald-700">분기 확대 안내</div>
+          <div className={`text-[11px] font-bold ${isHighwayStyle ? 'text-emerald-700' : 'text-sky-700'}`}>
+            {isHighwayStyle ? '분기 확대 안내' : '교차로 확대 안내'}
+          </div>
           <div className="mt-0.5 text-[12px] font-black text-gray-900">
-            {formatGuidanceDistance(guidance.remainingDistanceKm)} 후 {getGuidanceInstruction(guidance)}
+            {formatGuidanceDistance(guidance.remainingDistanceKm)} 후 {nextActionLabel}
           </div>
         </div>
         <div className="text-[10px] font-bold text-gray-400">실제 경로 확대</div>
@@ -350,11 +359,25 @@ function HighwayInsetCard({ guidance, focusSegments = [] }) {
           <div className="text-[10px] font-bold text-gray-400">현재 본선</div>
           <div className="mt-0.5 text-[11px] font-bold text-gray-800 truncate">{currentRoadLabel || '현재 주행 구간'}</div>
         </div>
-        <div className="rounded-xl bg-emerald-50 px-2.5 py-2">
-          <div className="text-[10px] font-bold text-emerald-600">연결 방향</div>
-          <div className="mt-0.5 text-[11px] font-bold text-emerald-800 truncate">{nextRoadLabel || '연결 도로'}</div>
+        <div className={`rounded-xl px-2.5 py-2 ${isHighwayStyle ? 'bg-emerald-50' : 'bg-sky-50'}`}>
+          <div className={`text-[10px] font-bold ${isHighwayStyle ? 'text-emerald-600' : 'text-sky-600'}`}>다음 연결</div>
+          <div className={`mt-0.5 text-[11px] font-bold truncate ${isHighwayStyle ? 'text-emerald-800' : 'text-sky-800'}`}>
+            {nextRoadLabel || nextActionLabel}
+          </div>
         </div>
       </div>
+
+      {afterNextGuidance && (
+        <div className="mt-2 rounded-xl bg-slate-50 px-2.5 py-2">
+          <div className="text-[10px] font-bold text-slate-400">이어서 다음</div>
+          <div className="mt-0.5 text-[11px] font-bold text-slate-800 truncate">
+            {formatGuidanceDistance(Math.max(0, Number(afterNextGuidance.remainingDistanceKm ?? 0) - Number(guidance.remainingDistanceKm ?? 0)))} 후 {afterNextLabel}
+          </div>
+          <div className="mt-0.5 text-[10px] text-slate-500 truncate">
+            {afterNextRoadLabel || '연결 도로'}
+          </div>
+        </div>
+      )}
 
       {previewSegments.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -1083,7 +1106,7 @@ export default function NavigationOverlay() {
     nextGuidance && isHighwayGuidance(nextGuidance)
   )
   const laneSource = nextGuidance ?? nextMergeOpt ?? null
-  const isNearLaneDecision = Number(nextGuidance?.remainingDistanceKm) <= 0.9
+  const showGuidanceInset = shouldShowGuidanceInset(nextGuidance)
   const nearbyFuelSummary = nearbyCategory === '주유소' && nearbyPOIs.length > 0
     ? {
         nearbyLowestPoi: [...nearbyPOIs].sort((a, b) => getDiscountedFuelPrice(a, settings) - getDiscountedFuelPrice(b, settings))[0] ?? null,
@@ -1376,12 +1399,16 @@ export default function NavigationOverlay() {
         )}
       </div>
 
-      {isNearLaneDecision && laneSource && isHighwayStyleGuidance && (
+      {showGuidanceInset && laneSource && (
         <div
           className="absolute right-4 z-20 w-[228px]"
           style={{ top: cameraBanner ? '164px' : '122px' }}
         >
-          <HighwayInsetCard guidance={nextGuidance ?? laneSource} focusSegments={focusSegments} />
+          <GuidanceInsetCard
+            guidance={nextGuidance ?? laneSource}
+            afterNextGuidance={afterNextGuidance}
+            focusSegments={focusSegments}
+          />
         </div>
       )}
 
