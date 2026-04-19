@@ -2770,6 +2770,7 @@ const useAppStore = create((set, get) => ({
       get().setTmapStatus({ ...tmapStatus, lastError: null })
 
       let liveRoutes = []
+      let fallbackRoutes = []
       try {
         liveRoutes = await loadLiveRoutes(origin, normalizedDestination, get().waypoints, routePreferences, {
           routeRequestMode: 'preview',
@@ -2783,6 +2784,7 @@ const useAppStore = create((set, get) => ({
           })
         }
       } catch (error) {
+        fallbackRoutes = buildFallbackRoutes(origin, normalizedDestination, routePreferences, driverPreset)
         get().setTmapStatus({
           hasApiKey: tmapStatus.hasApiKey,
           mode: 'simulation',
@@ -2790,13 +2792,15 @@ const useAppStore = create((set, get) => ({
         })
       }
 
-      const decoratedRoutes = rankRoutesByDriverPreset(liveRoutes
-        .map((route, index) => decorateRoute(route, index, {
-          origin,
-          destination: normalizedDestination,
-          routePreferences,
-          driverPreset,
-        })), driverPreset)
+      const decoratedRoutes = liveRoutes.length > 0
+        ? rankRoutesByDriverPreset(liveRoutes
+          .map((route, index) => decorateRoute(route, index, {
+            origin,
+            destination: normalizedDestination,
+            routePreferences,
+            driverPreset,
+          })), driverPreset)
+        : fallbackRoutes
       if (decoratedRoutes.length === 0) {
         set({
           routes: [],
