@@ -15,6 +15,7 @@ import {
 import {
   analyzeRecordedDrive,
   analyzeRouteProgress,
+  buildLanePatternFromGuidance,
   buildRemainingRoutePolyline,
   buildDrivingHabitSummary,
   ensureLiveRouteSource,
@@ -523,6 +524,36 @@ run('lane guidance prefers explicit laneInfo patterns when available', () => {
     }),
     '1~2차로 이용'
   )
+  assert.equal(
+    getLaneGuidance({
+      turnType: 19,
+      laneTurnInfo: [
+        { turn: 3, avail: 0, etc: 1 },
+        { turn: 10, avail: 0, etc: 0 },
+        { turn: 8, avail: 0, etc: 0 },
+        { turn: 8, avail: 0, etc: 0 },
+        { turn: 40, avail: 32, etc: 64 },
+      ],
+    }),
+    '5차로 이용'
+  )
+})
+
+run('lane pattern expands to actual lane count when laneTurnInfo is available', () => {
+  const pattern = buildLanePatternFromGuidance({
+    turnType: 19,
+    laneTurnInfo: [
+      { turn: 3, avail: 0, etc: 1 },
+      { turn: 10, avail: 0, etc: 0 },
+      { turn: 8, avail: 0, etc: 0 },
+      { turn: 8, avail: 32, etc: 0 },
+      { turn: 40, avail: 32, etc: 64 },
+    ],
+  })
+
+  assert.equal(pattern.length, 5)
+  assert.equal(pattern[3], 'active-right')
+  assert.equal(pattern[4], 'active-right')
 })
 
 run('recorded drive analysis finds deviations and braking hotspots from actual samples', () => {

@@ -196,6 +196,94 @@ function normalizeLaneText(text = '') {
     .trim()
 }
 
+function parseLaneTurnInfo(rawLaneTurnInfo) {
+  if (!rawLaneTurnInfo) return []
+
+  const normalizeEntry = (entry, index = 0) => {
+    const turn = Number(entry?.turn ?? entry?.turnType ?? entry?.dir ?? entry?.direction ?? 0)
+    const avail = Number(entry?.avail ?? entry?.available ?? entry?.availableCode ?? entry?.recommend ?? 0)
+    const etc = Number(entry?.etc ?? entry?.etcCode ?? entry?.extc ?? entry?.extra ?? 0)
+    return {
+      index,
+      turn: Number.isFinite(turn) ? turn : 0,
+      avail: Number.isFinite(avail) ? avail : 0,
+      etc: Number.isFinite(etc) ? etc : 0,
+    }
+  }
+
+  if (Array.isArray(rawLaneTurnInfo)) {
+    return rawLaneTurnInfo.map((entry, index) => normalizeEntry(entry, index))
+  }
+
+  if (typeof rawLaneTurnInfo === 'string') {
+    const trimmed = rawLaneTurnInfo.trim()
+    if (!trimmed) return []
+    try {
+      const parsed = JSON.parse(trimmed)
+      if (Array.isArray(parsed)) {
+        return parsed.map((entry, index) => normalizeEntry(entry, index))
+      }
+    } catch {
+      const matches = [...trimmed.matchAll(/turn\s*=\s*(\d+).*?avail\s*=\s*(\d+).*?etc\s*=\s*(\d+)/gi)]
+      if (matches.length > 0) {
+        return matches.map((match, index) => normalizeEntry({
+          turn: Number(match[1]),
+          avail: Number(match[2]),
+          etc: Number(match[3]),
+        }, index))
+      }
+    }
+  }
+
+  if (typeof rawLaneTurnInfo === 'object') {
+    const candidateEntries = rawLaneTurnInfo?.lanes ?? rawLaneTurnInfo?.items ?? rawLaneTurnInfo?.laneTurnInfo
+    if (Array.isArray(candidateEntries)) {
+      return candidateEntries.map((entry, index) => normalizeEntry(entry, index))
+    }
+  }
+
+  return []
+}
+
+function getGuidanceDirection(guidance, text = '') {
+  const turnType = Number(guidance?.turnType)
+  if (/좌측|왼쪽/.test(text) || turnType === 12 || turnType === 16 || turnType === 18) return 'left'
+  if (/우측|오른쪽/.test(text) || turnType === 13 || turnType === 17 || turnType === 19 || turnType >= 100) return 'right'
+  return 'forward'
+}
+
+function getLaneRangeSummary(indices = []) {
+  if (!Array.isArray(indices) || indices.length === 0) return null
+  const normalized = [...new Set(indices)].sort((a, b) => a - b)
+  if (normalized.length === 1) return `${normalized[0] + 1}차로`
+  return `${normalized[0] + 1}~${normalized[normalized.length - 1] + 1}차로`
+}
+
+function inferLaneSummaryFromEntries(entries = [], guidance, text = '') {
+  if (!Array.isArray(entries) || entries.length === 0) return null
+  const activeIndices = entries
+    .filter((entry) => entry.avail > 0 || [65, 66, 67, 68, 90].includes(entry.etc))
+    .map((entry) => entry.index)
+  const direction = getGuidanceDirection(guidance, text)
+
+  if (activeIndices.length > 0) {
+    const laneRange = getLaneRangeSummary(activeIndices)
+    if (laneRange) {
+      if (direction === 'left') return `${laneRange} 이용`
+      if (direction === 'right') return `${laneRange} 이용`
+      return `${laneRange} 유지`
+    }
+  }
+
+  if (entries.some((entry) => entry.etc === 64 || entry.etc === 65)) {
+    return text.includes('직좌')
+      ? '버스전용 포함 직진 또는 좌회전 차로 주의'
+      : '버스전용차로 주의'
+  }
+
+  return null
+}
+
 function getGuidanceSourcePriority(source = '') {
   if (source === 'maneuver') return 0
   if (source === 'synthetic') return 1
@@ -652,7 +740,8 @@ export function getGuidanceInstruction(guidance) {
 
 export function getLaneGuidance(guidance) {
   const text = normalizeLaneText(guidance?.laneHint ?? guidance?.instructionText ?? guidance?.description ?? '')
-  if (!text) return null
+  const laneEntries = parseLaneTurnInfo(guidance?.laneTurnInfo ?? guidance?.laneInfoList ?? guidance?.laneGuideInfo)
+  if (!text && laneEntries.length === 0) return null
   const extcVoiceCode = Number(guidance?.extcVoiceCode ?? guidance?.nExtcVoiceCode)
 
   if (/직\s*좌|좌\s*직/.test(text)) return '직진 또는 좌회전 차로 이용'
@@ -666,6 +755,9 @@ export function getLaneGuidance(guidance) {
   if (extcVoiceCode === 67) return '파란 유도 차로 따라가기'
   if (extcVoiceCode === 68) return '노란 유도 차로 따라가기'
   if (extcVoiceCode === 90) return '지정 유도 차로 따라가기'
+
+  const entrySummary = inferLaneSummaryFromEntries(laneEntries, guidance, text)
+  if (entrySummary) return entrySummary
 
   const directionLaneCount = text.match(/(좌측|우측|가운데)\s*(\d+)개?차로(?:를)?\s*(이용|준비|진입|유지|이동)/)
   if (directionLaneCount) {
@@ -704,6 +796,63 @@ export function getLaneGuidance(guidance) {
       : '연결 도로 진입 차로 미리 준비'
   }
   return null
+}
+
+export function buildLanePatternFromGuidance(guidance) {
+  const laneText = normalizeLaneText(guidance?.laneHint ?? guidance?.instructionText ?? guidance?.description ?? '')
+  const laneEntries = parseLaneTurnInfo(guidance?.laneTurnInfo ?? guidance?.laneInfoList ?? guidance?.laneGuideInfo)
+  const direction = getGuidanceDirection(guidance, laneText)
+
+  if (laneEntries.length > 0) {
+    const count = laneEntries.length
+    const recommendedIndices = laneEntries
+      .filter((entry) => entry.avail > 0 || [65, 66, 67, 68, 90].includes(entry.etc))
+      .map((entry) => entry.index)
+    const fallbackIndices = recommendedIndices.length > 0
+      ? recommendedIndices
+      : direction === 'left'
+        ? [0]
+        : direction === 'right'
+          ? [Math.max(0, count - 1)]
+          : [Math.floor((count - 1) / 2)]
+
+    return laneEntries.map((entry) => {
+      const isRecommended = fallbackIndices.includes(entry.index)
+      const isBusOnly = entry.etc === 64 || entry.etc === 65
+      if (!isRecommended) return isBusOnly ? 'muted-bus' : 'muted'
+      if (direction === 'left') return 'active-left'
+      if (direction === 'right') return 'active-right'
+      return 'active-forward'
+    })
+  }
+
+  if (laneText.includes('우측 2개 차로')) {
+    return ['muted', 'forward', 'active-right', 'active-right']
+  }
+  if (laneText.includes('좌측 2개 차로')) {
+    return ['active-left', 'active-left', 'forward', 'muted']
+  }
+  if (laneText.includes('가운데 2개 차로')) {
+    return ['muted', 'active-forward', 'active-forward', 'muted']
+  }
+  if (/1\s*(?:~|-)\s*2차로/.test(laneText)) {
+    return ['active-left', 'active-left', 'forward', 'muted']
+  }
+  if (/3\s*(?:~|-)\s*4차로/.test(laneText)) {
+    return ['muted', 'forward', 'active-right', 'active-right']
+  }
+
+  const t = Number(guidance?.turnType)
+  if (t === 12 || t === 16 || t === 18) {
+    return ['active-left', 'forward', 'muted']
+  }
+  if (t === 13 || t === 17 || t === 19) {
+    return ['muted', 'forward', 'active-right']
+  }
+  if (t >= 125 && t <= 130) {
+    return ['muted', 'active-right', 'active-right']
+  }
+  return ['forward', 'active-forward', 'forward']
 }
 
 export function getNavigationCameraState(guidance) {

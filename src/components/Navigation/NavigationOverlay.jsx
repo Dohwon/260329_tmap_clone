@@ -7,6 +7,7 @@ import { PRESET_INFO } from '../../data/mockData'
 import { fetchUpcomingFuelContext, getDiscountedFuelPrice, searchNearbyPOIs } from '../../services/tmapService'
 import {
   analyzeRouteProgress,
+  buildLanePatternFromGuidance,
   formatGuidanceDistance,
   getEffectiveCurrentSpeedContext,
   getGuidanceInstruction,
@@ -57,44 +58,13 @@ function areSimilarPolylines(a = [], b = []) {
 }
 
 function getLanePattern(guidance) {
-  const laneText = String(guidance?.laneHint ?? guidance?.instructionText ?? guidance?.description ?? '')
-    .replace(/\s+/g, ' ')
-    .replace(/왼쪽/g, '좌측')
-    .replace(/오른쪽/g, '우측')
-    .trim()
-
-  if (laneText.includes('우측 2개 차로')) {
-    return ['muted', 'forward', 'active-right', 'active-right']
-  }
-  if (laneText.includes('좌측 2개 차로')) {
-    return ['active-left', 'active-left', 'forward', 'muted']
-  }
-  if (laneText.includes('가운데 2개 차로')) {
-    return ['muted', 'active-forward', 'active-forward', 'muted']
-  }
-  if (/1\s*(?:~|-)\s*2차로/.test(laneText)) {
-    return ['active-left', 'active-left', 'forward', 'muted']
-  }
-  if (/3\s*(?:~|-)\s*4차로/.test(laneText)) {
-    return ['muted', 'forward', 'active-right', 'active-right']
-  }
-
-  const t = Number(guidance?.turnType)
-  if (t === 12 || t === 16 || t === 18) {
-    return ['active-left', 'forward', 'muted']
-  }
-  if (t === 13 || t === 17 || t === 19) {
-    return ['muted', 'forward', 'active-right']
-  }
-  if (t >= 125 && t <= 130) {
-    return ['muted', 'active-right', 'active-right']
-  }
-  return ['forward', 'active-forward', 'forward']
+  return buildLanePatternFromGuidance(guidance)
 }
 
 function getLaneArrow(lane) {
   if (lane === 'active-left') return '↖'
   if (lane === 'active-right') return '↗'
+  if (lane === 'muted-bus') return 'B'
   return '↑'
 }
 
@@ -271,6 +241,7 @@ function HighwayInsetCard({ guidance, focusSegments = [] }) {
   const previewSegments = focusSegments.slice(0, 3)
   const insetGeometry = buildHighwayInsetGeometry(focusSegments)
   const guideLineMeta = getGuideLineMeta(guidance)
+  const lanePattern = getLanePattern(guidance)
 
   return (
     <div className="rounded-2xl bg-white/95 backdrop-blur shadow-xl border border-white/80 p-3">
@@ -345,6 +316,31 @@ function HighwayInsetCard({ guidance, focusSegments = [] }) {
             <div className="text-[11px] font-black" style={{ color: guideLineMeta.textColor }}>
               {guideLineMeta.text}
             </div>
+          </div>
+        </div>
+      )}
+
+      {lanePattern.length > 0 && (
+        <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+          <div className="text-[10px] font-bold text-slate-400">차로 준비</div>
+          <div className="mt-2 flex items-end gap-1.5">
+            {lanePattern.map((lane, index) => {
+              const isActive = lane.startsWith('active')
+              const isBus = lane === 'muted-bus'
+              const bgClass = isActive
+                ? 'bg-rose-500 text-white border-rose-400'
+                : isBus
+                  ? 'bg-amber-100 text-amber-700 border-amber-200'
+                  : 'bg-white text-slate-400 border-slate-200'
+              return (
+                <div
+                  key={`lane-${index}`}
+                  className={`h-11 flex-1 min-w-[22px] rounded-t-lg border flex items-center justify-center text-sm font-black ${bgClass}`}
+                >
+                  {getLaneArrow(lane)}
+                </div>
+              )
+            })}
           </div>
         </div>
       )}

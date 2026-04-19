@@ -2374,6 +2374,9 @@ function parseRouteResponse(json, option) {
           afterRoadType,
           instructionText: props.description ?? '',
           laneHint: props.guideLane ?? props.laneInfo ?? props.lane ?? props.guideInfo ?? '',
+          laneTurnInfo: props.laneTurnInfo ?? props.laneInfoList ?? props.guideLaneInfo ?? null,
+          extcVoiceCode: props.extcVoiceCode ?? props.nExtcVoiceCode ?? props.extVoiceCode ?? null,
+          nExtcVoiceCode: props.nExtcVoiceCode ?? props.extcVoiceCode ?? props.extVoiceCode ?? null,
           nextRoadName: props.nextRoadName ?? '',
           afterRoadName: afterRoadName
             ? (afterRoadNo ? `${afterRoadName} (${afterRoadNo}호선)` : afterRoadName)
