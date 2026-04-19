@@ -17,6 +17,7 @@ const ROUTE_CORRIDOR_TTL_MS = 1000 * 60 * 2
 const TMAP_STATUS_CACHE_TTL_MS = 1000 * 30
 const ENRICHMENT_SAFE_MODE_TTL_MS = 1000 * 60 * 3
 const ENRICHMENT_SAFE_MODE_FAILURES = 2
+const TMAP_ROUTE_TIMEOUT_MS = 1000 * 8
 const nearestRoadCircuit = {
   blockedUntil: 0,
 }
@@ -1467,11 +1468,37 @@ export async function fetchTmapStatus() {
     tmapStatusCache.value = status
     return status
   } catch {
+    const cachedStatus = tmapStatusCache.value
     const hasLocalKey = Boolean(import.meta.env.VITE_TMAP_API_KEY || import.meta.env.TMAP_API_KEY)
-    const fallbackStatus = { hasApiKey: hasLocalKey, mode: hasLocalKey ? 'live' : 'simulation' }
+    const fallbackStatus = {
+      hasApiKey: typeof cachedStatus?.hasApiKey === 'boolean' ? cachedStatus.hasApiKey : hasLocalKey,
+      mode: cachedStatus?.mode === 'live' ? 'live' : 'simulation',
+      lastError: 'TMAP 상태 조회 실패',
+    }
     tmapStatusCache.savedAt = Date.now()
     tmapStatusCache.value = fallbackStatus
     return fallbackStatus
+  }
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = TMAP_ROUTE_TIMEOUT_MS) {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      const timeoutError = new Error('TMAP 경로 응답 시간 초과')
+      timeoutError.code = 'TMAP_ROUTE_TIMEOUT'
+      throw timeoutError
+    }
+    throw error
+  } finally {
+    clearTimeout(timeoutId)
   }
 }
 
@@ -1966,8 +1993,11 @@ export async function fetchRoutes(startLat, startLng, endLat, endLng, preference
   const { roadType = 'mixed', routeRequestMode = 'preview', enableViaExpansion = false } = preferences
 
   const directOpts = getDirectRouteOptionsForMode(roadType, routeRequestMode)
+  const directOptsToTry = routeRequestMode === 'preview'
+    ? directOpts.slice(0, 1)
+    : directOpts
   const directResults = []
-  for (const opt of directOpts) {
+  for (const opt of directOptsToTry) {
     try {
       const route = await fetchSingleRoute(startLat, startLng, endLat, endLng, opt)
       directResults.push({ status: 'fulfilled', value: route })
@@ -2087,7 +2117,7 @@ export async function fetchRouteByWaypoints(start, destination, wayPoints = [], 
       })),
     }
 
-    const res = await fetch(`${BASE}/routes/routeSequential30?version=1`, {
+    const res = await fetchWithTimeout(`${BASE}/routes/routeSequential30?version=1`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -2183,7 +2213,7 @@ async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
 
     for (let bodyIndex = 0; bodyIndex < bodies.length; bodyIndex += 1) {
       const body = bodies[bodyIndex]
-      const res = await fetch(`${BASE}/routes?version=1`, {
+      const res = await fetchWithTimeout(`${BASE}/routes?version=1`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

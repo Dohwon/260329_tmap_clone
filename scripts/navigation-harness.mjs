@@ -554,8 +554,8 @@ await runAsync('preview route search stays within the direct-route budget withou
       routeRequestMode: 'preview',
     })
 
-    assert.equal(routes.length, 2)
-    assert.equal(calls.filter((call) => call.url.includes('/routes?version=1')).length, 2)
+    assert.equal(routes.length, 1)
+    assert.equal(calls.filter((call) => call.url.includes('/routes?version=1')).length, 1)
     assert.equal(calls.some((call) => call.url.includes('/routeSequential30')), false)
   } finally {
     globalThis.fetch = originalFetch

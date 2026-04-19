@@ -20,7 +20,6 @@ export default function RoutePreviewPanel() {
     startNavigation,
     isLoadingRoutes,
     tmapStatus,
-    enrichmentStatus,
     mergeOptions,
     waypoints,
     isDriveSimulation,
@@ -60,25 +59,16 @@ export default function RoutePreviewPanel() {
         ? `TMAP 대비 ${Math.abs(delta)}분 빠름`
         : `TMAP 대비 ${Math.abs(delta)}분 느림`
   }
-
-  const enrichmentEntries = [
-    { key: 'nearby', label: '근처 찾기', status: enrichmentStatus?.nearby },
-    { key: 'restaurants', label: '맛집/평점', status: enrichmentStatus?.restaurants },
-    { key: 'safety', label: '안전/카메라', status: enrichmentStatus?.safety },
-  ]
-  const enrichmentErrors = enrichmentEntries.filter((entry) => entry.status?.state === 'error')
-  const enrichmentLoading = enrichmentEntries.filter((entry) => entry.status?.state === 'loading')
-  const enrichmentReady = enrichmentEntries.filter((entry) => entry.status?.state === 'ready')
-  const enrichmentSummary = enrichmentLoading.length > 0
-    ? `부가정보 로딩 중: ${enrichmentLoading.map((entry) => entry.label).join(', ')}`
-    : enrichmentErrors.length > 0
-      ? `일부 제한: ${enrichmentErrors.map((entry) => entry.label).join(', ')}`
-      : enrichmentReady.length > 0
-        ? `정상: ${enrichmentReady.map((entry) => entry.label).join(', ')}`
-        : '아직 불러온 부가정보 없음'
-  const enrichmentDetail = enrichmentErrors.length > 0
-    ? enrichmentErrors[0].status?.lastError ?? '부가정보를 불러오지 못했습니다.'
-    : '부가정보 오류가 있어도 길찾기 코어는 유지됩니다.'
+  const isApiKeyMissing = /TMAP_API_KEY.*미설정/i.test(String(tmapStatus.lastError ?? ''))
+  const tmapStatusDetail = tmapStatus.mode === 'live'
+    ? '실시간 교통 흐름과 경로 응답을 기준으로 비교 중입니다.'
+    : tmapStatus.lastError
+      ? `오류: ${tmapStatus.lastError}`
+      : isApiKeyMissing
+        ? 'API 키 미설정 — Railway 환경변수 TMAP_API_KEY를 추가하세요.'
+        : tmapStatus.hasApiKey
+          ? 'API 키 설정됨. 경로 호출 실패 — 진단: /api/meta/tmap-diag 확인'
+          : 'TMAP 상태 확인 중입니다. 잠시 후 다시 시도하세요.'
 
   if (routePanelMode === 'peek' && selectedRoute) {
     return (
@@ -246,15 +236,7 @@ export default function RoutePreviewPanel() {
             <div className="text-sm font-bold text-gray-900">
               {tmapStatus.mode === 'live' ? '✅ TMAP 실시간 경로 적용 중' : '⚠️ TMAP 실시간 경로 미적용'}
             </div>
-            <div className="text-xs text-gray-500 mt-1">
-              {tmapStatus.mode === 'live'
-                ? '실시간 교통 흐름과 경로 응답을 기준으로 비교 중입니다.'
-                : tmapStatus.lastError
-                  ? `오류: ${tmapStatus.lastError}`
-                  : tmapStatus.hasApiKey
-                    ? 'API 키 설정됨. 경로 호출 실패 — 진단: /api/meta/tmap-diag 확인'
-                    : 'API 키 미설정 — Railway 환경변수 TMAP_API_KEY를 추가하세요.'}
-            </div>
+            <div className="text-xs text-gray-500 mt-1">{tmapStatusDetail}</div>
             {tmapStatus.mode !== 'live' && tmapStatus.hasApiKey && (
               <button
                 onClick={() => fetch('/api/meta/tmap-diag').then(r => r.json()).then(d => alert(JSON.stringify(d, null, 2)))}
@@ -264,20 +246,6 @@ export default function RoutePreviewPanel() {
               </button>
             )}
             {compareLabel && <div className="text-xs text-tmap-blue font-semibold mt-2">{compareLabel}</div>}
-          </div>
-
-          <div className={`rounded-2xl px-4 py-3 border ${
-            enrichmentErrors.length > 0
-              ? 'bg-orange-50 border-orange-100'
-              : enrichmentLoading.length > 0
-                ? 'bg-slate-50 border-slate-200'
-                : 'bg-emerald-50 border-emerald-100'
-          }`}>
-            <div className="text-sm font-bold text-gray-900">
-              {enrichmentErrors.length > 0 ? '⚠️ 부가정보 일부 제한' : enrichmentLoading.length > 0 ? '⏳ 부가정보 로딩 중' : '✅ 부가정보 분리 로드 중'}
-            </div>
-            <div className="text-xs text-gray-500 mt-1">{enrichmentSummary}</div>
-            <div className="text-xs text-gray-400 mt-1">{enrichmentDetail}</div>
           </div>
 
           {/* 프리셋 */}
