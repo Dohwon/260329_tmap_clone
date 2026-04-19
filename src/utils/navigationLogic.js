@@ -346,7 +346,8 @@ export function analyzeRouteProgress(route, userLocation, options = {}) {
   }
 }
 
-export function buildRemainingRoutePolyline(route, progressKm = 0, matchedLocation = null) {
+export function buildRemainingRoutePolyline(route, progressKm = 0, matchedLocation = null, options = {}) {
+  const recentHistory = Array.isArray(options?.recentHistory) ? options.recentHistory : []
   const polyline = route?.polyline ?? []
   if (!Array.isArray(polyline) || polyline.length < 2) return polyline ?? []
   if (!Number.isFinite(Number(progressKm)) || Number(progressKm) <= 0) return polyline
@@ -371,7 +372,32 @@ export function buildRemainingRoutePolyline(route, progressKm = 0, matchedLocati
             start.lat + ((end.lat - start.lat) * ratio),
             start.lng + ((end.lng - start.lng) * ratio),
           ]
-      return [snappedPoint, ...polyline.slice(index + 1)]
+      const remainingPolyline = [snappedPoint, ...polyline.slice(index + 1)]
+      if (!Array.isArray(recentHistory) || recentHistory.length < 2 || remainingPolyline.length < 3) {
+        return remainingPolyline
+      }
+
+      const historyTail = recentHistory.slice(-16)
+      const overlapDistanceM = 12
+      let traversedFromStartM = 0
+      let trimIndex = 1
+
+      for (; trimIndex < remainingPolyline.length - 1; trimIndex += 1) {
+        const previousPoint = toPoint(remainingPolyline[trimIndex - 1])
+        const candidatePoint = toPoint(remainingPolyline[trimIndex])
+        if (!candidatePoint) continue
+        if (previousPoint) {
+          traversedFromStartM += haversineM(previousPoint.lat, previousPoint.lng, candidatePoint.lat, candidatePoint.lng)
+        }
+        if (traversedFromStartM > 140) break
+
+        const distanceToHistoryM = getDistanceToPolylineM(candidatePoint, historyTail)
+        if (distanceToHistoryM == null || distanceToHistoryM > overlapDistanceM) break
+      }
+
+      return trimIndex > 1
+        ? [remainingPolyline[0], ...remainingPolyline.slice(trimIndex)]
+        : remainingPolyline
     }
 
     travelledM = nextTravelledM

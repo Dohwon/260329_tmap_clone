@@ -694,7 +694,8 @@ function LeafletMapView({ darkMode = false }) {
     const trimmed = buildRemainingRoutePolyline(
       selectedRoute,
       navigationProgressKm,
-      navigationMatchedLocation ?? userLocation
+      navigationMatchedLocation ?? userLocation,
+      { recentHistory: drivePathHistory }
     )
     if (trimmed.length < 2) return trimmed
     return shouldUseRawRoutePolyline(selectedRoute) ? trimmed : smoothPath(trimmed, 0.1)

@@ -449,6 +449,40 @@ function areSimilarPolylines(a = [], b = []) {
   return avgDiffKm <= 0.12 && distanceGapKm <= 1.5
 }
 
+function compactDrivePathHistory(history = [], nextPoint) {
+  if (!Array.isArray(nextPoint) || nextPoint.length < 2) return history.slice(-1999)
+
+  const limitedHistory = history.slice(-1999)
+  if (limitedHistory.length === 0) return [nextPoint]
+
+  const lastPoint = limitedHistory[limitedHistory.length - 1]
+  const distanceFromLastKm = haversineKm(lastPoint[0], lastPoint[1], nextPoint[0], nextPoint[1])
+  if (distanceFromLastKm <= 0.0012) {
+    const updated = [...limitedHistory]
+    updated[updated.length - 1] = nextPoint
+    return updated
+  }
+
+  if (limitedHistory.length >= 2) {
+    const previousPoint = limitedHistory[limitedHistory.length - 2]
+    const projection = projectPointToSegment(nextPoint, previousPoint, lastPoint)
+    const segmentLengthKm = haversineKm(previousPoint[0], previousPoint[1], lastPoint[0], lastPoint[1])
+    const extendDistanceKm = haversineKm(previousPoint[0], previousPoint[1], nextPoint[0], nextPoint[1])
+    const isCollinearAdvance =
+      projection.distanceM <= 3.5 &&
+      projection.ratio >= 0.72 &&
+      extendDistanceKm >= segmentLengthKm * 0.75
+
+    if (isCollinearAdvance) {
+      const updated = [...limitedHistory]
+      updated[updated.length - 1] = nextPoint
+      return updated
+    }
+  }
+
+  return [...limitedHistory, nextPoint]
+}
+
 function getRoadPath(road) {
   return [road.startCoord, ...road.majorJunctions.map((junction) => junction.coord), road.endCoord]
 }
@@ -1624,12 +1658,19 @@ const useAppStore = create((set, get) => ({
       const nextPoint = [trackedLocation.lat, trackedLocation.lng]
       const rawProgressKm = Number(routeProgress?.progressKm ?? 0)
       const prevProgressKm = Number(state.navigationProgressKm ?? 0)
+      const isBackwardSegmentJump =
+        state.isNavigating &&
+        Number.isFinite(Number(state.navigationMatchedSegmentIndex)) &&
+        Number.isFinite(Number(routeProgress?.matchedSegmentIndex)) &&
+        Number(routeProgress.matchedSegmentIndex) + 12 < Number(state.navigationMatchedSegmentIndex) &&
+        Number(routeProgress?.distanceToRouteM) <= Math.max(snapExitDistanceLimitM, 42)
       const shouldHoldProgress =
         state.isNavigating &&
         (Boolean(matchedLocation) || Boolean(state.navigationMatchedLocation)) &&
         Number.isFinite(prevProgressKm) &&
         Number.isFinite(rawProgressKm) &&
         (
+          isBackwardSegmentJump ||
           rawProgressKm + 0.08 < prevProgressKm ||
           rawProgressKm > prevProgressKm + maxAdvanceKm
         )
@@ -1725,7 +1766,7 @@ const useAppStore = create((set, get) => ({
         },
         locationHistory: [...state.locationHistory.slice(-19), nextPoint],
         drivePathHistory: state.isNavigating && shouldAppendDrivePoint
-          ? [...state.drivePathHistory.slice(-1999), historyPoint]
+          ? compactDrivePathHistory(state.drivePathHistory, historyPoint)
           : state.drivePathHistory,
         driveSampleHistory: state.isNavigating && shouldAppendDriveSample
           ? [...state.driveSampleHistory.slice(-1499), nextDriveSample]
@@ -2144,7 +2185,8 @@ const useAppStore = create((set, get) => ({
     const actualDrivePath = get().drivePathHistory
     const actualDriveSamples = get().driveSampleHistory
     const routeSnapshot = get().driveRouteSnapshot ?? route
-    const hasActualDrive = !forceNoMovement && actualDrivePath.length > 1
+    const actualDistanceKm = getPolylineDistanceKm(actualDrivePath)
+    const hasActualDrive = !forceNoMovement && actualDrivePath.length > 1 && actualDistanceKm >= 0.05
     const recordedPolyline = hasActualDrive ? actualDrivePath.slice(-1200) : []
     const recordedSamples = hasActualDrive ? actualDriveSamples.slice(-1200) : []
     const source = forceNoMovement
@@ -2174,7 +2216,7 @@ const useAppStore = create((set, get) => ({
       distance: forceNoMovement
         ? 0
         : hasActualDrive
-          ? getPolylineDistanceKm(recordedPolyline)
+          ? actualDistanceKm
           : routeSnapshot?.distance,
       eta: forceNoMovement ? 0 : routeSnapshot?.eta,
       tollFee: routeSnapshot?.tollFee,

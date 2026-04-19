@@ -370,7 +370,8 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     const trimmed = buildRemainingRoutePolyline(
       safeRoute,
       navigationProgressKm,
-      navigationMatchedLocation ?? userLocation
+      navigationMatchedLocation ?? userLocation,
+      { recentHistory: drivePathHistory }
     )
     if (trimmed.length < 2) return trimmed
     return shouldUseRawRoutePolyline(safeRoute) ? trimmed : trimmed

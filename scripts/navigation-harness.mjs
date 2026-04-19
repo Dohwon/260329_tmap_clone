@@ -15,6 +15,7 @@ import {
 import {
   analyzeRecordedDrive,
   analyzeRouteProgress,
+  buildRemainingRoutePolyline,
   buildDrivingHabitSummary,
   ensureLiveRouteSource,
   formatGuidanceDistance,
@@ -132,6 +133,33 @@ run('navigation progress is based on current location, not first junction distan
   assert.ok(nextJunction.remainingDistanceKm < legacyDistanceKm, 'remaining distance should shrink as driver moves')
   assert.equal(getTurnInstruction(nextJunction.turnType), '좌회전')
   assert.equal(formatGuidanceDistance(nextJunction.remainingDistanceKm), '350m')
+})
+
+run('remaining route trims overlap with recent driven history near current position', () => {
+  const remaining = buildRemainingRoutePolyline(
+    {
+      polyline: [
+        [37.5, 127.0],
+        [37.5, 127.0001],
+        [37.5, 127.0002],
+        [37.5, 127.0003],
+        [37.5, 127.001],
+      ],
+    },
+    0.01,
+    { lat: 37.5, lng: 127.00009 },
+    {
+      recentHistory: [
+        [37.5, 127.0],
+        [37.5, 127.00008],
+        [37.5, 127.00019],
+      ],
+    }
+  )
+
+  assert.deepEqual(remaining[0], [37.5, 127.00009])
+  assert.ok(remaining.length <= 3, `expected overlap-trimmed path, got ${remaining.length} points`)
+  assert.ok(remaining[1][1] >= 127.0003, 'expected duplicated prefix to be removed from remaining path')
 })
 
 run('guidance text prefers real TMAP instruction wording when available', () => {
