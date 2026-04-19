@@ -21,6 +21,30 @@ import {
   haversineM,
 } from '../../utils/navigationLogic'
 
+const GOOGLE_TTS_SAFE_MODE_TTL_MS = 1000 * 60 * 3
+const GOOGLE_TTS_SAFE_MODE_FAILURES = 2
+const googleTtsSafeModeState = {
+  failures: 0,
+  blockedUntil: 0,
+}
+
+function isGoogleTtsSafeModeOpen() {
+  return Date.now() < Number(googleTtsSafeModeState.blockedUntil ?? 0)
+}
+
+function markGoogleTtsFailure() {
+  googleTtsSafeModeState.failures += 1
+  if (googleTtsSafeModeState.failures >= GOOGLE_TTS_SAFE_MODE_FAILURES) {
+    googleTtsSafeModeState.blockedUntil = Date.now() + GOOGLE_TTS_SAFE_MODE_TTL_MS
+    googleTtsSafeModeState.failures = 0
+  }
+}
+
+function markGoogleTtsSuccess() {
+  googleTtsSafeModeState.failures = 0
+  googleTtsSafeModeState.blockedUntil = 0
+}
+
 function getPolylineDistanceKm(polyline = []) {
   if (!Array.isArray(polyline) || polyline.length < 2) return 0
   let totalKm = 0
@@ -817,6 +841,17 @@ export default function NavigationOverlay() {
   }
 
   const playSpeech = async (text) => {
+    if (isGoogleTtsSafeModeOpen()) {
+      if (!window.speechSynthesis) return
+      await new Promise((resolve) => {
+        const utterance = createBrowserSpeech(text)
+        utterance.onend = () => resolve()
+        utterance.onerror = () => resolve()
+        window.speechSynthesis.speak(utterance)
+      })
+      return
+    }
+
     try {
       const response = await fetch('/api/tts/google', {
         method: 'POST',
@@ -826,6 +861,7 @@ export default function NavigationOverlay() {
       if (response.ok) {
         const blob = await response.blob()
         if (blob.size > 0) {
+          markGoogleTtsSuccess()
           stopActiveAudio()
           const url = URL.createObjectURL(blob)
           activeAudioUrlRef.current = url
@@ -840,8 +876,9 @@ export default function NavigationOverlay() {
           return
         }
       }
+      markGoogleTtsFailure()
     } catch {
-      // Google TTS 실패 시 브라우저 TTS로 폴백
+      markGoogleTtsFailure()
     }
 
     if (!window.speechSynthesis) return

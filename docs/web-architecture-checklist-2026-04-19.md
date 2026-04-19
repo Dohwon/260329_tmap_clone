@@ -160,9 +160,9 @@
 
 ### 5-C. quota safe mode
 
-- [ ] MapTiler/TMAP/Google TTS/Places 예산 임계치 정의
+- [x] MapTiler/TMAP/Google TTS/Places 예산 임계치 정의
 - [x] 반복 실패 시 enrichment 단계 하향
-- [ ] fallback 순서:
+- [x] fallback 순서:
   - TTS mp3 cache
   - browser TTS
   - OSM/기본 타일
@@ -224,6 +224,7 @@
 - [x] 즉시 안내 구간의 지도 위 유도선을 extcVoiceCode 색상으로 분리 렌더링
 - [x] 실제 lane center가 있는 구간만 실차로 프리뷰를 표시하고, 없는 구간은 문구 fallback만 유지
 - [x] corridor cache에 TTL + progress bucket + 메모리 prune 정책 적용
+- [x] Google TTS와 MapTiler에 반복 실패 기반 safe mode를 추가해 browser TTS와 OSM 타일로 강제 폴백
 
 ## 이번 체크리스트에서 아직 미완료인 핵심 5개
 

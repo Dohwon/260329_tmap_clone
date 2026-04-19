@@ -31,6 +31,31 @@ const COLORS = {
 
 const MANUAL_RECENTER_DELAY_MS = 6000
 const NORTH_UP_RESTORE_DELAY_MS = 250
+const MAPTILER_SAFE_MODE_TTL_MS = 1000 * 60 * 3
+const MAPTILER_SAFE_MODE_FAILURES = 2
+const mapTileSafeModeState = {
+  failures: 0,
+  blockedUntil: 0,
+}
+
+function isMapTileSafeModeOpen() {
+  return Date.now() < Number(mapTileSafeModeState.blockedUntil ?? 0)
+}
+
+function markMapTileFailure() {
+  mapTileSafeModeState.failures += 1
+  if (mapTileSafeModeState.failures >= MAPTILER_SAFE_MODE_FAILURES) {
+    mapTileSafeModeState.blockedUntil = Date.now() + MAPTILER_SAFE_MODE_TTL_MS
+    mapTileSafeModeState.failures = 0
+    return true
+  }
+  return false
+}
+
+function markMapTileSuccess() {
+  mapTileSafeModeState.failures = 0
+  mapTileSafeModeState.blockedUntil = 0
+}
 
 function getBearingDeg(fromLat, fromLng, toLat, toLng) {
   const fromLatRad = (fromLat * Math.PI) / 180
@@ -489,10 +514,18 @@ export default function NavigationMapLibreView({ darkMode = false }) {
   )
 
   const maptilerKey = import.meta.env.VITE_MAPTILER_KEY
+  const [tileProvider, setTileProvider] = useState(() => (maptilerKey && !isMapTileSafeModeOpen()) ? 'maptiler' : 'osm')
+  const [mapBootstrapKey, setMapBootstrapKey] = useState(0)
   const tileQuery = maptilerKey ? new URLSearchParams({ key: maptilerKey }).toString() : ''
-  const tileUrl = maptilerKey
+  const tileUrl = tileProvider === 'maptiler' && maptilerKey
     ? `https://api.maptiler.com/maps/streets-v4-pastel/{z}/{x}/{y}.png?${tileQuery}`
     : 'https://tiles.osm.kr/hot/{z}/{x}/{y}.png'
+
+  useEffect(() => {
+    if (!maptilerKey || isMapTileSafeModeOpen()) {
+      setTileProvider('osm')
+    }
+  }, [maptilerKey])
 
   const routeCollection = useMemo(() => ({
     type: 'FeatureCollection',
@@ -636,8 +669,24 @@ export default function NavigationMapLibreView({ darkMode = false }) {
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
 
+    map.on('error', (event) => {
+      if (tileProvider !== 'maptiler') return
+      const message = String(
+        event?.error?.message ??
+        event?.sourceId ??
+        event?.tile?.state ??
+        ''
+      )
+      if (!message) return
+      if (!/403|401|429|maptiler|raster|basemap|failed/i.test(message)) return
+      if (!markMapTileFailure()) return
+      setTileProvider('osm')
+      setMapBootstrapKey((value) => value + 1)
+    })
+
     map.on('load', () => {
       loadedRef.current = true
+      if (tileProvider === 'maptiler') markMapTileSuccess()
       upsertGeoJsonSource(map, 'remaining-route', routeCollection)
       upsertGeoJsonSource(map, 'preview-routes', otherRoutesCollection)
       upsertGeoJsonSource(map, 'active-route', activeCollection)
@@ -807,7 +856,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       map.remove()
       mapRef.current = null
     }
-  }, [])
+  }, [mapBootstrapKey, tileProvider, tileUrl])
 
   useEffect(() => {
     if (!isNavigating) {
