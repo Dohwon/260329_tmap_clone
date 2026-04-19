@@ -366,6 +366,231 @@ function samplePolyline(polyline = [], limit = 160) {
   })
 }
 
+function getPolylineDistanceKm(polyline = []) {
+  const normalized = normalizePolyline(polyline)
+  if (normalized.length < 2) return 0
+  let total = 0
+  for (let index = 0; index < normalized.length - 1; index += 1) {
+    total += haversineKm(
+      normalized[index][0],
+      normalized[index][1],
+      normalized[index + 1][0],
+      normalized[index + 1][1]
+    )
+  }
+  return total
+}
+
+function getMetersToLatDegrees(meters = 0) {
+  return Number(meters) / 111320
+}
+
+function getMetersToLngDegrees(meters = 0, lat = 37.5) {
+  const safeScale = Math.max(0.0001, 111320 * Math.cos((Number(lat) * Math.PI) / 180))
+  return Number(meters) / safeScale
+}
+
+function offsetPointByMeters(start = [], end = [], point = [], offsetMeters = 0) {
+  if (!Array.isArray(start) || !Array.isArray(end) || !Array.isArray(point)) return point
+  const dx = end[1] - start[1]
+  const dy = end[0] - start[0]
+  const length = Math.hypot(dx, dy)
+  if (length <= 0.0000001) return point
+  const normalLat = -dx / length
+  const normalLng = dy / length
+  const latDelta = getMetersToLatDegrees(offsetMeters) * normalLat
+  const lngDelta = getMetersToLngDegrees(offsetMeters, point[0]) * normalLng
+  return [
+    Number((point[0] + latDelta).toFixed(6)),
+    Number((point[1] + lngDelta).toFixed(6)),
+  ]
+}
+
+function offsetPolyline(polyline = [], offsetMeters = 0) {
+  const normalized = normalizePolyline(polyline)
+  if (normalized.length < 2) return normalized
+  return normalized.map((point, index) => {
+    const prev = normalized[Math.max(0, index - 1)]
+    const next = normalized[Math.min(normalized.length - 1, index + 1)]
+    return offsetPointByMeters(prev, next, point, offsetMeters)
+  })
+}
+
+function buildLineFeature(id, coordinates = [], properties = {}) {
+  const normalized = normalizePolyline(coordinates)
+  if (normalized.length < 2) return null
+  return {
+    type: 'Feature',
+    id,
+    properties,
+    geometry: {
+      type: 'LineString',
+      coordinates: normalized.map(([lat, lng]) => [lng, lat]),
+    },
+  }
+}
+
+function getRoadTypeWidthMeters(roadType = '') {
+  if (roadType === 'highway') return 18
+  if (roadType === 'national') return 14
+  if (roadType === 'junction') return 11
+  return 9
+}
+
+function normalizeSegmentStats(segments = []) {
+  return (segments ?? [])
+    .map((segment, index) => ({
+      id: segment?.id ?? `segment-${index}`,
+      roadType: String(segment?.roadType ?? 'local'),
+      startProgressKm: Number(segment?.startProgressKm ?? 0),
+      endProgressKm: Number(segment?.endProgressKm ?? 0),
+      positions: normalizePolyline(segment?.positions),
+      name: segment?.name ?? '',
+    }))
+    .filter((segment) => segment.positions.length >= 2)
+}
+
+function buildSyntheticSegmentStats(polyline = []) {
+  const normalized = normalizePolyline(polyline)
+  if (normalized.length < 2) return []
+  const totalDistanceKm = getPolylineDistanceKm(normalized)
+  return [{
+    id: 'synthetic-route',
+    roadType: 'local',
+    startProgressKm: 0,
+    endProgressKm: Number(totalDistanceKm.toFixed(3)),
+    positions: normalized,
+    name: 'route corridor',
+  }]
+}
+
+function buildRouteCorridorPayload({
+  routeId = null,
+  polyline = [],
+  segmentStats = [],
+  progressKm = 0,
+  radiusM = 450,
+  includeLayers = ['laneCenter', 'connector', 'rampShape', 'roadBoundary'],
+} = {}) {
+  const normalizedPolyline = samplePolyline(normalizePolyline(polyline), 260)
+  const normalizedSegments = normalizeSegmentStats(segmentStats)
+  const effectiveSegments = normalizedSegments.length > 0
+    ? normalizedSegments
+    : buildSyntheticSegmentStats(normalizedPolyline)
+  const safeProgressKm = Number.isFinite(Number(progressKm)) ? Number(progressKm) : 0
+  const safeRadiusM = Math.max(120, Math.min(900, Number(radiusM) || 450))
+  const corridorWindowKm = Math.max(0.8, (safeRadiusM / 1000) * 4.5)
+  const relevantSegments = effectiveSegments.filter((segment) => {
+    const start = Number(segment.startProgressKm)
+    const end = Number(segment.endProgressKm)
+    return end >= safeProgressKm - 0.4 && start <= safeProgressKm + corridorWindowKm
+  })
+
+  const laneCenterFeatures = []
+  const connectorFeatures = []
+  const rampShapeFeatures = []
+  const roadBoundaryFeatures = []
+
+  for (const segment of relevantSegments) {
+    const widthM = getRoadTypeWidthMeters(segment.roadType)
+    if (includeLayers.includes('laneCenter')) {
+      laneCenterFeatures.push(buildLineFeature(
+        `lane-center-${segment.id}`,
+        segment.positions,
+        {
+          roadType: segment.roadType,
+          role: segment.roadType === 'junction' ? 'connector-center' : 'main-center',
+          name: segment.name,
+        }
+      ))
+    }
+
+    if (includeLayers.includes('roadBoundary')) {
+      roadBoundaryFeatures.push(
+        buildLineFeature(`boundary-left-${segment.id}`, offsetPolyline(segment.positions, widthM / 2), {
+          roadType: segment.roadType,
+          side: 'left',
+          name: segment.name,
+        }),
+        buildLineFeature(`boundary-right-${segment.id}`, offsetPolyline(segment.positions, -(widthM / 2)), {
+          roadType: segment.roadType,
+          side: 'right',
+          name: segment.name,
+        }),
+      )
+    }
+
+    if (segment.roadType === 'junction' && includeLayers.includes('connector')) {
+      connectorFeatures.push(buildLineFeature(
+        `connector-${segment.id}`,
+        segment.positions,
+        {
+          roadType: segment.roadType,
+          role: 'connector',
+          name: segment.name,
+        }
+      ))
+    }
+
+    if ((segment.roadType === 'junction' || segment.roadType === 'highway') && includeLayers.includes('rampShape')) {
+      rampShapeFeatures.push(
+        buildLineFeature(`ramp-left-${segment.id}`, offsetPolyline(segment.positions, widthM * 0.34), {
+          roadType: segment.roadType,
+          role: 'ramp-shape',
+          side: 'left',
+          name: segment.name,
+        }),
+        buildLineFeature(`ramp-right-${segment.id}`, offsetPolyline(segment.positions, -(widthM * 0.34)), {
+          roadType: segment.roadType,
+          role: 'ramp-shape',
+          side: 'right',
+          name: segment.name,
+        }),
+      )
+    }
+  }
+
+  const cleanFeatures = (features = []) => features.filter(Boolean)
+  const sampledPolyline = normalizedPolyline.slice(0, 40)
+  const corridorHash = crypto.createHash('sha1')
+    .update(JSON.stringify({
+      routeId,
+      progressBucket: Number((safeProgressKm / 0.15).toFixed(0)),
+      radiusM: safeRadiusM,
+      polyline: sampledPolyline,
+      segments: relevantSegments.map((segment) => `${segment.id}:${segment.roadType}:${segment.startProgressKm}:${segment.endProgressKm}`),
+      includeLayers,
+    }))
+    .digest('hex')
+
+  return {
+    routeId,
+    progressKm: Number(safeProgressKm.toFixed(3)),
+    radiusM: safeRadiusM,
+    corridorHash,
+    source: normalizedSegments.length > 0 ? 'route-segment-fallback' : 'polyline-fallback',
+    ttlSec: 120,
+    layers: {
+      laneCenter: {
+        type: 'FeatureCollection',
+        features: cleanFeatures(laneCenterFeatures),
+      },
+      connector: {
+        type: 'FeatureCollection',
+        features: cleanFeatures(connectorFeatures),
+      },
+      rampShape: {
+        type: 'FeatureCollection',
+        features: cleanFeatures(rampShapeFeatures),
+      },
+      roadBoundary: {
+        type: 'FeatureCollection',
+        features: cleanFeatures(roadBoundaryFeatures),
+      },
+    },
+  }
+}
+
 function distanceKmToPolyline(lat, lng, polyline = []) {
   if (!Array.isArray(polyline) || polyline.length === 0) return null
   let best = Infinity
@@ -1446,6 +1671,58 @@ app.post('/api/road/actual-meta', express.json({ limit: '1mb' }), async (req, re
     })
   } catch (error) {
     return res.status(502).json({ error: { code: 'ROAD_ACTUAL_META_ERROR', message: error.message } })
+  }
+})
+
+app.post('/api/road/corridor', express.json({ limit: '2mb' }), async (req, res) => {
+  const routeId = req.body?.routeId ?? null
+  const polyline = normalizePolyline(req.body?.polyline)
+  const segmentStats = Array.isArray(req.body?.segmentStats) ? req.body.segmentStats.slice(0, 64) : []
+  const progressKm = Number(req.body?.progressKm ?? 0)
+  const radiusM = Number(req.body?.radiusM ?? 450)
+  const includeLayers = Array.isArray(req.body?.includeLayers) && req.body.includeLayers.length > 0
+    ? req.body.includeLayers.slice(0, 8)
+    : ['laneCenter', 'connector', 'rampShape', 'roadBoundary']
+
+  if (polyline.length < 2 && segmentStats.length === 0) {
+    return res.status(400).json({ error: { code: 'INVALID_CORRIDOR_INPUT', message: 'polyline 또는 segmentStats가 필요합니다.' } })
+  }
+
+  const cacheKey = JSON.stringify({
+    type: 'route-corridor',
+    routeId,
+    progressBucket: Number.isFinite(progressKm) ? Number((progressKm / 0.15).toFixed(0)) : 0,
+    radiusM: Number.isFinite(radiusM) ? Math.max(120, Math.min(900, radiusM)) : 450,
+    includeLayers,
+    polyline: samplePolyline(polyline, 40),
+    segments: normalizeSegmentStats(segmentStats)
+      .slice(0, 16)
+      .map((segment) => `${segment.id}:${segment.roadType}:${segment.startProgressKm}:${segment.endProgressKm}`),
+  })
+  const cached = getRuntimeCache(cacheKey, 1000 * 60 * 2)
+  if (cached) {
+    return res.json({
+      ...cached,
+      cache: 'HIT',
+    })
+  }
+
+  try {
+    const payload = buildRouteCorridorPayload({
+      routeId,
+      polyline,
+      segmentStats,
+      progressKm,
+      radiusM,
+      includeLayers,
+    })
+    setRuntimeCache(cacheKey, payload)
+    return res.json({
+      ...payload,
+      cache: 'MISS',
+    })
+  } catch (error) {
+    return res.status(502).json({ error: { code: 'ROAD_CORRIDOR_ERROR', message: error.message } })
   }
 })
 

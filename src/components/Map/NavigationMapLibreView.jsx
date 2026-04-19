@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useRef } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import useAppStore from '../../store/appStore'
+import { fetchRouteCorridor } from '../../services/tmapService'
 import {
   buildRemainingRoutePolyline,
   getCurrentRouteSegment,
@@ -256,6 +257,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
   const suppressInteractionRef = useRef(false)
   const suppressTimerRef = useRef(null)
   const smoothedHeadingRef = useRef(0)
+  const [corridorData, setCorridorData] = useState(null)
 
   const {
     mapCenter,
@@ -326,6 +328,10 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     currentGuidance?.remainingDistanceKm,
     currentGuidance?.turnType,
   ])
+  const corridorProgressBucket = useMemo(
+    () => Number((Number(navigationProgressKm ?? 0) / 0.15).toFixed(0)) || 0,
+    [navigationProgressKm]
+  )
 
   const maptilerKey = import.meta.env.VITE_MAPTILER_KEY
   const tileQuery = maptilerKey ? new URLSearchParams({ key: maptilerKey }).toString() : ''
@@ -394,6 +400,38 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       .filter(Boolean),
   }), [guidanceLocation, safetyHazards])
 
+  const corridorLaneCenterCollection = corridorData?.layers?.laneCenter ?? { type: 'FeatureCollection', features: [] }
+  const corridorConnectorCollection = corridorData?.layers?.connector ?? { type: 'FeatureCollection', features: [] }
+  const corridorRampCollection = corridorData?.layers?.rampShape ?? { type: 'FeatureCollection', features: [] }
+  const corridorBoundaryCollection = corridorData?.layers?.roadBoundary ?? { type: 'FeatureCollection', features: [] }
+
+  useEffect(() => {
+    if (!selectedRoute?.id || !Array.isArray(selectedRoute?.polyline) || selectedRoute.polyline.length < 2) {
+      setCorridorData(null)
+      return
+    }
+
+    let cancelled = false
+    fetchRouteCorridor({
+      routeId: selectedRoute.id,
+      polyline: selectedRoute.polyline,
+      segmentStats: selectedRoute.segmentStats ?? [],
+      progressKm: navigationProgressKm ?? 0,
+      radiusM: 450,
+      includeLayers: ['laneCenter', 'connector', 'rampShape', 'roadBoundary'],
+    })
+      .then((payload) => {
+        if (!cancelled) setCorridorData(payload)
+      })
+      .catch(() => {
+        if (!cancelled) setCorridorData(null)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [corridorProgressBucket, navigationProgressKm, selectedRoute?.id, selectedRoute?.polyline, selectedRoute?.segmentStats])
+
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
 
@@ -418,7 +456,32 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       upsertGeoJsonSource(map, 'camera-points', cameraCollection)
       upsertGeoJsonSource(map, 'guidance-points', guidanceCollection)
       upsertGeoJsonSource(map, 'hazard-points', hazardCollection)
+      upsertGeoJsonSource(map, 'corridor-boundary', corridorBoundaryCollection)
+      upsertGeoJsonSource(map, 'corridor-ramp', corridorRampCollection)
+      upsertGeoJsonSource(map, 'corridor-connector', corridorConnectorCollection)
+      upsertGeoJsonSource(map, 'corridor-lane-center', corridorLaneCenterCollection)
 
+      ensureLineLayer(map, 'corridor-boundary-line', 'corridor-boundary', {
+        'line-color': '#475569',
+        'line-width': 2.5,
+        'line-opacity': 0.46,
+      })
+      ensureLineLayer(map, 'corridor-ramp-line', 'corridor-ramp', {
+        'line-color': '#94A3B8',
+        'line-width': 3,
+        'line-opacity': 0.34,
+      })
+      ensureLineLayer(map, 'corridor-connector-line', 'corridor-connector', {
+        'line-color': '#B8FFE9',
+        'line-width': 5,
+        'line-opacity': 0.52,
+      })
+      ensureLineLayer(map, 'corridor-lane-center-line', 'corridor-lane-center', {
+        'line-color': '#E2E8F0',
+        'line-width': 1.6,
+        'line-opacity': 0.26,
+        'line-dasharray': [1.4, 1.2],
+      })
       ensureLineLayer(map, 'drive-history-outline', 'drive-history', {
         'line-color': '#05233B',
         'line-width': 8,
@@ -519,7 +582,23 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     upsertGeoJsonSource(map, 'camera-points', cameraCollection)
     upsertGeoJsonSource(map, 'guidance-points', guidanceCollection)
     upsertGeoJsonSource(map, 'hazard-points', hazardCollection)
-  }, [activeCollection, cameraCollection, focusCollection, guidanceCollection, hazardCollection, historyCollection, routeCollection])
+    upsertGeoJsonSource(map, 'corridor-boundary', corridorBoundaryCollection)
+    upsertGeoJsonSource(map, 'corridor-ramp', corridorRampCollection)
+    upsertGeoJsonSource(map, 'corridor-connector', corridorConnectorCollection)
+    upsertGeoJsonSource(map, 'corridor-lane-center', corridorLaneCenterCollection)
+  }, [
+    activeCollection,
+    cameraCollection,
+    corridorBoundaryCollection,
+    corridorConnectorCollection,
+    corridorLaneCenterCollection,
+    corridorRampCollection,
+    focusCollection,
+    guidanceCollection,
+    hazardCollection,
+    historyCollection,
+    routeCollection,
+  ])
 
   useEffect(() => {
     const map = mapRef.current

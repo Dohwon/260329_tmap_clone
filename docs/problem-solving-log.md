@@ -15,6 +15,17 @@
 
 ### 실제 반영 포인트
 
+- 서버에 `route corridor` API를 추가했다.
+  - `server.js`
+  - `POST /api/road/corridor`
+  - 현재 route polyline/segmentStats/progressKm를 입력받아 `laneCenter`, `connector`, `rampShape`, `roadBoundary` 레이어를 응답하도록 했다.
+  - 아직 NGII 실데이터 기반은 아니고 `route-segment-fallback` 기반 근사 corridor다.
+
+- MapLibre 내비 화면이 corridor 레이어를 실제로 읽도록 연결했다.
+  - `src/services/tmapService.js`
+  - `src/components/Map/NavigationMapLibreView.jsx`
+  - routeId, polyline, segmentStats, progressKm 기준으로 corridor를 가져와 source/layer에 반영하도록 추가했다.
+
 - 내비 화면에 `MapLibre GL JS` 기반 벡터/WebGL 지도를 첫 단계로 도입했다.
   - `src/components/Map/NavigationMapLibreView.jsx`
   - `src/components/Map/MapView.jsx`
@@ -72,6 +83,7 @@
 
 ### 재확인된 병목
 
+- corridor API는 아직 `NGII 실제 차선 geometry`가 아니라 route segment 기반 근사치라 차선 위치 정확도는 제한적이다.
 - MapLibre 도입은 시작됐지만 아직 `corridor geometry`, `lane geometry`, `실제 지도 위 분홍/초록 유도선`은 붙지 않았다.
 - MapLibre 청크가 커서 내비 시작 시 첫 로드 비용이 크다. 현재는 lazy import로 홈 번들 전파만 막은 상태다.
 - 현재 인셋은 실제 세그먼트 기반으로 개선됐지만, 아직 NGII corridor geometry 기반은 아니다.
@@ -101,9 +113,9 @@
 ### 다음 액션
 
 1. `MapLibre GL JS` 기반 내비 맵 스파이크 작성
-2. `corridor geometry API` 설계와 NGII 최소 레이어 PoC 착수
+2. corridor를 `NGII 실제 레이어`로 교체하는 ETL/PostGIS PoC 착수
 3. route core와 enrichment를 런타임/화면 레벨에서 분리
-4. Railway dev에서 MapLibre 내비 추종, camera banner + inset 회귀를 다시 확인
+4. Railway dev에서 MapLibre 내비 추종, corridor 레이어, camera banner + inset 회귀를 다시 확인
 
 ## 2026-04-18
 

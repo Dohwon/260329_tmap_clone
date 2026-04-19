@@ -93,13 +93,13 @@
 
 ### 3-C. corridor API
 
-- [ ] `POST /api/road/corridor` 설계
+- [x] `POST /api/road/corridor` 설계
 - [ ] 입력:
   - route polyline
   - progressKm
   - radiusM
   - includeLayers
-- [ ] 출력:
+- [x] 출력:
   - lane centerlines
   - branch/merge connectors
   - ramp outlines

@@ -12,6 +12,8 @@ const NEAREST_ROAD_COOLDOWN_MS = 1000 * 60 * 5
 const ROUTE_RATE_LIMIT_COOLDOWN_MS = 1000 * 15
 const ROUTE_ACTUAL_META_CACHE = new Map()
 const ROUTE_ACTUAL_META_TTL_MS = 1000 * 60 * 10
+const ROUTE_CORRIDOR_CACHE = new Map()
+const ROUTE_CORRIDOR_TTL_MS = 1000 * 60 * 2
 const nearestRoadCircuit = {
   blockedUntil: 0,
 }
@@ -116,6 +118,28 @@ function buildRouteRateLimitError(retryAfterMs = Math.max(1000, routeRateLimitSt
   error.code = 'TMAP_ROUTE_RATE_LIMIT'
   error.retryAfterMs = safeRetryAfterMs
   return error
+}
+
+function buildRouteCorridorCacheKey({
+  routeId = null,
+  polyline = [],
+  progressKm = 0,
+  radiusM = 450,
+  includeLayers = [],
+  segmentStats = [],
+} = {}) {
+  const sampledPolyline = (polyline ?? []).filter(Array.isArray).slice(0, 40)
+  const sampledSegments = (segmentStats ?? [])
+    .slice(0, 16)
+    .map((segment) => `${segment?.id ?? 'segment'}:${segment?.roadType ?? 'local'}:${segment?.startProgressKm ?? 0}:${segment?.endProgressKm ?? 0}`)
+  return JSON.stringify({
+    routeId,
+    progressBucket: Number((Number(progressKm) / 0.15).toFixed(0)) || 0,
+    radiusM: Number(radiusM) || 450,
+    includeLayers,
+    polyline: sampledPolyline,
+    segments: sampledSegments,
+  })
 }
 
 function guardRouteRequestBudget() {
@@ -908,6 +932,48 @@ async function fetchNearbyRoadEvents(lat, lng, radiusKm = 8) {
   if (!response.ok) return []
   const json = await response.json().catch(() => ({}))
   return Array.isArray(json?.items) ? json.items : []
+}
+
+export async function fetchRouteCorridor({
+  routeId = null,
+  polyline = [],
+  segmentStats = [],
+  progressKm = 0,
+  radiusM = 450,
+  includeLayers = ['laneCenter', 'connector', 'rampShape', 'roadBoundary'],
+} = {}) {
+  const cacheKey = buildRouteCorridorCacheKey({ routeId, polyline, segmentStats, progressKm, radiusM, includeLayers })
+  const cached = ROUTE_CORRIDOR_CACHE.get(cacheKey)
+  if (cached && Date.now() - cached.savedAt <= ROUTE_CORRIDOR_TTL_MS) {
+    return cached.data
+  }
+
+  const response = await fetch('/api/road/corridor', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      routeId,
+      polyline: samplePolyline(polyline ?? [], 240),
+      segmentStats: (segmentStats ?? []).slice(0, 48),
+      progressKm,
+      radiusM,
+      includeLayers,
+    }),
+  })
+
+  const payload = await response.json().catch(() => null)
+  if (!response.ok || !payload) {
+    throw new Error(payload?.error?.message ?? payload?.error?.code ?? `HTTP ${response.status}`)
+  }
+
+  ROUTE_CORRIDOR_CACHE.set(cacheKey, {
+    savedAt: Date.now(),
+    data: payload,
+  })
+  return payload
 }
 
 export async function fetchRoadActualMetaForRoad(road) {
