@@ -1867,6 +1867,38 @@ const useAppStore = create((set, get) => ({
       scenicReferencePolyline: [],
     })
   },
+  recoverNavigationToPreview: (reason = '안내 경로가 비정상이라 미리보기로 복귀합니다.') => {
+    if (_simIntervalId != null) {
+      clearInterval(_simIntervalId)
+      _simIntervalId = null
+    }
+    const state = get()
+    const fallbackRoute = state.routes.find((route) => route.id === state.selectedRouteId) ?? state.routes[0] ?? null
+    get().setTmapStatus({
+      hasApiKey: state.tmapStatus.hasApiKey,
+      mode: fallbackRoute?.source === 'live' ? 'live' : 'simulation',
+      lastError: reason,
+    })
+    set({
+      activeTab: 'home',
+      isNavigating: false,
+      isDriveSimulation: false,
+      driveSimulationForcedOffRoute: null,
+      navAutoFollow: false,
+      isSearchOverlayOpen: false,
+      showRoutePanel: true,
+      routePanelMode: 'full',
+      isRefreshingNavigation: false,
+      navigationLastRefreshedAt: 0,
+      drivePathHistory: [],
+      driveSampleHistory: [],
+      driveRouteSnapshot: null,
+      navigationMatchedLocation: null,
+      navigationMatchedSegmentIndex: -1,
+      navigationProgressKm: 0,
+      selectedRouteId: fallbackRoute?.id ?? state.selectedRouteId,
+    })
+  },
 
   // ── 주행 시뮬레이터 ─────────────────────────────────
   isDriveSimulation: false,

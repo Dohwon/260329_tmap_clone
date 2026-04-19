@@ -7,6 +7,7 @@ import ScenicRoadDialog from '../components/Navigation/ScenicRoadDialog'
 import HighwayExplorer from '../components/Map/HighwayExplorer'
 import useAppStore from '../store/appStore'
 import SearchSheet from '../components/Search/SearchSheet'
+import { validateRouteForNavigation } from '../utils/routingGuards'
 
 function getBearingDeg(fromLat, fromLng, toLat, toLng) {
   const fromLatRad = (fromLat * Math.PI) / 180
@@ -100,6 +101,9 @@ export default function HomeScreen() {
     openSearchOverlay,
     closeSearchOverlay,
     stopNavigation,
+    routes,
+    selectedRouteId,
+    recoverNavigationToPreview,
   } = useAppStore()
   const [showLayerMenu, setShowLayerMenu] = useState(false)
   const [showHighwayExplorer, setShowHighwayExplorer] = useState(false)
@@ -155,6 +159,14 @@ export default function HomeScreen() {
     setShowLayerMenu(false)
     setShowHighwayExplorer(false)
   }, [showRoutePanel])
+
+  useEffect(() => {
+    if (!isNavigating) return
+    const activeRoute = routes.find((route) => route.id === selectedRouteId) ?? routes[0] ?? null
+    const validity = validateRouteForNavigation(activeRoute, userLocation)
+    if (validity.ok) return
+    recoverNavigationToPreview(validity.reason ?? '안내 경로 검증 실패')
+  }, [isNavigating, recoverNavigationToPreview, routes, selectedRouteId, userLocation])
 
   useEffect(() => {
     if (isNavigating || !settings.safetyModeEnabled) {
