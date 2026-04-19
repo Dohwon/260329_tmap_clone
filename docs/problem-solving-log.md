@@ -280,3 +280,24 @@
 - 현재 safe mode는 브라우저 메모리 상태라 새로고침하면 초기화된다.
 - API provider별 quota가 아니라 `채널 단위 반복 실패` 기준이다.
 - 즉 근본적인 quota telemetry는 아직 없고, 지금 단계는 `실패 폭주 방지`에 가깝다.
+
+## 2026-04-19 추가 3
+
+### 실제 반영 포인트
+
+- `NavigationMapLibreView.jsx`에 `north-up / nav / manual` 카메라 상태머신을 넣었다.
+- 사용자가 드래그/줌하면 `manual`로 전환되고 6초 뒤 자동으로 `nav`로 복귀한다.
+- 경로 패널이 열리면 `north-up`으로 내리고, 패널이 닫히면 짧은 지연 뒤 다시 운전자 시점으로 복귀한다.
+- 카메라 적용은 `recenterThresholdM + bearing/zoom/pitch delta` 기준으로 억제해 불필요한 `easeTo`를 줄였다.
+
+### 해결 방식
+
+- 기존 `navAutoFollow` 불리언 하나로 제어하던 구조를 지도 엔진 내부 모드로 확장
+- `guidance distance`에서 계산한 zoom/pitch/offset을 `nav` 모드에서만 적용
+- `manual` 상태에서는 현재 지도를 유지하고, 위치 마커만 계속 갱신
+
+### 숨은 리스크
+
+- 아직 `북업(home)`은 내비 화면 내부 north-up 기준이다. 홈 지도의 별도 MapLibre 상태머신은 아니다.
+- camera smoothing은 heading 기반이라 lane geometry가 없는 구간에서는 여전히 TMAP만큼 정밀하지 않다.
+- `easeTo` 억제로 흔들림은 줄지만, 저사양 기기에서 raster base + 대형 chunk 비용은 여전히 남아 있다.

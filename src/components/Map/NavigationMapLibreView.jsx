@@ -25,6 +25,9 @@ const COLORS = {
   guidance: '#10B981',
 }
 
+const MANUAL_RECENTER_DELAY_MS = 6000
+const NORTH_UP_RESTORE_DELAY_MS = 250
+
 function getBearingDeg(fromLat, fromLng, toLat, toLng) {
   const fromLatRad = (fromLat * Math.PI) / 180
   const toLatRad = (toLat * Math.PI) / 180
@@ -241,12 +244,56 @@ function getNavPitch(mode = 'cruise') {
   return 40
 }
 
-function getNavOffset(mode = 'cruise') {
-  if (mode === 'confirm') return [0, 110]
-  if (mode === 'decision') return [0, 130]
-  if (mode === 'approach') return [0, 160]
-  if (mode === 'prepare') return [0, 180]
-  return [0, 200]
+function getNavOffset(cameraState = {}) {
+  const offsetY = Number(cameraState?.lookAheadOffsetY)
+  if (Number.isFinite(offsetY)) return [0, offsetY]
+  return [0, -420]
+}
+
+function getNorthUpCamera(guidanceLocation, mapZoom = 17.4) {
+  return {
+    center: [guidanceLocation.lng, guidanceLocation.lat],
+    zoom: Math.max(16.6, Math.min(18.4, Number(mapZoom) || 17.4)),
+    bearing: 0,
+    pitch: 0,
+    offset: [0, 0],
+    duration: 280,
+  }
+}
+
+function normalizeBearingDeg(value = 0) {
+  return ((Number(value) % 360) + 360) % 360
+}
+
+function shouldApplyCamera(lastCamera, nextCamera, thresholdM = 8) {
+  if (!lastCamera || !nextCamera) return true
+  const [lastLng, lastLat] = lastCamera.center ?? []
+  const [nextLng, nextLat] = nextCamera.center ?? []
+  if (
+    !Number.isFinite(lastLat) || !Number.isFinite(lastLng) ||
+    !Number.isFinite(nextLat) || !Number.isFinite(nextLng)
+  ) {
+    return true
+  }
+
+  const movedM = haversineM(lastLat, lastLng, nextLat, nextLng)
+  const zoomDiff = Math.abs(Number(lastCamera.zoom ?? 0) - Number(nextCamera.zoom ?? 0))
+  const pitchDiff = Math.abs(Number(lastCamera.pitch ?? 0) - Number(nextCamera.pitch ?? 0))
+  const bearingDiff = Math.abs(getHeadingDelta(
+    normalizeBearingDeg(nextCamera.bearing ?? 0),
+    normalizeBearingDeg(lastCamera.bearing ?? 0)
+  ))
+  const offsetXDiff = Math.abs(Number(lastCamera.offset?.[0] ?? 0) - Number(nextCamera.offset?.[0] ?? 0))
+  const offsetYDiff = Math.abs(Number(lastCamera.offset?.[1] ?? 0) - Number(nextCamera.offset?.[1] ?? 0))
+
+  return (
+    movedM >= thresholdM ||
+    zoomDiff >= 0.08 ||
+    pitchDiff >= 1.5 ||
+    bearingDiff >= 3 ||
+    offsetXDiff >= 8 ||
+    offsetYDiff >= 8
+  )
 }
 
 export default function NavigationMapLibreView({ darkMode = false }) {
@@ -256,8 +303,11 @@ export default function NavigationMapLibreView({ darkMode = false }) {
   const currentMarkerRef = useRef(null)
   const suppressInteractionRef = useRef(false)
   const suppressTimerRef = useRef(null)
+  const manualRestoreTimerRef = useRef(null)
+  const lastCameraRef = useRef(null)
   const smoothedHeadingRef = useRef(0)
   const [corridorData, setCorridorData] = useState(null)
+  const [cameraMode, setCameraMode] = useState('nav')
 
   const {
     mapCenter,
@@ -273,6 +323,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     navAutoFollow,
     setNavAutoFollow,
     isNavigating,
+    showRoutePanel,
     settings,
     safetyHazards,
   } = useAppStore()
@@ -328,6 +379,11 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     currentGuidance?.remainingDistanceKm,
     currentGuidance?.turnType,
   ])
+  const effectiveCameraMode = useMemo(() => {
+    if (!isNavigating || showRoutePanel) return 'north-up'
+    if (!navAutoFollow || cameraMode === 'manual') return 'manual'
+    return 'nav'
+  }, [cameraMode, isNavigating, navAutoFollow, showRoutePanel])
   const corridorProgressBucket = useMemo(
     () => Number((Number(navigationProgressKm ?? 0) / 0.15).toFixed(0)) || 0,
     [navigationProgressKm]
@@ -548,10 +604,14 @@ export default function NavigationMapLibreView({ darkMode = false }) {
 
     map.on('dragstart', () => {
       if (!isNavigating || suppressInteractionRef.current) return
+      if (manualRestoreTimerRef.current) window.clearTimeout(manualRestoreTimerRef.current)
+      setCameraMode('manual')
       if (useAppStore.getState().navAutoFollow) setNavAutoFollow(false)
     })
     map.on('zoomstart', () => {
       if (!isNavigating || suppressInteractionRef.current) return
+      if (manualRestoreTimerRef.current) window.clearTimeout(manualRestoreTimerRef.current)
+      setCameraMode('manual')
       if (useAppStore.getState().navAutoFollow) setNavAutoFollow(false)
     })
 
@@ -564,6 +624,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
 
     return () => {
       if (suppressTimerRef.current) window.clearTimeout(suppressTimerRef.current)
+      if (manualRestoreTimerRef.current) window.clearTimeout(manualRestoreTimerRef.current)
       currentMarkerRef.current?.remove()
       currentMarkerRef.current = null
       loadedRef.current = false
@@ -571,6 +632,34 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       mapRef.current = null
     }
   }, [])
+
+  useEffect(() => {
+    if (!isNavigating) {
+      setCameraMode('north-up')
+      lastCameraRef.current = null
+      if (manualRestoreTimerRef.current) window.clearTimeout(manualRestoreTimerRef.current)
+      return
+    }
+    if (showRoutePanel) {
+      setCameraMode('north-up')
+      return
+    }
+    if (manualRestoreTimerRef.current) window.clearTimeout(manualRestoreTimerRef.current)
+    if (cameraMode === 'manual') {
+      manualRestoreTimerRef.current = window.setTimeout(() => {
+        setCameraMode('nav')
+        setNavAutoFollow(true)
+      }, MANUAL_RECENTER_DELAY_MS)
+    } else if (cameraMode !== 'nav' || navAutoFollow) {
+      manualRestoreTimerRef.current = window.setTimeout(() => {
+        setCameraMode('nav')
+        setNavAutoFollow(true)
+      }, NORTH_UP_RESTORE_DELAY_MS)
+    }
+    return () => {
+      if (manualRestoreTimerRef.current) window.clearTimeout(manualRestoreTimerRef.current)
+    }
+  }, [cameraMode, isNavigating, navAutoFollow, setNavAutoFollow, showRoutePanel])
 
   useEffect(() => {
     const map = mapRef.current
@@ -621,30 +710,53 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       arrow.style.transform = `rotate(${smoothedHeading}deg)`
     }
 
-    if (!navAutoFollow) return
+    if (effectiveCameraMode === 'manual') return
+
+    const nextCamera = effectiveCameraMode === 'north-up'
+      ? getNorthUpCamera(guidanceLocation, mapZoom)
+      : {
+          center: [guidanceLocation.lng, guidanceLocation.lat],
+          zoom: cameraState.zoom,
+          bearing: smoothedHeading,
+          pitch: getNavPitch(cameraState.mode),
+          offset: getNavOffset(cameraState),
+          duration: Math.max(180, Math.round(Number(cameraState.viewDuration ?? 0.28) * 1000)),
+        }
+
+    const thresholdM = effectiveCameraMode === 'north-up'
+      ? 14
+      : Number(cameraState.recenterThresholdM ?? 8)
+    if (!shouldApplyCamera(lastCameraRef.current, nextCamera, thresholdM)) return
 
     suppressInteractionRef.current = true
     if (suppressTimerRef.current) window.clearTimeout(suppressTimerRef.current)
     suppressTimerRef.current = window.setTimeout(() => {
       suppressInteractionRef.current = false
     }, 240)
+    lastCameraRef.current = nextCamera
 
     map.easeTo({
-      center: [guidanceLocation.lng, guidanceLocation.lat],
-      zoom: cameraState.zoom,
-      bearing: smoothedHeading,
-      pitch: getNavPitch(cameraState.mode),
-      offset: getNavOffset(cameraState.mode),
-      duration: 220,
+      center: nextCamera.center,
+      zoom: nextCamera.zoom,
+      bearing: nextCamera.bearing,
+      pitch: nextCamera.pitch,
+      offset: nextCamera.offset,
+      duration: nextCamera.duration,
       essential: true,
     })
   }, [
+    cameraMode,
     cameraState.mode,
+    cameraState.recenterThresholdM,
+    cameraState.viewDuration,
     cameraState.zoom,
+    effectiveCameraMode,
     guidanceLocation,
     locationHistory,
+    mapZoom,
     navAutoFollow,
     selectedRoute,
+    showRoutePanel,
     userLocation,
   ])
 

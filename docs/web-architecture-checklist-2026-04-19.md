@@ -60,9 +60,9 @@
 
 ### 2-C. 운전자 카메라 상태머신 재구현
 
-- [ ] `북업(home)` / `운전자(nav)` / `수동(manual)` 상태를 지도 엔진 수준으로 분리
-- [ ] `bearing`, `pitch`, `center offset`, `zoom`을 guidance distance 기반으로 상태화
-- [ ] 수동 조작 후 자동복귀 규칙을 고정
+- [x] `북업(home)` / `운전자(nav)` / `수동(manual)` 상태를 지도 엔진 수준으로 분리
+- [x] `bearing`, `pitch`, `center offset`, `zoom`을 guidance distance 기반으로 상태화
+- [x] 수동 조작 후 자동복귀 규칙을 고정
 
 완료 조건:
 - 운전자 모드에서 차량은 항상 화면 하단, 진행 방향은 화면 상단으로 유지된다.
