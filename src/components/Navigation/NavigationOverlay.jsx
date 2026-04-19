@@ -4,7 +4,7 @@ import MergeOptionsSheet from './MergeOptionsSheet'
 import { formatEta } from '../Route/RouteCard'
 import { SCENIC_SEGMENTS } from '../../data/scenicRoads'
 import { PRESET_INFO } from '../../data/mockData'
-import { fetchUpcomingFuelContext, getDiscountedFuelPrice, searchNearbyPOIs } from '../../services/tmapService'
+import { fetchRouteCorridor, fetchUpcomingFuelContext, getDiscountedFuelPrice, searchNearbyPOIs } from '../../services/tmapService'
 import {
   analyzeRouteProgress,
   buildLanePatternFromGuidance,
@@ -190,6 +190,60 @@ function buildHighwayInsetGeometry(focusSegments = []) {
   }
 }
 
+function featureCoordsToLatLngPairs(feature) {
+  const coords = feature?.geometry?.coordinates
+  if (!Array.isArray(coords)) return []
+  return coords
+    .filter((coord) => Array.isArray(coord) && coord.length >= 2)
+    .map(([lng, lat]) => [Number(lat), Number(lng)])
+    .filter((coord) => Number.isFinite(coord[0]) && Number.isFinite(coord[1]))
+}
+
+function buildInsetGeometryFromCorridor(corridorData = null, focusSegments = []) {
+  const connectorFeatures = corridorData?.layers?.connector?.features ?? []
+  const laneCenterFeatures = corridorData?.layers?.laneCenter?.features ?? []
+  const rampShapeFeatures = corridorData?.layers?.rampShape?.features ?? []
+
+  const routeFeature = connectorFeatures[0] ?? laneCenterFeatures[0] ?? null
+  const currentFeature = laneCenterFeatures[0] ?? connectorFeatures[0] ?? null
+  const ghostFeature = rampShapeFeatures[0] ?? laneCenterFeatures[1] ?? null
+  const routePoints = dedupeInsetPoints(featureCoordsToLatLngPairs(routeFeature))
+  const currentPoints = dedupeInsetPoints(featureCoordsToLatLngPairs(currentFeature))
+  const ghostMainline = dedupeInsetPoints(featureCoordsToLatLngPairs(ghostFeature))
+
+  if (routePoints.length < 2) return buildHighwayInsetGeometry(focusSegments)
+
+  const allPoints = dedupeInsetPoints([...routePoints, ...currentPoints, ...ghostMainline])
+  const lngs = allPoints.map((point) => point[1])
+  const lats = allPoints.map((point) => point[0])
+  const minLng = Math.min(...lngs)
+  const maxLng = Math.max(...lngs)
+  const minLat = Math.min(...lats)
+  const maxLat = Math.max(...lats)
+  const width = 176
+  const height = 112
+  const padding = 12
+  const lngSpan = Math.max(0.0001, maxLng - minLng)
+  const latSpan = Math.max(0.0001, maxLat - minLat)
+  const scale = Math.min((width - (padding * 2)) / lngSpan, (height - (padding * 2)) / latSpan)
+  const projectPoint = ([lat, lng]) => ([
+    padding + ((lng - minLng) * scale),
+    height - padding - ((lat - minLat) * scale),
+  ])
+  const junctionPoint = routePoints[Math.max(0, Math.floor(routePoints.length / 2))]
+
+  return {
+    width,
+    height,
+    projectPoint,
+    routePath: pointsToSvgPath(routePoints, projectPoint),
+    currentPath: pointsToSvgPath(currentPoints.length >= 2 ? currentPoints : routePoints, projectPoint),
+    ghostPath: pointsToSvgPath(ghostMainline, projectPoint),
+    junctionPoint: junctionPoint ? projectPoint(junctionPoint) : null,
+    source: 'corridor',
+  }
+}
+
 function getGuidanceDirectionLabel(guidance) {
   const text = `${guidance?.laneHint ?? ''} ${guidance?.instructionText ?? ''} ${guidance?.description ?? ''}`
   const turnType = Number(guidance?.turnType)
@@ -234,13 +288,13 @@ function buildGuideLineSpeech(guidance) {
   return guideLineMeta?.text ?? null
 }
 
-function GuidanceInsetCard({ guidance, afterNextGuidance = null, focusSegments = [] }) {
+function GuidanceInsetCard({ guidance, afterNextGuidance = null, focusSegments = [], corridorData = null }) {
   if (!guidance) return null
 
   const nextRoadLabel = shortenRoadLabel(guidance.afterRoadName || guidance.nextRoadName || guidance.name || '')
   const currentRoadLabel = shortenRoadLabel(focusSegments[0]?.name || '')
   const previewSegments = focusSegments.slice(0, 3)
-  const insetGeometry = buildHighwayInsetGeometry(focusSegments)
+  const insetGeometry = buildInsetGeometryFromCorridor(corridorData, focusSegments)
   const guideLineMeta = getGuideLineMeta(guidance)
   const lanePattern = getLanePattern(guidance)
   const nextActionLabel = getGuidanceInstruction(guidance)
@@ -261,7 +315,9 @@ function GuidanceInsetCard({ guidance, afterNextGuidance = null, focusSegments =
             {formatGuidanceDistance(guidance.remainingDistanceKm)} 후 {nextActionLabel}
           </div>
         </div>
-        <div className="text-[10px] font-bold text-gray-400">실제 경로 확대</div>
+        <div className="text-[10px] font-bold text-gray-400">
+          {insetGeometry?.source === 'corridor' ? 'corridor 확대' : '실제 경로 확대'}
+        </div>
       </div>
 
       <div className="mt-2 rounded-xl bg-slate-900 px-2 py-2">
@@ -563,6 +619,7 @@ export default function NavigationOverlay() {
   const [upcomingFuelContext, setUpcomingFuelContext] = useState({ nextRouteFuel: null, nextRestFuelStops: [] })
   const [restaurantCandidates, setRestaurantCandidates] = useState([])
   const [restaurantLoading, setRestaurantLoading] = useState(false)
+  const [insetCorridorData, setInsetCorridorData] = useState(null)
   const segmentRef = useRef(null)
   const wakeLockRef = useRef(null)
   const nearCameraNotifiedRef = useRef(new Set()) // 이미 알린 카메라 id
@@ -1107,6 +1164,33 @@ export default function NavigationOverlay() {
   )
   const laneSource = nextGuidance ?? nextMergeOpt ?? null
   const showGuidanceInset = shouldShowGuidanceInset(nextGuidance)
+
+  useEffect(() => {
+    if (!showGuidanceInset || !route?.id || !Array.isArray(route?.polyline) || route.polyline.length < 2) {
+      setInsetCorridorData(null)
+      return
+    }
+
+    let cancelled = false
+    fetchRouteCorridor({
+      routeId: route.id,
+      polyline: route.polyline,
+      segmentStats: route.segmentStats ?? [],
+      progressKm: routeProgress.progressKm ?? 0,
+      radiusM: 260,
+      includeLayers: ['laneCenter', 'connector', 'rampShape', 'roadBoundary'],
+    })
+      .then((payload) => {
+        if (!cancelled) setInsetCorridorData(payload)
+      })
+      .catch(() => {
+        if (!cancelled) setInsetCorridorData(null)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [route?.id, route?.polyline, route?.segmentStats, routeProgress.progressKm, showGuidanceInset])
   const nearbyFuelSummary = nearbyCategory === '주유소' && nearbyPOIs.length > 0
     ? {
         nearbyLowestPoi: [...nearbyPOIs].sort((a, b) => getDiscountedFuelPrice(a, settings) - getDiscountedFuelPrice(b, settings))[0] ?? null,
@@ -1408,6 +1492,7 @@ export default function NavigationOverlay() {
             guidance={nextGuidance ?? laneSource}
             afterNextGuidance={afterNextGuidance}
             focusSegments={focusSegments}
+            corridorData={insetCorridorData}
           />
         </div>
       )}
