@@ -161,7 +161,7 @@
 ### 5-C. quota safe mode
 
 - [ ] MapTiler/TMAP/Google TTS/Places 예산 임계치 정의
-- [ ] 임계치 근접 시 enrichment 단계 하향
+- [x] 반복 실패 시 enrichment 단계 하향
 - [ ] fallback 순서:
   - TTS mp3 cache
   - browser TTS

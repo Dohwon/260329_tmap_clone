@@ -14,11 +14,19 @@ const ROUTE_ACTUAL_META_CACHE = new Map()
 const ROUTE_ACTUAL_META_TTL_MS = 1000 * 60 * 10
 const ROUTE_CORRIDOR_CACHE = new Map()
 const ROUTE_CORRIDOR_TTL_MS = 1000 * 60 * 2
+const ENRICHMENT_SAFE_MODE_TTL_MS = 1000 * 60 * 3
+const ENRICHMENT_SAFE_MODE_FAILURES = 2
 const nearestRoadCircuit = {
   blockedUntil: 0,
 }
 const routeRateLimitState = {
   blockedUntil: 0,
+}
+const enrichmentSafeModeState = {
+  nearby: { failures: 0, blockedUntil: 0 },
+  restaurants: { failures: 0, blockedUntil: 0 },
+  fuel: { failures: 0, blockedUntil: 0 },
+  safety: { failures: 0, blockedUntil: 0 },
 }
 const FAST_SEARCH_PLACES = [
   {
@@ -146,6 +154,34 @@ function guardRouteRequestBudget() {
   if (Date.now() < routeRateLimitState.blockedUntil) {
     throw buildRouteRateLimitError(routeRateLimitState.blockedUntil - Date.now())
   }
+}
+
+function getEnrichmentChannel(category = '') {
+  if (category === '주유소') return 'fuel'
+  if (category === '음식점') return 'restaurants'
+  return 'nearby'
+}
+
+function isEnrichmentSafeModeOpen(channel) {
+  const entry = enrichmentSafeModeState[channel]
+  return Boolean(entry && Date.now() < Number(entry.blockedUntil ?? 0))
+}
+
+function markEnrichmentFailure(channel) {
+  const entry = enrichmentSafeModeState[channel]
+  if (!entry) return
+  entry.failures += 1
+  if (entry.failures >= ENRICHMENT_SAFE_MODE_FAILURES) {
+    entry.blockedUntil = Date.now() + ENRICHMENT_SAFE_MODE_TTL_MS
+    entry.failures = 0
+  }
+}
+
+function markEnrichmentSuccess(channel) {
+  const entry = enrichmentSafeModeState[channel]
+  if (!entry) return
+  entry.failures = 0
+  entry.blockedUntil = 0
 }
 
 function markRouteRateLimited() {
@@ -1748,36 +1784,64 @@ async function fetchRouteCorridorRestaurants(lat, lng, routePolyline = []) {
   return enrichRestaurantPlaces(corridorOnly, routePolyline)
 }
 
+function buildNearbyCategoryFallback(category, lat, lng, routePolyline = [], fuelSettings = {}) {
+  if (category === '휴게소') return buildNearbyRestStopFallback(lat, lng, routePolyline)
+  const fallback = buildNearbyFallback(category, lat, lng)
+  if (category === '주유소') return enrichFuelStops(fallback, routePolyline, fuelSettings)
+  if (category === '주차장') return enrichParkingPlaces(fallback)
+  if (category === '음식점') return enrichRestaurantPlaces(fallback, routePolyline)
+  return fallback
+}
+
 export async function searchNearbyPOIs(category, lat, lng, options = {}) {
   const routePolyline = options.routePolyline ?? []
   const fuelSettings = options.fuelSettings ?? {}
+  const channel = getEnrichmentChannel(category)
+  let hadNetworkFailure = false
+
+  if (isEnrichmentSafeModeOpen(channel)) {
+    return buildNearbyCategoryFallback(category, lat, lng, routePolyline, fuelSettings)
+  }
+
   if (category === '주유소') {
     try {
       const liveFuel = await fetchNearbyFuelFromApi(lat, lng, routePolyline, { settings: fuelSettings })
-      if (liveFuel.length > 0) return liveFuel
+      if (liveFuel.length > 0) {
+        markEnrichmentSuccess(channel)
+        return liveFuel
+      }
     } catch {
-      // 오피넷 미설정/실패 시 TMAP+추정가 폴백
+      hadNetworkFailure = true
     }
   }
 
   if (category === '휴게소') {
-    const restStops = buildNearbyRestStopFallback(lat, lng, routePolyline)
-    if (restStops.length > 0) return restStops
+    return buildNearbyCategoryFallback(category, lat, lng, routePolyline, fuelSettings)
   }
 
   if (category === '음식점') {
-    const restaurants = await fetchRouteCorridorRestaurants(lat, lng, routePolyline).catch(() => [])
-    if (restaurants.length > 0) return restaurants
-    const fallbackRestaurants = buildNearbyFallback('음식점', lat, lng)
-    return enrichRestaurantPlaces(fallbackRestaurants, routePolyline)
+    const restaurants = await fetchRouteCorridorRestaurants(lat, lng, routePolyline).catch(() => {
+      hadNetworkFailure = true
+      return []
+    })
+    if (restaurants.length > 0) {
+      markEnrichmentSuccess(channel)
+      return restaurants
+    }
+    if (hadNetworkFailure) markEnrichmentFailure(channel)
+    return buildNearbyCategoryFallback(category, lat, lng, routePolyline, fuelSettings)
   }
 
   const results = await searchPOI(category, lat, lng, {
     routePolyline,
     includeRestaurantMeta: category === '음식점',
     fuelSettings,
+  }).catch(() => {
+    hadNetworkFailure = true
+    return []
   })
   if (results.length > 0) {
+    markEnrichmentSuccess(channel)
     const enriched = results
       .map((result) => ({
         ...result,
@@ -1788,19 +1852,33 @@ export async function searchNearbyPOIs(category, lat, lng, options = {}) {
     if (category === '음식점') return enrichRestaurantPlaces(enriched, routePolyline)
     return enriched
   }
-  if (category === '휴게소') return []
-  const fallback = buildNearbyFallback(category, lat, lng)
-  if (category === '주유소') return enrichFuelStops(fallback, routePolyline, fuelSettings)
-  if (category === '주차장') return enrichParkingPlaces(fallback)
-  return fallback
+  if (hadNetworkFailure) markEnrichmentFailure(channel)
+  return buildNearbyCategoryFallback(category, lat, lng, routePolyline, fuelSettings)
 }
 
 export async function searchSafetyHazards(lat, lng) {
+  if (isEnrichmentSafeModeOpen('safety')) {
+    return []
+  }
+
+  let hadNetworkFailure = false
   const [schools, kindergartens, bumps, roadEvents] = await Promise.all([
-    fetchPoiSearch('초등학교', lat, lng, 'A').catch(() => []),
-    fetchPoiSearch('유치원', lat, lng, 'A').catch(() => []),
-    fetchPoiSearch('방지턱', lat, lng, 'A').catch(() => []),
-    fetchNearbyRoadEvents(lat, lng, 8).catch(() => []),
+    fetchPoiSearch('초등학교', lat, lng, 'A').catch(() => {
+      hadNetworkFailure = true
+      return []
+    }),
+    fetchPoiSearch('유치원', lat, lng, 'A').catch(() => {
+      hadNetworkFailure = true
+      return []
+    }),
+    fetchPoiSearch('방지턱', lat, lng, 'A').catch(() => {
+      hadNetworkFailure = true
+      return []
+    }),
+    fetchNearbyRoadEvents(lat, lng, 8).catch(() => {
+      hadNetworkFailure = true
+      return []
+    }),
   ])
 
   const schoolHazards = [...schools, ...kindergartens]
@@ -1854,11 +1932,18 @@ export async function searchSafetyHazards(lat, lng) {
       eventMessage: event.message || '',
     }))
 
-  return [...schoolHazards, ...bumpHazards, ...roadEventHazards]
+  const hazards = [...schoolHazards, ...bumpHazards, ...roadEventHazards]
     .filter((item, index, all) =>
       all.findIndex((other) => other.type === item.type && Math.abs(other.lat - item.lat) < 0.00015 && Math.abs(other.lng - item.lng) < 0.00015) === index
     )
     .sort((a, b) => a.distanceKm - b.distanceKm)
+
+  if (hazards.length > 0) {
+    markEnrichmentSuccess('safety')
+    return hazards
+  }
+  if (hadNetworkFailure) markEnrichmentFailure('safety')
+  return hazards
 }
 
 export async function fetchRoutes(startLat, startLng, endLat, endLng, preferences = {}) {

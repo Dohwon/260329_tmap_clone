@@ -260,3 +260,23 @@
 1. `searchNearbyPOIs`를 category별 lazy 전략으로 더 쪼개기
 2. `quota safe mode`를 붙여 enrichment를 단계적으로 꺼지게 만들기
 3. NGII 최소 레이어 확보 후 corridor fallback을 실제 geometry로 교체하기
+
+## 2026-04-19 추가 2
+
+### 실제 반영 포인트
+
+- `searchNearbyPOIs`, `searchSafetyHazards`에 enrichment safe mode를 추가했다.
+- 같은 채널에서 반복 실패가 2회 누적되면 3분 동안 네트워크 enrichment 호출을 쉬고 로컬 fallback만 사용한다.
+- 적용 채널은 `fuel`, `restaurants`, `nearby`, `safety`다.
+
+### 해결 방식
+
+- route core는 그대로 두고 enrichment만 메모리 circuit breaker로 제어
+- 안전정보는 빈 목록 fallback, 주변 검색은 category별 fallback 결과를 우선 사용
+- repeated failure를 무조건 재시도하지 않도록 top-level service 함수에서 차단
+
+### 숨은 리스크
+
+- 현재 safe mode는 브라우저 메모리 상태라 새로고침하면 초기화된다.
+- API provider별 quota가 아니라 `채널 단위 반복 실패` 기준이다.
+- 즉 근본적인 quota telemetry는 아직 없고, 지금 단계는 `실패 폭주 방지`에 가깝다.
