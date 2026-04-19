@@ -306,6 +306,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
   const manualRestoreTimerRef = useRef(null)
   const lastCameraRef = useRef(null)
   const smoothedHeadingRef = useRef(0)
+  const lastPreviewFitRouteIdRef = useRef(null)
   const [corridorData, setCorridorData] = useState(null)
   const [cameraMode, setCameraMode] = useState('nav')
 
@@ -326,9 +327,15 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     showRoutePanel,
     settings,
     safetyHazards,
+    destination,
+    routeOrigin,
   } = useAppStore()
 
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
+  const otherRoutes = useMemo(
+    () => routes.filter((route) => route.id !== selectedRouteId),
+    [routes, selectedRouteId]
+  )
   const guidanceLocation = navigationMatchedLocation ?? userLocation
   const currentRouteSegment = useMemo(
     () => getCurrentRouteSegment(selectedRoute, guidanceLocation),
@@ -343,6 +350,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     return selectedRoute.segmentStats.findIndex((segment) => segment.id === currentRouteSegment.id)
   }, [currentRouteSegment?.id, selectedRoute?.segmentStats])
   const driverFocusSegments = useMemo(() => {
+    if (!isNavigating) return []
     const segments = selectedRoute?.segmentStats ?? []
     if (segments.length === 0) return []
     const startIndex = Math.max(0, currentSegmentIndex)
@@ -352,6 +360,9 @@ export default function NavigationMapLibreView({ darkMode = false }) {
   }, [currentSegmentIndex, selectedRoute?.segmentStats])
   const remainingRoutePath = useMemo(() => {
     if (!selectedRoute) return []
+    if (!isNavigating) {
+      return Array.isArray(selectedRoute.polyline) ? selectedRoute.polyline : []
+    }
     const trimmed = buildRemainingRoutePolyline(
       selectedRoute,
       navigationProgressKm,
@@ -436,6 +447,31 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       .filter(Boolean),
   }), [guidanceLocation, selectedRoute?.cameras])
 
+  const otherRoutesCollection = useMemo(() => ({
+    type: 'FeatureCollection',
+    features: !isNavigating
+      ? otherRoutes
+        .map((route) => buildLineFeature(`preview-route-${route.id}`, route.polyline, {
+          color: buildRouteSegmentColor(route?.highwayRatio >= 50 ? 'highway' : route?.nationalRoadRatio >= 40 ? 'national' : 'local'),
+        }))
+        .filter(Boolean)
+      : [],
+  }), [isNavigating, otherRoutes])
+
+  const destinationCollection = useMemo(() => ({
+    type: 'FeatureCollection',
+    features: destination
+      ? [buildPointFeature('destination-point', [destination.lat, destination.lng], { type: 'destination' })].filter(Boolean)
+      : [],
+  }), [destination])
+
+  const originCollection = useMemo(() => ({
+    type: 'FeatureCollection',
+    features: !isNavigating && routeOrigin
+      ? [buildPointFeature('origin-point', [routeOrigin.lat, routeOrigin.lng], { type: 'origin' })].filter(Boolean)
+      : [],
+  }), [isNavigating, routeOrigin])
+
   const guidanceCollection = useMemo(() => ({
     type: 'FeatureCollection',
     features: upcomingDriverGuidance
@@ -506,12 +542,15 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     map.on('load', () => {
       loadedRef.current = true
       upsertGeoJsonSource(map, 'remaining-route', routeCollection)
+      upsertGeoJsonSource(map, 'preview-routes', otherRoutesCollection)
       upsertGeoJsonSource(map, 'active-route', activeCollection)
       upsertGeoJsonSource(map, 'focus-route', focusCollection)
       upsertGeoJsonSource(map, 'drive-history', historyCollection)
       upsertGeoJsonSource(map, 'camera-points', cameraCollection)
       upsertGeoJsonSource(map, 'guidance-points', guidanceCollection)
       upsertGeoJsonSource(map, 'hazard-points', hazardCollection)
+      upsertGeoJsonSource(map, 'destination-point', destinationCollection)
+      upsertGeoJsonSource(map, 'origin-point', originCollection)
       upsertGeoJsonSource(map, 'corridor-boundary', corridorBoundaryCollection)
       upsertGeoJsonSource(map, 'corridor-ramp', corridorRampCollection)
       upsertGeoJsonSource(map, 'corridor-connector', corridorConnectorCollection)
@@ -542,6 +581,11 @@ export default function NavigationMapLibreView({ darkMode = false }) {
         'line-color': '#05233B',
         'line-width': 8,
         'line-opacity': 0.55,
+      })
+      ensureLineLayer(map, 'preview-routes-line', 'preview-routes', {
+        'line-color': ['coalesce', ['get', 'color'], COLORS.routeLocal],
+        'line-width': 4,
+        'line-opacity': 0.28,
       })
       ensureLineLayer(map, 'drive-history-line', 'drive-history', {
         'line-color': '#22D3EE',
@@ -591,6 +635,18 @@ export default function NavigationMapLibreView({ darkMode = false }) {
         'circle-color': COLORS.hazard,
         'circle-stroke-color': '#ffffff',
         'circle-stroke-width': 2,
+      })
+      ensureCircleLayer(map, 'destination-point-layer', 'destination-point', {
+        'circle-radius': 8,
+        'circle-color': '#0064FF',
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 3,
+      })
+      ensureCircleLayer(map, 'origin-point-layer', 'origin-point', {
+        'circle-radius': 7,
+        'circle-color': '#111827',
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 3,
       })
 
       if (darkMode) {
@@ -665,12 +721,15 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     const map = mapRef.current
     if (!map || !loadedRef.current) return
     upsertGeoJsonSource(map, 'remaining-route', routeCollection)
+    upsertGeoJsonSource(map, 'preview-routes', otherRoutesCollection)
     upsertGeoJsonSource(map, 'active-route', activeCollection)
     upsertGeoJsonSource(map, 'focus-route', focusCollection)
     upsertGeoJsonSource(map, 'drive-history', historyCollection)
     upsertGeoJsonSource(map, 'camera-points', cameraCollection)
     upsertGeoJsonSource(map, 'guidance-points', guidanceCollection)
     upsertGeoJsonSource(map, 'hazard-points', hazardCollection)
+    upsertGeoJsonSource(map, 'destination-point', destinationCollection)
+    upsertGeoJsonSource(map, 'origin-point', originCollection)
     upsertGeoJsonSource(map, 'corridor-boundary', corridorBoundaryCollection)
     upsertGeoJsonSource(map, 'corridor-ramp', corridorRampCollection)
     upsertGeoJsonSource(map, 'corridor-connector', corridorConnectorCollection)
@@ -682,12 +741,37 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     corridorConnectorCollection,
     corridorLaneCenterCollection,
     corridorRampCollection,
+    destinationCollection,
     focusCollection,
     guidanceCollection,
     hazardCollection,
     historyCollection,
+    originCollection,
+    otherRoutesCollection,
     routeCollection,
   ])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !loadedRef.current || isNavigating || !selectedRoute?.id) return
+    if (!Array.isArray(selectedRoute.polyline) || selectedRoute.polyline.length < 2) return
+    if (lastPreviewFitRouteIdRef.current === selectedRoute.id) return
+
+    const bounds = selectedRoute.polyline.reduce((acc, point) => {
+      if (!Array.isArray(point) || point.length < 2) return acc
+      return acc.extend([point[1], point[0]])
+    }, new maplibregl.LngLatBounds(
+      [selectedRoute.polyline[0][1], selectedRoute.polyline[0][0]],
+      [selectedRoute.polyline[0][1], selectedRoute.polyline[0][0]]
+    ))
+
+    lastPreviewFitRouteIdRef.current = selectedRoute.id
+    map.fitBounds(bounds, {
+      padding: { top: 120, right: 40, bottom: 260, left: 40 },
+      duration: 0,
+      essential: true,
+    })
+  }, [isNavigating, selectedRoute?.id, selectedRoute?.polyline])
 
   useEffect(() => {
     const map = mapRef.current

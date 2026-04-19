@@ -1350,7 +1350,11 @@ function LeafletMapView({ darkMode = false }) {
 
 export default function MapView({ darkMode = false }) {
   const isNavigating = useAppStore((s) => s.isNavigating)
-  return isNavigating
+  const routes = useAppStore((s) => s.routes)
+  const selectedRouteId = useAppStore((s) => s.selectedRouteId)
+  const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
+  const shouldUseMapLibre = isNavigating || Boolean(selectedRoute)
+  return shouldUseMapLibre
     ? (
       <Suspense fallback={<div className="absolute inset-0 bg-[#D8E4DE]" />}>
         <NavigationMapLibreView darkMode={darkMode} />
