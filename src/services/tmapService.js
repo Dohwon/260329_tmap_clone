@@ -541,7 +541,18 @@ function sanitizeRouteLabel(label, fallback) {
 
 function buildRouteErrorMessage(res, json) {
   if (res?.status === 429) return 'TMAP 요청이 많아 잠시 후 다시 시도해주세요.'
-  return json?.error?.errorMessage ?? json?.error?.code ?? json?.error?.message ?? `TMAP HTTP ${res.status}`
+  const baseMessage = json?.error?.errorMessage ?? json?.error?.message ?? json?.error?.code ?? `TMAP HTTP ${res.status}`
+  const routeDiag = json?.error?.diag?.routeDiag
+  if (routeDiag?.invalid === 'origin-or-destination') return '출발지 또는 목적지 좌표가 올바르지 않습니다.'
+  if (routeDiag?.invalid === 'duplicated-origin-destination') return '출발지와 목적지가 거의 동일합니다.'
+  if (
+    routeDiag?.path === 'routeSequential30' &&
+    Number.isFinite(Number(routeDiag?.viaPointCount)) &&
+    Number(routeDiag.viaPointCount) === 0
+  ) {
+    return `${baseMessage} (유효한 경유지가 없어 경유 요청을 제거했습니다.)`
+  }
+  return baseMessage
 }
 
 function searchFallbackPlaces(keyword, nearLat, nearLng) {

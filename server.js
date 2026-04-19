@@ -314,6 +314,128 @@ function summarizeTmapBody(rawBody = null) {
   }
 }
 
+function hasFiniteRouteCoord(lat, lng) {
+  return Number.isFinite(Number(lat)) && Number.isFinite(Number(lng))
+}
+
+function areRouteCoordsNear(aLat, aLng, bLat, bLng, thresholdKm = 0.08) {
+  if (
+    !hasFiniteRouteCoord(aLat, aLng) ||
+    !hasFiniteRouteCoord(bLat, bLng)
+  ) {
+    return false
+  }
+  return haversineKm(Number(aLat), Number(aLng), Number(bLat), Number(bLng)) <= thresholdKm
+}
+
+function normalizeSequentialViaPoints(startX, startY, endX, endY, viaPoints = []) {
+  const sanitized = []
+
+  for (const point of viaPoints ?? []) {
+    const viaX = Number(point?.viaX)
+    const viaY = Number(point?.viaY)
+    if (!hasFiniteRouteCoord(viaY, viaX)) continue
+    if (areRouteCoordsNear(startY, startX, viaY, viaX) || areRouteCoordsNear(endY, endX, viaY, viaX)) continue
+    const duplicated = sanitized.some((existing) => areRouteCoordsNear(existing.viaY, existing.viaX, viaY, viaX))
+    if (duplicated) continue
+    sanitized.push({
+      viaPointId: point?.viaPointId ?? `via-${sanitized.length}`,
+      viaPointName: point?.viaPointName ?? `경유지 ${sanitized.length + 1}`,
+      viaX: String(viaX),
+      viaY: String(viaY),
+      viaTime: String(point?.viaTime ?? 0),
+    })
+  }
+
+  return sanitized
+}
+
+function normalizeRouteProxyPayload(tmapPath, body = null) {
+  if (!body || typeof body !== 'object') {
+    return { body, diag: null, invalidReason: null }
+  }
+
+  const isSequential = tmapPath.includes('/routes/routeSequential30')
+  const isDirectRoute = tmapPath.includes('/routes?')
+  if (!isSequential && !isDirectRoute) {
+    return { body, diag: null, invalidReason: null }
+  }
+
+  const startX = Number(body?.startX)
+  const startY = Number(body?.startY)
+  const endX = Number(body?.endX)
+  const endY = Number(body?.endY)
+
+  if (!hasFiniteRouteCoord(startY, startX) || !hasFiniteRouteCoord(endY, endX)) {
+    return {
+      body,
+      diag: {
+        path: isSequential ? 'routeSequential30' : 'routes',
+        invalid: 'origin-or-destination',
+      },
+      invalidReason: '출발지 또는 목적지 좌표가 올바르지 않습니다.',
+    }
+  }
+
+  if (areRouteCoordsNear(startY, startX, endY, endX, 0.02)) {
+    return {
+      body,
+      diag: {
+        path: isSequential ? 'routeSequential30' : 'routes',
+        invalid: 'duplicated-origin-destination',
+      },
+      invalidReason: '출발지와 목적지가 거의 동일합니다.',
+    }
+  }
+
+  if (!isSequential) {
+    return {
+      body: {
+        ...body,
+        startX: String(startX),
+        startY: String(startY),
+        endX: String(endX),
+        endY: String(endY),
+      },
+      diag: {
+        path: 'routes',
+        searchOption: body?.searchOption ?? null,
+      },
+      invalidReason: null,
+    }
+  }
+
+  const viaPoints = normalizeSequentialViaPoints(startX, startY, endX, endY, body?.viaPoints)
+  return {
+    body: {
+      ...body,
+      startX: String(startX),
+      startY: String(startY),
+      endX: String(endX),
+      endY: String(endY),
+      viaPoints,
+    },
+    diag: {
+      path: 'routeSequential30',
+      searchOption: body?.searchOption ?? null,
+      viaPointCount: viaPoints.length,
+    },
+    invalidReason: null,
+  }
+}
+
+function buildNormalizedTmapProxyError(result, parsed = null, extra = {}) {
+  return {
+    error: {
+      code: parsed?.error?.code ?? parsed?.error?.errorCode ?? `TMAP_HTTP_${result.status}`,
+      message: parsed?.error?.message ?? parsed?.error?.errorMessage ?? `TMAP HTTP ${result.status}`,
+      errorMessage: parsed?.error?.errorMessage ?? parsed?.error?.message ?? `TMAP HTTP ${result.status}`,
+      status: Number(result.status),
+      diag: extra,
+    },
+  }
+}
+
 function buildEmptyPoiResponse() {
   return {
     searchPoiInfo: {
@@ -1861,7 +1983,21 @@ app.use('/api/tmap', express.json({ limit: '2mb' }), async (req, res) => {
   // req.url 은 /tmap/ 다음 경로+쿼리스트링 (ex: /routes?version=1)
   const tmapPath = '/tmap' + req.url
 
-  const body = (req.method === 'POST' && req.body) ? JSON.stringify(req.body) : null
+  const normalizedRoutePayload = req.method === 'POST'
+    ? normalizeRouteProxyPayload(tmapPath, req.body)
+    : { body: null, diag: null, invalidReason: null }
+  if (normalizedRoutePayload.invalidReason) {
+    return res.status(400).json({
+      error: {
+        code: 'INVALID_ROUTE_PAYLOAD',
+        message: normalizedRoutePayload.invalidReason,
+        errorMessage: normalizedRoutePayload.invalidReason,
+        status: 400,
+        diag: normalizedRoutePayload.diag,
+      },
+    })
+  }
+  const body = (req.method === 'POST' && normalizedRoutePayload.body) ? JSON.stringify(normalizedRoutePayload.body) : null
   const shouldTrace = tmapPath.includes('/routes') || tmapPath.includes('/nearestRoad')
   const bodySummary = shouldTrace ? summarizeTmapBody(body) : null
 
@@ -1895,9 +2031,17 @@ app.use('/api/tmap', express.json({ limit: '2mb' }), async (req, res) => {
         status: result.status,
         path: tmapPath,
         body: bodySummary,
+        routeDiag: normalizedRoutePayload.diag,
         errorCode: parsed?.error?.code ?? parsed?.error?.errorCode ?? null,
         errorMessage: parsed?.error?.message ?? parsed?.error?.errorMessage ?? null,
       })
+      if (tmapPath.includes('/routes')) {
+        return res.status(result.status).json(buildNormalizedTmapProxyError(result, parsed, {
+          path: tmapPath,
+          request: bodySummary,
+          routeDiag: normalizedRoutePayload.diag,
+        }))
+      }
     }
     res.status(result.status)
     res.set('Content-Type', result.rawHeaders['content-type'] || 'application/json')
