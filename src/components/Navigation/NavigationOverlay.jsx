@@ -528,6 +528,7 @@ export default function NavigationOverlay() {
     navAutoFollow, setNavAutoFollow, addWaypoint, searchRoute, waypoints,
     refreshNavigationRoute, navigationLastRefreshedAt, isRefreshingNavigation,
     settings, driverPreset, setDriverPreset, showRoutePanel, openSearchOverlay, safetyHazards, refreshSafetyHazards,
+    setEnrichmentStatus,
     isDriveSimulation, startDriveSimulation, stopDriveSimulation, triggerDriveSimulationOffRoute,
   } = useAppStore()
   const [showMerge, setShowMerge] = useState(false)
@@ -908,6 +909,11 @@ export default function NavigationOverlay() {
     lastRestaurantRefreshAtRef.current = now
     lastRestaurantRefreshCoordRef.current = { lat: userLocation.lat, lng: userLocation.lng }
     setRestaurantLoading(true)
+    setEnrichmentStatus('restaurants', {
+      state: 'loading',
+      lastError: null,
+      lastLoadedAt: now,
+    })
 
     let cancelled = false
     searchNearbyPOIs('음식점', userLocation.lat, userLocation.lng, {
@@ -927,10 +933,21 @@ export default function NavigationOverlay() {
             })
             .slice(0, 3)
         )
+        setEnrichmentStatus('restaurants', {
+          state: 'ready',
+          lastError: null,
+          lastLoadedAt: Date.now(),
+          lastSuccessAt: Date.now(),
+        })
         setRestaurantLoading(false)
       })
-      .catch(() => {
+      .catch((error) => {
         if (cancelled) return
+        setEnrichmentStatus('restaurants', {
+          state: 'error',
+          lastError: error?.message ?? '경로상 맛집 부가정보를 불러오지 못했습니다.',
+          lastLoadedAt: Date.now(),
+        })
         setRestaurantCandidates([])
         setRestaurantLoading(false)
       })
@@ -1177,6 +1194,11 @@ export default function NavigationOverlay() {
   async function searchNearby(category) {
     setNearbyCategory(category)
     setNearbyLoading(true)
+    setEnrichmentStatus('nearby', {
+      state: 'loading',
+      lastError: null,
+      lastLoadedAt: Date.now(),
+    })
     try {
       const lat = userLocation?.lat ?? 37.5665
       const lng = userLocation?.lng ?? 126.978
@@ -1184,8 +1206,19 @@ export default function NavigationOverlay() {
         routePolyline: route?.polyline ?? [],
         fuelSettings: settings,
       })
+      setEnrichmentStatus('nearby', {
+        state: 'ready',
+        lastError: null,
+        lastLoadedAt: Date.now(),
+        lastSuccessAt: Date.now(),
+      })
       setNearbyPOIs(pois.slice(0, 6))
-    } catch {
+    } catch (error) {
+      setEnrichmentStatus('nearby', {
+        state: 'error',
+        lastError: error?.message ?? `${category} 부가정보를 불러오지 못했습니다.`,
+        lastLoadedAt: Date.now(),
+      })
       setNearbyPOIs([])
     }
     setNearbyLoading(false)

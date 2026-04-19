@@ -228,3 +228,35 @@
 
 - `네비가 된다`와 `실제로 쓸 수 있다`는 다르다.
   - 실제 제품 단계에서는 `API 예산`, `실패 시 폴백`, `실데이터 정합성`, `모바일 추종 품질`이 기능 수보다 중요하다.
+
+## 2026-04-19 추가
+
+### 실제 반영 포인트
+
+- `3728030`
+  - `POST /api/road/corridor` 추가
+  - `NavigationMapLibreView.jsx`가 corridor GeoJSON을 읽어 본선/분기/램프/도로 경계 레이어를 직접 렌더링하도록 확장
+  - 아직 `NGII 실데이터`가 아니라 `route.segmentStats + polyline` 기반 fallback
+
+- 작업 중
+  - `route core / enrichment` 상태 분리
+  - `tmapStatus`는 길찾기 코어 상태로 유지
+  - `enrichmentStatus.nearby/restaurants/safety`를 분리해 부가정보 실패가 길찾기 실패처럼 보이지 않도록 정리
+
+### 해결 방식
+
+- 길찾기 코어와 부가정보를 같은 배너에서 섞어 보여주던 구조를 store 채널 단위로 분리
+- `openNearbyCategory`, `refreshHomeRestaurantPins`, `refreshSafetyHazards`, `NavigationOverlay`의 근처/맛집 로드를 각 enrichment 채널로 보고
+- `RoutePreviewPanel.jsx`에서 `핵심 길찾기`와 `부가정보` 상태를 별도 카드로 렌더링
+
+### 숨은 리스크
+
+- 지금 단계는 `상태 분리`까지이고, 실제 네트워크 fan-out 절감은 아직 완전하지 않다.
+- `searchNearbyPOIs` 내부는 여전히 category별로 여러 upstream을 순차/병렬 호출할 수 있다.
+- 즉 `부가정보 장애가 길찾기를 망치지 않게`는 개선됐지만, `부가정보 예산 자체 축소`는 다음 단계 작업이다.
+
+### 다음 액션
+
+1. `searchNearbyPOIs`를 category별 lazy 전략으로 더 쪼개기
+2. `quota safe mode`를 붙여 enrichment를 단계적으로 꺼지게 만들기
+3. NGII 최소 레이어 확보 후 corridor fallback을 실제 geometry로 교체하기

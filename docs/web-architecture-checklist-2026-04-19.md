@@ -142,9 +142,9 @@
 
 ### 5-A. route/core vs enrichment 분리
 
-- [ ] route 탐색과 enrichment(맛집/병원/주유/hazard)를 서로 분리
-- [ ] route core 실패 없이 enrichment만 떨어질 수 있게 구조 재분리
-- [ ] UI에서 `핵심 길찾기`, `부가정보` 상태를 구분 표기
+- [x] route 탐색과 enrichment(맛집/병원/주유/hazard)를 상태 채널 기준으로 분리
+- [x] route core 실패 없이 enrichment만 떨어질 수 있게 UI 상태 재분리
+- [x] UI에서 `핵심 길찾기`, `부가정보` 상태를 구분 표기
 
 완료 조건:
 - 맛집/병원/유가 API 장애가 길찾기를 망치지 않는다.

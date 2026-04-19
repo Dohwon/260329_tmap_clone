@@ -42,6 +42,12 @@ const DEFAULT_SETTINGS = {
   fuelBenefitPercent: 5,
 }
 
+const DEFAULT_ENRICHMENT_STATUS = {
+  nearby: { state: 'idle', lastError: null, lastLoadedAt: 0, lastSuccessAt: 0 },
+  restaurants: { state: 'idle', lastError: null, lastLoadedAt: 0, lastSuccessAt: 0 },
+  safety: { state: 'idle', lastError: null, lastLoadedAt: 0, lastSuccessAt: 0 },
+}
+
 const LEGACY_FAVORITE_ADDRESSES = new Set(['서울시 강남구 테헤란로', '서울시 중구 을지로'])
 const liveRouteRequestCache = new Map()
 const liveRouteInflightRequests = new Map()
@@ -83,6 +89,18 @@ function sanitizeSettings(settings) {
     ...DEFAULT_SETTINGS,
     ...(settings ?? {}),
   }
+}
+
+function sanitizeEnrichmentStatus(status) {
+  return Object.fromEntries(
+    Object.entries(DEFAULT_ENRICHMENT_STATUS).map(([key, fallback]) => [
+      key,
+      {
+        ...fallback,
+        ...(status?.[key] ?? {}),
+      },
+    ])
+  )
 }
 
 function cloneLiveRoutes(routes = [], patch = {}) {
@@ -2278,6 +2296,16 @@ const useAppStore = create((set, get) => ({
 
   tmapStatus: { hasApiKey: false, mode: 'simulation', lastError: null },
   setTmapStatus: (patch) => set((state) => ({ tmapStatus: { ...state.tmapStatus, ...patch } })),
+  enrichmentStatus: sanitizeEnrichmentStatus(),
+  setEnrichmentStatus: (channel, patch) => set((state) => ({
+    enrichmentStatus: {
+      ...state.enrichmentStatus,
+      [channel]: {
+        ...(state.enrichmentStatus?.[channel] ?? DEFAULT_ENRICHMENT_STATUS[channel] ?? DEFAULT_ENRICHMENT_STATUS.nearby),
+        ...patch,
+      },
+    },
+  })),
 
   refreshRoutePresentation: async (overrides = {}) => {
     const state = get()
@@ -2415,6 +2443,11 @@ const useAppStore = create((set, get) => ({
   openNearbyCategory: async (category) => {
     const origin = get().userLocation ?? DEFAULT_ORIGIN
     const selectedRoute = get().routes.find((route) => route.id === get().selectedRouteId) ?? null
+    get().setEnrichmentStatus('nearby', {
+      state: 'loading',
+      lastError: null,
+      lastLoadedAt: Date.now(),
+    })
     set({
       activeTab: 'search',
       isSearchOverlayOpen: false,
@@ -2429,8 +2462,19 @@ const useAppStore = create((set, get) => ({
         routePolyline: selectedRoute?.polyline ?? [],
         fuelSettings: get().settings,
       })
+      get().setEnrichmentStatus('nearby', {
+        state: 'ready',
+        lastError: null,
+        lastLoadedAt: Date.now(),
+        lastSuccessAt: Date.now(),
+      })
       set({ nearbyPlaces, isLoadingNearby: false })
-    } catch {
+    } catch (error) {
+      get().setEnrichmentStatus('nearby', {
+        state: 'error',
+        lastError: error?.message ?? `${category} 부가정보를 불러오지 못했습니다.`,
+        lastLoadedAt: Date.now(),
+      })
       set({ nearbyPlaces: [], isLoadingNearby: false })
     }
   },
@@ -2442,9 +2486,20 @@ const useAppStore = create((set, get) => ({
       : fallbackCenter
         ? { lat: fallbackCenter[0], lng: fallbackCenter[1] }
         : (get().userLocation ?? DEFAULT_ORIGIN)
+    get().setEnrichmentStatus('restaurants', {
+      state: 'loading',
+      lastError: null,
+      lastLoadedAt: Date.now(),
+    })
     try {
       const pins = await searchNearbyPOIs('음식점', origin.lat, origin.lng, {
         fuelSettings: get().settings,
+      })
+      get().setEnrichmentStatus('restaurants', {
+        state: 'ready',
+        lastError: null,
+        lastLoadedAt: Date.now(),
+        lastSuccessAt: Date.now(),
       })
       set({
         homeRestaurantPins: (pins ?? []).filter((item) => (item.distanceKm ?? Infinity) <= 10).slice(0, 8).map((item) => ({
@@ -2454,7 +2509,12 @@ const useAppStore = create((set, get) => ({
         })),
         homeRestaurantPinsLoadedAt: Date.now(),
       })
-    } catch {
+    } catch (error) {
+      get().setEnrichmentStatus('restaurants', {
+        state: 'error',
+        lastError: error?.message ?? '맛집 부가정보를 불러오지 못했습니다.',
+        lastLoadedAt: Date.now(),
+      })
       set({ homeRestaurantPins: [], homeRestaurantPinsLoadedAt: Date.now() })
     }
   },
@@ -2538,11 +2598,27 @@ const useAppStore = create((set, get) => ({
     // 60초 이내 중복 호출 방지
     if (Date.now() - state.safetyLastLoadedAt < 60000) return state.safetyHazards
     const origin = state.userLocation ?? DEFAULT_ORIGIN
+    get().setEnrichmentStatus('safety', {
+      state: 'loading',
+      lastError: null,
+      lastLoadedAt: Date.now(),
+    })
     try {
       const hazards = await searchSafetyHazards(origin.lat, origin.lng)
+      get().setEnrichmentStatus('safety', {
+        state: 'ready',
+        lastError: null,
+        lastLoadedAt: Date.now(),
+        lastSuccessAt: Date.now(),
+      })
       set({ safetyHazards: hazards, safetyLastLoadedAt: Date.now() })
       return hazards
-    } catch {
+    } catch (error) {
+      get().setEnrichmentStatus('safety', {
+        state: 'error',
+        lastError: error?.message ?? '안전운전 부가정보를 불러오지 못했습니다.',
+        lastLoadedAt: Date.now(),
+      })
       set({ safetyLastLoadedAt: Date.now() })
       return state.safetyHazards
     }
