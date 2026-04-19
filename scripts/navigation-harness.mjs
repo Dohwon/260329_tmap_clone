@@ -14,6 +14,7 @@ import {
 } from '../src/utils/routingGuards.js'
 import {
   analyzeRecordedDrive,
+  buildActualLaneStates,
   analyzeRouteProgress,
   buildLanePatternFromGuidance,
   buildRemainingRoutePolyline,
@@ -255,6 +256,23 @@ run('guide line meta keeps overlay and map colors on the same palette', () => {
   })
   assert.equal(greenMeta?.color, '#B8FFE9')
   assert.match(greenMeta?.text ?? '', /초록색 유도선/)
+})
+
+run('actual lane states map lane guidance onto real lane counts', () => {
+  const states = buildActualLaneStates({
+    turnType: 17,
+    laneTurnInfo: [
+      { turn: 3, avail: 0, etc: 1 },
+      { turn: 10, avail: 0, etc: 0 },
+      { turn: 8, avail: 0, etc: 0 },
+      { turn: 8, avail: 0, etc: 0 },
+      { turn: 40, avail: 32, etc: 64 },
+    ],
+  }, 5)
+
+  assert.equal(states.length, 5)
+  assert.equal(states[4], 'active-right')
+  assert.ok(states.slice(0, 4).every((state) => state === 'muted' || state === 'muted-bus'))
 })
 
 run('guidance text prefers real TMAP instruction wording when available', () => {

@@ -131,9 +131,9 @@
 
 ### 4-C. 차선 수준 표현
 
-- [ ] lane count 추정이 아니라 실제 lane geometry를 우선 표시
-- [ ] 포켓차선/가감속차로/버스전용/직좌/직우 패턴을 lane group에 매핑
-- [ ] 차선이 부족한 구간은 문구 fallback만 남기고 가짜 형상은 숨김
+- [x] lane count 추정이 아니라 실제 lane geometry를 우선 표시
+- [x] 포켓차선/가감속차로/버스전용/직좌/직우 패턴을 lane group에 매핑
+- [x] 차선이 부족한 구간은 문구 fallback만 남기고 가짜 형상은 숨김
 
 완료 조건:
 - 실제 데이터가 있는 구간에서는 차선 위치가 보이고, 없는 구간은 과장 없이 축소 표시한다.
@@ -151,9 +151,9 @@
 
 ### 5-B. corridor cache
 
-- [ ] corridor API 응답에 route hash 기반 TTL 캐시 적용
-- [ ] 동일 route + progress bucket 요청 재사용
-- [ ] Railway 메모리/디스크 캐시 정책 정리
+- [x] corridor API 응답에 route hash 기반 TTL 캐시 적용
+- [x] 동일 route + progress bucket 요청 재사용
+- [x] Railway 메모리/디스크 캐시 정책 정리
 
 완료 조건:
 - 지도 이동만으로 corridor 생성이 중복 호출되지 않는다.
@@ -222,6 +222,8 @@
 - [x] 미니 인셋을 실제 세그먼트 기반 경로형으로 변경
 - [x] `분홍색/초록색 유도선을 따라가세요` 문구를 인셋/음성에 반영
 - [x] 즉시 안내 구간의 지도 위 유도선을 extcVoiceCode 색상으로 분리 렌더링
+- [x] 실제 lane center가 있는 구간만 실차로 프리뷰를 표시하고, 없는 구간은 문구 fallback만 유지
+- [x] corridor cache에 TTL + progress bucket + 메모리 prune 정책 적용
 
 ## 이번 체크리스트에서 아직 미완료인 핵심 5개
 

@@ -7,12 +7,11 @@ import { PRESET_INFO } from '../../data/mockData'
 import { fetchRouteCorridor, fetchUpcomingFuelContext, getDiscountedFuelPrice, searchNearbyPOIs } from '../../services/tmapService'
 import {
   analyzeRouteProgress,
-  buildLanePatternFromGuidance,
+  buildActualLaneStates,
   formatGuidanceDistance,
   getEffectiveCurrentSpeedContext,
   getGuideLineMeta,
   getGuidanceInstruction,
-  getLaneGuidance,
   getGuidancePriority,
   getCurrentRouteSegment,
   getRemainingEta,
@@ -57,10 +56,6 @@ function areSimilarPolylines(a = [], b = []) {
   }
   const avgDiffKm = diffSumKm / Math.max(1, Math.min(aSample.length, bSample.length))
   return avgDiffKm <= 0.12 && Math.abs(getPolylineDistanceKm(a) - getPolylineDistanceKm(b)) <= 1.5
-}
-
-function getLanePattern(guidance) {
-  return buildLanePatternFromGuidance(guidance)
 }
 
 function getLaneArrow(lane) {
@@ -250,6 +245,34 @@ function buildGuideLineSpeech(guidance) {
   return guideLineMeta?.text ?? null
 }
 
+function buildActualLanePreview(corridorData = null, insetGeometry = null, guidance = null) {
+  const laneFeatures = corridorData?.layers?.laneCenter?.features ?? []
+  if (!insetGeometry?.projectPoint || !Array.isArray(laneFeatures) || laneFeatures.length < 2) return []
+
+  const projectedLanes = laneFeatures
+    .map((feature, index) => {
+      const points = dedupeInsetPoints(featureCoordsToLatLngPairs(feature))
+      if (points.length < 2) return null
+      const anchorPoint = points[points.length - 1] ?? points[Math.floor(points.length / 2)]
+      const [x] = insetGeometry.projectPoint(anchorPoint)
+      if (!Number.isFinite(x)) return null
+      return { id: feature.id ?? `lane-center-${index}`, x }
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.x - b.x)
+
+  if (projectedLanes.length < 2) return []
+
+  const laneStates = buildActualLaneStates(guidance, projectedLanes.length)
+  if (laneStates.length !== projectedLanes.length) return []
+
+  return projectedLanes.map((lane, index) => ({
+    ...lane,
+    state: laneStates[index] ?? 'muted',
+    leftPct: Math.max(6, Math.min(94, (lane.x / Math.max(1, insetGeometry.width)) * 100)),
+  }))
+}
+
 function GuidanceInsetCard({ guidance, afterNextGuidance = null, focusSegments = [], corridorData = null }) {
   if (!guidance) return null
 
@@ -258,7 +281,7 @@ function GuidanceInsetCard({ guidance, afterNextGuidance = null, focusSegments =
   const previewSegments = focusSegments.slice(0, 3)
   const insetGeometry = buildInsetGeometryFromCorridor(corridorData, focusSegments)
   const guideLineMeta = getGuideLineMeta(guidance)
-  const lanePattern = getLanePattern(guidance)
+  const actualLanePreview = buildActualLanePreview(corridorData, insetGeometry, guidance)
   const nextActionLabel = getGuidanceInstruction(guidance)
   const isHighwayStyle = isHighwayGuidance(guidance)
   const afterNextLabel = afterNextGuidance ? getGuidanceInstruction(afterNextGuidance) : null
@@ -347,13 +370,14 @@ function GuidanceInsetCard({ guidance, afterNextGuidance = null, focusSegments =
         </div>
       )}
 
-      {lanePattern.length > 0 && (
+      {actualLanePreview.length > 0 && (
         <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-          <div className="text-[10px] font-bold text-slate-400">차로 준비</div>
-          <div className="mt-2 flex items-end gap-1.5">
-            {lanePattern.map((lane, index) => {
-              const isActive = lane.startsWith('active')
-              const isBus = lane === 'muted-bus'
+          <div className="text-[10px] font-bold text-slate-400">실차로 기준 준비</div>
+          <div className="mt-2 relative h-12 overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-slate-200" />
+            {actualLanePreview.map((lane, index) => {
+              const isActive = lane.state.startsWith('active')
+              const isBus = lane.state === 'muted-bus'
               const bgClass = isActive
                 ? 'bg-rose-500 text-white border-rose-400'
                 : isBus
@@ -361,10 +385,11 @@ function GuidanceInsetCard({ guidance, afterNextGuidance = null, focusSegments =
                   : 'bg-white text-slate-400 border-slate-200'
               return (
                 <div
-                  key={`lane-${index}`}
-                  className={`h-11 flex-1 min-w-[22px] rounded-t-lg border flex items-center justify-center text-sm font-black ${bgClass}`}
+                  key={`lane-${lane.id}-${index}`}
+                  className={`absolute bottom-0 h-10 w-7 -translate-x-1/2 rounded-t-lg border flex items-center justify-center text-sm font-black ${bgClass}`}
+                  style={{ left: `${lane.leftPct}%` }}
                 >
-                  {getLaneArrow(lane)}
+                  {getLaneArrow(lane.state)}
                 </div>
               )
             })}

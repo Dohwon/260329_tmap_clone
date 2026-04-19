@@ -893,6 +893,49 @@ export function buildLanePatternFromGuidance(guidance) {
   return ['forward', 'active-forward', 'forward']
 }
 
+export function buildActualLaneStates(guidance, actualLaneCount = 0) {
+  if (!Number.isFinite(Number(actualLaneCount)) || Number(actualLaneCount) < 2) return []
+
+  const laneCount = Math.max(2, Math.floor(Number(actualLaneCount)))
+  const laneText = normalizeLaneText(guidance?.laneHint ?? guidance?.instructionText ?? guidance?.description ?? '')
+  const laneEntries = parseLaneTurnInfo(guidance?.laneTurnInfo ?? guidance?.laneInfoList ?? guidance?.laneGuideInfo)
+  const direction = getGuidanceDirection(guidance, laneText)
+
+  const projectIndex = (index, sourceCount) => {
+    if (sourceCount <= 1) return direction === 'right' ? laneCount - 1 : direction === 'left' ? 0 : Math.floor((laneCount - 1) / 2)
+    const ratio = index / Math.max(1, sourceCount - 1)
+    return Math.max(0, Math.min(laneCount - 1, Math.round(ratio * (laneCount - 1))))
+  }
+
+  const mappedRecommended = new Set(
+    laneEntries
+      .filter((entry) => entry.avail > 0 || [65, 66, 67, 68, 90].includes(entry.etc))
+      .map((entry) => projectIndex(entry.index, laneEntries.length))
+  )
+
+  const fallbackRecommended = (() => {
+    if (mappedRecommended.size > 0) return [...mappedRecommended]
+    if (direction === 'left') return [0]
+    if (direction === 'right') return [laneCount - 1]
+    return [Math.floor((laneCount - 1) / 2)]
+  })()
+
+  const sourceBusLaneIndices = new Set(
+    laneEntries
+      .filter((entry) => entry.etc === 64 || entry.etc === 65)
+      .map((entry) => projectIndex(entry.index, laneEntries.length))
+  )
+
+  return Array.from({ length: laneCount }, (_, index) => {
+    const isRecommended = fallbackRecommended.includes(index)
+    const isBusOnly = sourceBusLaneIndices.has(index) && !isRecommended
+    if (!isRecommended) return isBusOnly ? 'muted-bus' : 'muted'
+    if (direction === 'left') return 'active-left'
+    if (direction === 'right') return 'active-right'
+    return 'active-forward'
+  })
+}
+
 export function getNavigationCameraState(guidance) {
   const remainingDistanceKm = Number(guidance?.remainingDistanceKm)
 

@@ -14,6 +14,7 @@ const ROUTE_ACTUAL_META_CACHE = new Map()
 const ROUTE_ACTUAL_META_TTL_MS = 1000 * 60 * 10
 const ROUTE_CORRIDOR_CACHE = new Map()
 const ROUTE_CORRIDOR_TTL_MS = 1000 * 60 * 2
+const ROUTE_CORRIDOR_CACHE_MAX = 72
 const TMAP_STATUS_CACHE_TTL_MS = 1000 * 30
 const ENRICHMENT_SAFE_MODE_TTL_MS = 1000 * 60 * 3
 const ENRICHMENT_SAFE_MODE_FAILURES = 2
@@ -154,6 +155,24 @@ function buildRouteCorridorCacheKey({
     polyline: sampledPolyline,
     segments: sampledSegments,
   })
+}
+
+function pruneRouteCorridorCache() {
+  const now = Date.now()
+  for (const [key, value] of ROUTE_CORRIDOR_CACHE.entries()) {
+    if (!value || now - value.savedAt > ROUTE_CORRIDOR_TTL_MS) {
+      ROUTE_CORRIDOR_CACHE.delete(key)
+    }
+  }
+
+  if (ROUTE_CORRIDOR_CACHE.size <= ROUTE_CORRIDOR_CACHE_MAX) return
+
+  const overflowKeys = [...ROUTE_CORRIDOR_CACHE.entries()]
+    .sort((a, b) => (a[1]?.savedAt ?? 0) - (b[1]?.savedAt ?? 0))
+    .slice(0, ROUTE_CORRIDOR_CACHE.size - ROUTE_CORRIDOR_CACHE_MAX)
+    .map(([key]) => key)
+
+  overflowKeys.forEach((key) => ROUTE_CORRIDOR_CACHE.delete(key))
 }
 
 function guardRouteRequestBudget() {
@@ -995,6 +1014,7 @@ export async function fetchRouteCorridor({
   radiusM = 450,
   includeLayers = ['laneCenter', 'connector', 'rampShape', 'roadBoundary'],
 } = {}) {
+  pruneRouteCorridorCache()
   const cacheKey = buildRouteCorridorCacheKey({ routeId, polyline, segmentStats, progressKm, radiusM, includeLayers })
   const cached = ROUTE_CORRIDOR_CACHE.get(cacheKey)
   if (cached && Date.now() - cached.savedAt <= ROUTE_CORRIDOR_TTL_MS) {
