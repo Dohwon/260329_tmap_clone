@@ -5,7 +5,9 @@ import useAppStore from '../../store/appStore'
 import { fetchRouteCorridor } from '../../services/tmapService'
 import {
   buildRemainingRoutePolyline,
+  getNavigationCameraRestoreDelay,
   getCurrentRouteSegment,
+  resolveNavigationCameraMode,
   getGuidancePriority,
   getNavigationCameraState,
   getUpcomingGuidanceList,
@@ -395,11 +397,15 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     currentGuidance?.remainingDistanceKm,
     currentGuidance?.turnType,
   ])
-  const effectiveCameraMode = useMemo(() => {
-    if (!isNavigating || showRoutePanel) return 'north-up'
-    if (!navAutoFollow || cameraMode === 'manual') return 'manual'
-    return 'nav'
-  }, [cameraMode, isNavigating, navAutoFollow, showRoutePanel])
+  const effectiveCameraMode = useMemo(() => (
+    resolveNavigationCameraMode({
+      isNavigating,
+      showRoutePanel,
+      navAutoFollow,
+      cameraMode,
+    })
+  ), [cameraMode, isNavigating, navAutoFollow, showRoutePanel])
+  const shouldShowRecenterButton = isNavigating && effectiveCameraMode === 'manual'
   const corridorProgressBucket = useMemo(
     () => Number((Number(navigationProgressKm ?? 0) / 0.15).toFixed(0)) || 0,
     [navigationProgressKm]
@@ -706,16 +712,19 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       return
     }
     if (manualRestoreTimerRef.current) window.clearTimeout(manualRestoreTimerRef.current)
-    if (cameraMode === 'manual') {
+    const restoreDelayMs = getNavigationCameraRestoreDelay({
+      cameraMode,
+      isNavigating,
+      navAutoFollow,
+      showRoutePanel,
+      manualDelayMs: MANUAL_RECENTER_DELAY_MS,
+      northUpDelayMs: NORTH_UP_RESTORE_DELAY_MS,
+    })
+    if (restoreDelayMs != null) {
       manualRestoreTimerRef.current = window.setTimeout(() => {
         setCameraMode('nav')
         setNavAutoFollow(true)
-      }, MANUAL_RECENTER_DELAY_MS)
-    } else if (cameraMode !== 'nav' || navAutoFollow) {
-      manualRestoreTimerRef.current = window.setTimeout(() => {
-        setCameraMode('nav')
-        setNavAutoFollow(true)
-      }, NORTH_UP_RESTORE_DELAY_MS)
+      }, restoreDelayMs)
     }
     return () => {
       if (manualRestoreTimerRef.current) window.clearTimeout(manualRestoreTimerRef.current)
@@ -874,5 +883,21 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     )
   }
 
-  return <div ref={containerRef} className="absolute inset-0" />
+  return (
+    <div className="absolute inset-0">
+      <div ref={containerRef} className="absolute inset-0" />
+      {shouldShowRecenterButton && (
+        <button
+          onClick={() => {
+            lastCameraRef.current = null
+            setCameraMode('nav')
+            setNavAutoFollow(true)
+          }}
+          className="absolute right-4 bottom-36 z-20 rounded-full bg-white/96 border border-slate-200 px-3 py-2 shadow-lg text-[12px] font-bold text-slate-800 active:bg-slate-50"
+        >
+          운전자 시점 복귀
+        </button>
+      )}
+    </div>
+  )
 }

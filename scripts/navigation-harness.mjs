@@ -20,10 +20,12 @@ import {
   ensureLiveRouteSource,
   formatGuidanceDistance,
   getEffectiveCurrentSpeedContext,
+  getNavigationCameraRestoreDelay,
   getCurrentRouteSegment,
   getGuidanceInstruction,
   getGuidancePriority,
   getLaneGuidance,
+  resolveNavigationCameraMode,
   getRemainingEta,
   getTurnInstruction,
   getUpcomingJunction,
@@ -160,6 +162,59 @@ run('remaining route trims overlap with recent driven history near current posit
   assert.deepEqual(remaining[0], [37.5, 127.00009])
   assert.ok(remaining.length <= 3, `expected overlap-trimmed path, got ${remaining.length} points`)
   assert.ok(remaining[1][1] >= 127.0003, 'expected duplicated prefix to be removed from remaining path')
+})
+
+run('navigation camera mode keeps north-up, manual, and nav states separated', () => {
+  assert.equal(resolveNavigationCameraMode({
+    isNavigating: false,
+    showRoutePanel: false,
+    navAutoFollow: true,
+    cameraMode: 'nav',
+  }), 'north-up')
+
+  assert.equal(resolveNavigationCameraMode({
+    isNavigating: true,
+    showRoutePanel: true,
+    navAutoFollow: true,
+    cameraMode: 'nav',
+  }), 'north-up')
+
+  assert.equal(resolveNavigationCameraMode({
+    isNavigating: true,
+    showRoutePanel: false,
+    navAutoFollow: false,
+    cameraMode: 'manual',
+  }), 'manual')
+
+  assert.equal(resolveNavigationCameraMode({
+    isNavigating: true,
+    showRoutePanel: false,
+    navAutoFollow: true,
+    cameraMode: 'nav',
+  }), 'nav')
+})
+
+run('navigation camera restore delay matches manual and north-up recovery rules', () => {
+  assert.equal(getNavigationCameraRestoreDelay({
+    cameraMode: 'manual',
+    isNavigating: true,
+    navAutoFollow: false,
+    showRoutePanel: false,
+  }), 6000)
+
+  assert.equal(getNavigationCameraRestoreDelay({
+    cameraMode: 'north-up',
+    isNavigating: true,
+    navAutoFollow: true,
+    showRoutePanel: false,
+  }), 250)
+
+  assert.equal(getNavigationCameraRestoreDelay({
+    cameraMode: 'nav',
+    isNavigating: true,
+    navAutoFollow: false,
+    showRoutePanel: false,
+  }), null)
 })
 
 run('guidance text prefers real TMAP instruction wording when available', () => {

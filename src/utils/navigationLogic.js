@@ -774,6 +774,31 @@ export function getNavigationCameraState(guidance) {
   }
 }
 
+export function resolveNavigationCameraMode({
+  isNavigating = false,
+  showRoutePanel = false,
+  navAutoFollow = false,
+  cameraMode = 'nav',
+} = {}) {
+  if (!isNavigating || showRoutePanel) return 'north-up'
+  if (!navAutoFollow || cameraMode === 'manual') return 'manual'
+  return 'nav'
+}
+
+export function getNavigationCameraRestoreDelay({
+  cameraMode = 'nav',
+  isNavigating = false,
+  navAutoFollow = false,
+  showRoutePanel = false,
+  manualDelayMs = 6000,
+  northUpDelayMs = 250,
+} = {}) {
+  if (!isNavigating || showRoutePanel) return null
+  if (cameraMode === 'manual') return manualDelayMs
+  if (cameraMode !== 'nav' || navAutoFollow) return northUpDelayMs
+  return null
+}
+
 export function analyzeRecordedDrive(recordedPolyline = [], recordedSamples = [], plannedRoute = {}) {
   const actualPolyline = (recordedPolyline ?? []).map(toPoint).filter(Boolean)
   const plannedPolyline = (plannedRoute?.originalRoutePolyline ?? plannedRoute?.polyline ?? []).map(toPoint).filter(Boolean)
