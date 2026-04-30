@@ -177,7 +177,7 @@
 
 - [x] development -> dev Railway / main -> prod Railway 분리
 - [x] dev 시뮬레이터 env 분리
-- [ ] deploy 후 자동 smoke checklist 실행
+- [x] deploy 후 자동 smoke checklist 실행
 
 완료 조건:
 - 배포 후 dev에서 내비 시작, 시뮬레이터, 지도, TTS, route 200 여부를 바로 점검할 수 있다.
@@ -225,6 +225,7 @@
 - [x] 실제 lane center가 있는 구간만 실차로 프리뷰를 표시하고, 없는 구간은 문구 fallback만 유지
 - [x] corridor cache에 TTL + progress bucket + 메모리 prune 정책 적용
 - [x] Google TTS와 MapTiler에 반복 실패 기반 safe mode를 추가해 browser TTS와 OSM 타일로 강제 폴백
+- [x] `npm run smoke:dev`로 dev 배포 후 루트/TMAP/corridor/TTS 상태를 자동 점검
 
 ## 이번 체크리스트에서 아직 미완료인 핵심 5개
 

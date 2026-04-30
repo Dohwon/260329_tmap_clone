@@ -2,15 +2,58 @@
 
 React + Vite 기반의 TMAP 클론 PWA입니다. 실제 TMAP 경로, 검색, 주변 POI, 주행 기록, 고속도로/국도 중심 드라이버 UX를 목표로 개발 중입니다.
 
+## Required Reading Before Any Change
+
+이 프로젝트를 수정하기 전에 아래 문서를 먼저 읽어야 합니다.
+
+1. [`docs/web-architecture-checklist-2026-04-19.md`](./docs/web-architecture-checklist-2026-04-19.md)
+2. [`docs/open-task-matrix-2026-04-16.md`](./docs/open-task-matrix-2026-04-16.md)
+3. [`docs/problem-solving-log.md`](./docs/problem-solving-log.md)
+
+규칙:
+
+- 문서 순서대로 진행합니다.
+- 이미 닫힌 항목을 다시 추측으로 되돌리지 않습니다.
+- 구조 변경 전에는 체크리스트와 open task matrix에서 현재 단계와 다음 단계를 먼저 확인합니다.
+
 ## Run
 
 ```bash
 npm install
 npm run build
 npm start
+npm run smoke:dev
 ```
 
 개발 서버는 `server.js`를 통해 정적 배포와 `/api/tmap`, `/api/fuel` 프록시를 함께 처리합니다.
+
+## Dev Smoke Check
+
+dev Railway 배포 후 아래 스크립트로 기본 상태를 먼저 확인합니다.
+
+```bash
+npm run smoke:dev
+```
+
+기본 대상은 `https://260329tmapclone-development.up.railway.app`이며, 다른 배포를 보려면 아래처럼 실행합니다.
+
+```bash
+SMOKE_BASE_URL=https://260329tmapclone-production.up.railway.app npm run smoke:dev
+```
+
+자동 체크 항목:
+
+- 루트 HTML 응답
+- `/api/meta/tmap-status`
+- `/api/road/corridor`
+- `/api/meta/tmap-diag`
+- `/api/tts/google` soft check
+
+수동 체크 항목:
+
+- 시뮬레이터 버튼 노출
+- 안내 시작 후 빈 화면 여부
+- 지도 렌더/유도선/차선 프리뷰 체감
 
 ## Structure
 

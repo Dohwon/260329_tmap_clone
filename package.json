@@ -7,7 +7,8 @@
     "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview --host",
-    "start": "node server.js"
+    "start": "node server.js",
+    "smoke:dev": "node scripts/dev_smoke_check.mjs"
   },
   "dependencies": {
     "express": "^5.2.1",
