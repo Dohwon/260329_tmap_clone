@@ -220,6 +220,67 @@ function getRouteLookAheadHeading(route, userLocation, fallbackHeading = 0) {
   return getBearingDeg(userLocation.lat, userLocation.lng, tail[0], tail[1])
 }
 
+function getRouteLookAheadTarget(route, userLocation, lookAheadMeters = null) {
+  const polyline = route?.polyline ?? []
+  if (!userLocation || polyline.length < 2) return null
+
+  let travelledM = 0
+  let bestDistanceM = Infinity
+  let bestProgressM = 0
+
+  for (let index = 0; index < polyline.length - 1; index += 1) {
+    const start = polyline[index]
+    const end = polyline[index + 1]
+    if (
+      !Array.isArray(start) || start.length < 2 ||
+      !Array.isArray(end) || end.length < 2 ||
+      !Number.isFinite(start[0]) || !Number.isFinite(start[1]) ||
+      !Number.isFinite(end[0]) || !Number.isFinite(end[1])
+    ) {
+      continue
+    }
+    const segmentLengthM = haversineM(start[0], start[1], end[0], end[1])
+    const projection = projectPointToSegment([userLocation.lat, userLocation.lng], start, end)
+    if (projection.distanceM < bestDistanceM) {
+      bestDistanceM = projection.distanceM
+      bestProgressM = travelledM + (segmentLengthM * projection.ratio)
+    }
+    travelledM += segmentLengthM
+  }
+
+  const dynamicLookAheadM = Number.isFinite(Number(lookAheadMeters))
+    ? Number(lookAheadMeters)
+    : Math.max(70, Math.min(180, (Number(userLocation.speedKmh) || 0) * 2.1))
+  const lookAheadTargetM = bestProgressM + dynamicLookAheadM
+  let traversedM = 0
+
+  for (let index = 0; index < polyline.length - 1; index += 1) {
+    const start = polyline[index]
+    const end = polyline[index + 1]
+    if (
+      !Array.isArray(start) || start.length < 2 ||
+      !Array.isArray(end) || end.length < 2 ||
+      !Number.isFinite(start[0]) || !Number.isFinite(start[1]) ||
+      !Number.isFinite(end[0]) || !Number.isFinite(end[1])
+    ) {
+      continue
+    }
+    const segmentLengthM = haversineM(start[0], start[1], end[0], end[1])
+    if (traversedM + segmentLengthM >= lookAheadTargetM) {
+      const remainM = Math.max(0, lookAheadTargetM - traversedM)
+      const ratio = segmentLengthM > 0 ? remainM / segmentLengthM : 0
+      return L.latLng(
+        start[0] + ((end[0] - start[0]) * ratio),
+        start[1] + ((end[1] - start[1]) * ratio),
+      )
+    }
+    traversedM += segmentLengthM
+  }
+
+  const tail = polyline[polyline.length - 1]
+  return Array.isArray(tail) && tail.length >= 2 ? L.latLng(tail[0], tail[1]) : null
+}
+
 function MapController({ center, zoom, darkMode, minimalMap }) {
   const isNavigating = useAppStore((s) => s.isNavigating)
   const navAutoFollow = useAppStore((s) => s.navAutoFollow)
@@ -310,7 +371,7 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
     const freshState = useAppStore.getState()
     const freshLoc = freshState.navigationMatchedLocation ?? freshState.userLocation
     const target = freshLoc
-      ? L.latLng(freshLoc.lat, freshLoc.lng)
+      ? (getRouteLookAheadTarget(selectedRoute, freshLoc, cameraState.lookAheadMeters) ?? L.latLng(freshLoc.lat, freshLoc.lng))
       : (Array.isArray(center) ? center : null)
     if (target) {
       const nextTarget = Array.isArray(target) ? L.latLng(target[0], target[1]) : target
@@ -334,7 +395,8 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
   useEffect(() => {
     const followLocation = navigationMatchedLocation ?? userLocation
     if (!isNavigating || !navAutoFollow || !followLocation) return
-    const target = L.latLng(followLocation.lat, followLocation.lng)
+    const target = getRouteLookAheadTarget(selectedRoute, followLocation, cameraState.lookAheadMeters)
+      ?? L.latLng(followLocation.lat, followLocation.lng)
     if (isSameFollowTarget(target, navZoom)) return
     const centerDistance = map.distance(map.getCenter(), target)
     if (Math.abs(map.getZoom() - navZoom) > 0.04 || centerDistance > (cameraState.recenterThresholdM ?? 18)) {
@@ -403,8 +465,8 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
       smoothedHeadingRef.current = smoothedHeading
 
       const rotationDeg = -smoothedHeading
-      rotationLayer.style.transformOrigin = '50% 50%'
-      rotationLayer.style.transform = `rotate(${rotationDeg}deg) scale(1.24)`
+      rotationLayer.style.transformOrigin = '50% 72%'
+      rotationLayer.style.transform = `rotate(${rotationDeg}deg) scale(1.28)`
       rotationLayer.style.setProperty('--driver-map-rotation', `${rotationDeg}deg`)
     } catch {
       rotationLayer.style.transformOrigin = '50% 50%'
