@@ -20,6 +20,8 @@ import { validateRouteForNavigation } from '../../utils/routingGuards'
 const COLORS = {
   selectedRoute: '#FF89AC',
   navigationGuide: '#FF89AC',
+  passedRoute: '#6B7280',
+  passedRouteOutline: '#111827',
   routeHighway: '#FF89AC',
   routeNational: '#54C7FC',
   routeLocal: '#808080',
@@ -351,7 +353,7 @@ function getNavPitch(mode = 'cruise') {
 function getNavOffset(cameraState = {}) {
   const offsetY = Number(cameraState?.lookAheadOffsetY)
   if (Number.isFinite(offsetY)) return [0, offsetY]
-  return [0, -420]
+  return [0, -520]
 }
 
 function getNorthUpCamera(guidanceLocation, mapZoom = 17.4) {
@@ -554,7 +556,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
   const historyCollection = useMemo(() => ({
     type: 'FeatureCollection',
     features: drivePathHistory.length > 1
-      ? [buildLineFeature('drive-history', drivePathHistory, { color: '#22D3EE' })].filter(Boolean)
+      ? [buildLineFeature('drive-history', drivePathHistory, { color: COLORS.passedRoute })].filter(Boolean)
       : [],
   }), [drivePathHistory])
 
@@ -716,19 +718,19 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       })
       ensureLineLayer(map, 'corridor-connector-line', 'corridor-connector', {
         'line-color': '#B8FFE9',
-        'line-width': 5,
-        'line-opacity': 0.52,
+        'line-width': 7,
+        'line-opacity': 0.64,
       })
       ensureLineLayer(map, 'corridor-lane-center-line', 'corridor-lane-center', {
         'line-color': '#E2E8F0',
-        'line-width': 1.6,
-        'line-opacity': 0.26,
+        'line-width': 2.2,
+        'line-opacity': 0.34,
         'line-dasharray': [1.4, 1.2],
       })
       ensureLineLayer(map, 'drive-history-outline', 'drive-history', {
-        'line-color': '#05233B',
+        'line-color': COLORS.passedRouteOutline,
         'line-width': 8,
-        'line-opacity': 0.55,
+        'line-opacity': 0.34,
       })
       ensureLineLayer(map, 'preview-routes-line', 'preview-routes', {
         'line-color': ['coalesce', ['get', 'color'], COLORS.routeLocal],
@@ -736,34 +738,34 @@ export default function NavigationMapLibreView({ darkMode = false }) {
         'line-opacity': 0.28,
       })
       ensureLineLayer(map, 'drive-history-line', 'drive-history', {
-        'line-color': '#22D3EE',
-        'line-width': 5,
-        'line-opacity': 0.96,
+        'line-color': COLORS.passedRoute,
+        'line-width': 5.5,
+        'line-opacity': 0.9,
       })
       ensureLineLayer(map, 'remaining-route-line', 'remaining-route', {
         'line-color': COLORS.navigationGuide,
-        'line-width': 8,
+        'line-width': 9,
         'line-opacity': 0.97,
       })
       ensureLineLayer(map, 'guide-mainline-line', 'guide-mainline', {
         'line-color': ['coalesce', ['get', 'guideColor'], '#E5E7EB'],
-        'line-width': 8,
-        'line-opacity': 0.72,
+        'line-width': 10,
+        'line-opacity': 0.78,
       })
       ensureLineLayer(map, 'guide-mainline-dash', 'guide-mainline', {
         'line-color': '#94A3B8',
-        'line-width': 3,
-        'line-opacity': 0.64,
+        'line-width': 3.5,
+        'line-opacity': 0.7,
         'line-dasharray': [1.1, 1.5],
       })
       ensureLineLayer(map, 'guide-route-outline', 'guide-route', {
         'line-color': '#0F172A',
-        'line-width': 14,
-        'line-opacity': 0.34,
+        'line-width': 17,
+        'line-opacity': 0.4,
       })
       ensureLineLayer(map, 'guide-route-line', 'guide-route', {
         'line-color': ['coalesce', ['get', 'guideColor'], COLORS.navigationGuide],
-        'line-width': 10,
+        'line-width': 13,
         'line-opacity': 0.98,
       })
       ensureLineLayer(map, 'focus-route-outline', 'focus-route', {
@@ -783,7 +785,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       })
       ensureLineLayer(map, 'active-route-line', 'active-route', {
         'line-color': '#22D3EE',
-        'line-width': 7,
+        'line-width': 8.5,
         'line-opacity': 0.92,
       })
       ensureCircleLayer(map, 'camera-points-layer', 'camera-points', {

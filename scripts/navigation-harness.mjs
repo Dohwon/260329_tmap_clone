@@ -24,6 +24,7 @@ import {
   getEffectiveCurrentSpeedContext,
   getGuideLineMeta,
   getNavigationCameraRestoreDelay,
+  getOffRouteDetectionProfile,
   getCurrentRouteSegment,
   getGuidanceInstruction,
   getGuidancePriority,
@@ -219,6 +220,46 @@ run('navigation camera restore delay matches manual and north-up recovery rules'
     navAutoFollow: false,
     showRoutePanel: false,
   }), null)
+})
+
+run('off-route detection is more tolerant on highway segments while progress is advancing', () => {
+  const highwaySuppressed = getOffRouteDetectionProfile({
+    roadType: 'highway',
+    speedLimit: 100,
+    distanceToRouteM: 205,
+    headingDeviationDeg: 62,
+    progressDeltaKm: 0.05,
+    elapsedMs: 3000,
+    hasMatchedLocation: false,
+  })
+  assert.equal(highwaySuppressed.reason, null)
+  assert.equal(highwaySuppressed.evidenceNeeded, 3)
+
+  const highwayOff = getOffRouteDetectionProfile({
+    roadType: 'highway',
+    speedLimit: 100,
+    distanceToRouteM: 255,
+    headingDeviationDeg: 96,
+    progressDeltaKm: 0,
+    elapsedMs: 3000,
+    hasMatchedLocation: false,
+  })
+  assert.equal(highwayOff.reason, 'distance')
+  assert.equal(highwayOff.cooldownMs, 18000)
+})
+
+run('off-route detection remains quicker on local roads', () => {
+  const localOff = getOffRouteDetectionProfile({
+    roadType: 'local',
+    speedLimit: 50,
+    distanceToRouteM: 145,
+    headingDeviationDeg: 74,
+    progressDeltaKm: 0,
+    elapsedMs: 3000,
+    hasMatchedLocation: false,
+  })
+  assert.equal(localOff.reason, 'distance')
+  assert.equal(localOff.evidenceNeeded, 2)
 })
 
 run('guidance inset appears only for immediate TBTs within 300m', () => {

@@ -942,65 +942,65 @@ export function getNavigationCameraState(guidance) {
   if (!Number.isFinite(remainingDistanceKm)) {
     return {
       mode: 'cruise',
-      zoom: 21.1,
-      lookAheadOffsetY: -420,
-      recenterThresholdM: 10,
-      panDuration: 0.22,
-      viewDuration: 0.28,
+      zoom: 22.1,
+      lookAheadOffsetY: -520,
+      recenterThresholdM: 8,
+      panDuration: 0.18,
+      viewDuration: 0.22,
     }
   }
 
   if (remainingDistanceKm <= 0.04) {
     return {
       mode: 'confirm',
-      zoom: 23.8,
-      lookAheadOffsetY: -315,
-      recenterThresholdM: 6,
-      panDuration: 0.18,
-      viewDuration: 0.2,
+      zoom: 24.9,
+      lookAheadOffsetY: -620,
+      recenterThresholdM: 4,
+      panDuration: 0.14,
+      viewDuration: 0.16,
     }
   }
 
   if (remainingDistanceKm <= 0.12) {
     return {
       mode: 'decision',
-      zoom: 23.3,
-      lookAheadOffsetY: -345,
-      recenterThresholdM: 7,
-      panDuration: 0.2,
-      viewDuration: 0.22,
+      zoom: 24.3,
+      lookAheadOffsetY: -590,
+      recenterThresholdM: 5,
+      panDuration: 0.16,
+      viewDuration: 0.18,
     }
   }
 
   if (remainingDistanceKm <= 0.35) {
     return {
       mode: 'approach',
-      zoom: 22.5,
-      lookAheadOffsetY: -385,
-      recenterThresholdM: 8,
-      panDuration: 0.22,
-      viewDuration: 0.25,
+      zoom: 23.4,
+      lookAheadOffsetY: -560,
+      recenterThresholdM: 6,
+      panDuration: 0.18,
+      viewDuration: 0.2,
     }
   }
 
   if (remainingDistanceKm <= 0.8) {
     return {
       mode: 'prepare',
-      zoom: 21.9,
-      lookAheadOffsetY: -405,
-      recenterThresholdM: 9,
-      panDuration: 0.24,
-      viewDuration: 0.28,
+      zoom: 22.8,
+      lookAheadOffsetY: -540,
+      recenterThresholdM: 7,
+      panDuration: 0.2,
+      viewDuration: 0.22,
     }
   }
 
   return {
     mode: 'cruise',
-    zoom: 21.1,
-    lookAheadOffsetY: -420,
-    recenterThresholdM: 10,
-    panDuration: 0.24,
-    viewDuration: 0.3,
+    zoom: 22.1,
+    lookAheadOffsetY: -520,
+    recenterThresholdM: 8,
+    panDuration: 0.2,
+    viewDuration: 0.24,
   }
 }
 
@@ -1027,6 +1027,49 @@ export function getNavigationCameraRestoreDelay({
   if (cameraMode === 'manual') return manualDelayMs
   if (cameraMode !== 'nav' || navAutoFollow) return northUpDelayMs
   return null
+}
+
+export function getOffRouteDetectionProfile({
+  roadType = 'local',
+  speedLimit = null,
+  distanceToRouteM = null,
+  headingDeviationDeg = 0,
+  progressDeltaKm = 0,
+  elapsedMs = 0,
+  hasMatchedLocation = false,
+} = {}) {
+  const numericSpeedLimit = Number(speedLimit)
+  const highwayLike = roadType === 'highway' || roadType === 'junction' || (Number.isFinite(numericSpeedLimit) && numericSpeedLimit >= 80)
+  const distanceThresholdM = highwayLike ? 230 : 135
+  const headingDistanceThresholdM = highwayLike ? 65 : 32
+  const headingThresholdDeg = highwayLike ? 85 : 68
+  const evidenceNeeded = highwayLike ? 3 : 2
+  const progressedRecently = elapsedMs > 0 && progressDeltaKm >= (highwayLike ? 0.035 : 0.02)
+  const routeHoldDistanceM = highwayLike ? 26 : 18
+  const stillConfidentlyMatched = hasMatchedLocation && Number.isFinite(distanceToRouteM) && distanceToRouteM <= routeHoldDistanceM
+  const progressSuppressed = progressedRecently && Number.isFinite(distanceToRouteM) && distanceToRouteM <= distanceThresholdM + (highwayLike ? 35 : 20)
+  const isHeadingOff = Number.isFinite(distanceToRouteM) && distanceToRouteM >= headingDistanceThresholdM && headingDeviationDeg >= headingThresholdDeg
+  const isDistanceOff = Number.isFinite(distanceToRouteM) && distanceToRouteM >= distanceThresholdM
+
+  const reason = stillConfidentlyMatched || progressSuppressed
+    ? null
+    : (isDistanceOff ? 'distance' : (isHeadingOff ? 'heading' : null))
+
+  const cooldownMs = reason === 'heading'
+    ? (highwayLike ? 12000 : 9000)
+    : (highwayLike ? 18000 : 15000)
+
+  return {
+    reason,
+    highwayLike,
+    evidenceNeeded,
+    cooldownMs,
+    distanceThresholdM,
+    headingDistanceThresholdM,
+    headingThresholdDeg,
+    stillConfidentlyMatched,
+    progressSuppressed,
+  }
 }
 
 export function shouldShowGuidanceInset(guidance) {

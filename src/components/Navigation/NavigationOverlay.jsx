@@ -14,6 +14,7 @@ import {
   getGuidanceInstruction,
   getGuidancePriority,
   getCurrentRouteSegment,
+  getOffRouteDetectionProfile,
   getRemainingEta,
   shouldShowGuidanceInset,
   getUpcomingGuidanceList,
@@ -185,8 +186,8 @@ function buildHighwayInsetGeometry(focusSegments = []) {
   const maxLng = Math.max(...lngs)
   const minLat = Math.min(...lats)
   const maxLat = Math.max(...lats)
-  const width = 176
-  const height = 112
+  const width = 204
+  const height = 132
   const padding = 12
   const lngSpan = Math.max(0.0001, maxLng - minLng)
   const latSpan = Math.max(0.0001, maxLat - minLat)
@@ -240,8 +241,8 @@ function buildInsetGeometryFromCorridor(corridorData = null, focusSegments = [])
   const maxLng = Math.max(...lngs)
   const minLat = Math.min(...lats)
   const maxLat = Math.max(...lats)
-  const width = 176
-  const height = 112
+  const width = 204
+  const height = 132
   const padding = 12
   const lngSpan = Math.max(0.0001, maxLng - minLng)
   const latSpan = Math.max(0.0001, maxLat - minLat)
@@ -330,7 +331,7 @@ function GuidanceInsetCard({ guidance, afterNextGuidance = null, focusSegments =
       </div>
 
       <div className="mt-2 rounded-xl bg-slate-900 px-2 py-2">
-        <svg viewBox={`0 0 ${insetGeometry?.width ?? 176} ${insetGeometry?.height ?? 112}`} className="w-full h-[92px]">
+        <svg viewBox={`0 0 ${insetGeometry?.width ?? 204} ${insetGeometry?.height ?? 132}`} className="w-full h-[110px]">
           {insetGeometry?.ghostPath && (
             <path
               d={insetGeometry.ghostPath}
@@ -397,7 +398,7 @@ function GuidanceInsetCard({ guidance, afterNextGuidance = null, focusSegments =
       {actualLanePreview.length > 0 && (
         <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
           <div className="text-[10px] font-bold text-slate-400">실차로 기준 준비</div>
-          <div className="mt-2 relative h-12 overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="mt-2 relative h-16 overflow-hidden rounded-xl border border-slate-200 bg-white">
             <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-slate-200" />
             {actualLanePreview.map((lane, index) => {
               const isActive = lane.state.startsWith('active')
@@ -410,7 +411,7 @@ function GuidanceInsetCard({ guidance, afterNextGuidance = null, focusSegments =
               return (
                 <div
                   key={`lane-${lane.id}-${index}`}
-                  className={`absolute bottom-0 h-10 w-7 -translate-x-1/2 rounded-t-lg border flex items-center justify-center text-sm font-black ${bgClass}`}
+                  className={`absolute bottom-0 h-14 w-8 -translate-x-1/2 rounded-t-xl border flex items-center justify-center text-base font-black ${bgClass}`}
                   style={{ left: `${lane.leftPct}%` }}
                 >
                   {getLaneArrow(lane.state)}
@@ -652,6 +653,7 @@ export default function NavigationOverlay() {
   const lastRestaurantRefreshCoordRef = useRef(null)
   const arrivedRef = useRef(false) // 도착 중복 발동 방지
   const offRouteEvidenceRef = useRef({ count: 0, reason: null })
+  const offRouteMotionRef = useRef({ progressKm: 0, distanceToRouteM: null, capturedAt: 0 })
   const driveRouteSnapshot = useAppStore((s) => s.driveRouteSnapshot)
 
   // 화면 꺼짐 방지
@@ -674,6 +676,12 @@ export default function NavigationOverlay() {
       wakeLockRef.current?.release().catch(() => {})
       wakeLockRef.current = null
     }
+  }, [isNavigating])
+
+  useEffect(() => {
+    if (isNavigating) return
+    offRouteEvidenceRef.current = { count: 0, reason: null }
+    offRouteMotionRef.current = { progressKm: 0, distanceToRouteM: null, capturedAt: 0 }
   }, [isNavigating])
 
   // 카메라 근접 감지 (100m 이내 → 신고 프롬프트)
@@ -1075,6 +1083,21 @@ export default function NavigationOverlay() {
         segmentWindow: 220,
       })
       const distM = s.navigationMatchedLocation ? 0 : progress.distanceToRouteM
+      const currentSegment = getCurrentRouteSegment(currentRoute, probeLocation)
+      const now = Date.now()
+      const prevMotion = offRouteMotionRef.current
+      const elapsedMs = prevMotion.capturedAt ? Math.max(0, now - prevMotion.capturedAt) : 0
+      const progressDeltaKm = Number.isFinite(Number(progress.progressKm)) && Number.isFinite(Number(prevMotion.progressKm))
+        ? Math.max(0, Number(progress.progressKm) - Number(prevMotion.progressKm))
+        : 0
+      const distanceTrendM = Number.isFinite(Number(prevMotion.distanceToRouteM)) && Number.isFinite(Number(distM))
+        ? Number(distM) - Number(prevMotion.distanceToRouteM)
+        : 0
+      offRouteMotionRef.current = {
+        progressKm: Number(progress.progressKm ?? 0),
+        distanceToRouteM: Number.isFinite(Number(distM)) ? Number(distM) : null,
+        capturedAt: now,
+      }
 
       // 헤딩 이탈 감지: GPS 방향 vs 매칭된 경로 세그먼트 방향 차이
       let headingDeviation = 0
@@ -1088,12 +1111,21 @@ export default function NavigationOverlay() {
         headingDeviation = diff > 180 ? 360 - diff : diff
       }
 
-      // 방향 이탈(60° 초과 + 30m): 쿨다운 8초로 빠른 재탐색
-      // 거리 이탈(180m 초과): 쿨다운 15초
-      const isHeadingOff = headingDeviation > 60 && distM != null && distM > 30
-      const isDistanceOff = distM != null && distM > 180
-      const offRouteReason = isHeadingOff ? 'heading' : isDistanceOff ? 'distance' : null
-      const cooldownMs = isHeadingOff ? 8000 : 15000
+      const offRouteProfile = getOffRouteDetectionProfile({
+        roadType: currentSegment?.roadType,
+        speedLimit: currentSegment?.speedLimit,
+        distanceToRouteM: distM,
+        headingDeviationDeg: headingDeviation,
+        progressDeltaKm,
+        elapsedMs,
+        hasMatchedLocation: Boolean(s.navigationMatchedLocation),
+      })
+      const divergingHard = Number.isFinite(distanceTrendM) && distanceTrendM >= (offRouteProfile.highwayLike ? 22 : 14)
+      const recoveringToRoute = Number.isFinite(distanceTrendM) && distanceTrendM <= -12
+      const offRouteReason = recoveringToRoute
+        ? null
+        : (offRouteProfile.progressSuppressed && !divergingHard ? null : offRouteProfile.reason)
+      const cooldownMs = offRouteProfile.cooldownMs
       const cooldownPassed = Date.now() - s.navigationLastRefreshedAt > cooldownMs
 
       if (!offRouteReason) {
@@ -1105,7 +1137,7 @@ export default function NavigationOverlay() {
         const prevEvidence = offRouteEvidenceRef.current
         const nextCount = prevEvidence.reason === offRouteReason ? prevEvidence.count + 1 : 1
         offRouteEvidenceRef.current = { count: nextCount, reason: offRouteReason }
-        if (nextCount < 2) return
+        if (nextCount < offRouteProfile.evidenceNeeded) return
         offRouteEvidenceRef.current = { count: 0, reason: null }
 
         // TTS 먼저 발화
