@@ -61,6 +61,9 @@ const DEFAULT_RUNTIME_CACHE_ROOT = fs.existsSync('/data')
 const TTS_CACHE_DIR = process.env.TTS_CACHE_DIR
   || localEnv.TTS_CACHE_DIR
   || join(DEFAULT_RUNTIME_CACHE_ROOT, 'tts-google')
+const TTS_CACHE_INDEX_FILE = process.env.TTS_CACHE_INDEX_FILE
+  || localEnv.TTS_CACHE_INDEX_FILE
+  || join(DEFAULT_RUNTIME_CACHE_ROOT, 'tts-google-index.json')
 const ROAD_ASSET_CACHE_FILE = process.env.ROAD_ASSET_CACHE_FILE
   || localEnv.ROAD_ASSET_CACHE_FILE
   || join(DEFAULT_RUNTIME_CACHE_ROOT, 'road-assets.json')
@@ -70,8 +73,11 @@ const KATEC = 'KATEC'
 const ACTUAL_META_CACHE = new Map()
 const ACTUAL_META_CACHE_TTL_MS = 1000 * 60 * 10
 const TMAP_CAMERA_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 24
+const TTS_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 180
+const TTS_CACHE_MAX_ENTRIES = 5000
 const ROAD_CAMERA_ASSET_TTL_MS = 1000 * 60 * 60 * 24 * 30
 const ROAD_RESTSTOP_ASSET_TTL_MS = 1000 * 60 * 60 * 24 * 7
+let TTS_CACHE_INDEX = null
 let ROAD_ASSET_STORE = null
 
 proj4.defs(
@@ -281,23 +287,121 @@ function getTtsCacheFilePath(cacheKey) {
   return join(TTS_CACHE_DIR, `${cacheKey}.mp3`)
 }
 
+function ensureTtsCacheIndexLoaded() {
+  if (TTS_CACHE_INDEX) return TTS_CACHE_INDEX
+  try {
+    ensureDirSync(dirname(TTS_CACHE_INDEX_FILE))
+    if (!fs.existsSync(TTS_CACHE_INDEX_FILE)) {
+      TTS_CACHE_INDEX = { entries: {} }
+      return TTS_CACHE_INDEX
+    }
+    const parsed = JSON.parse(fs.readFileSync(TTS_CACHE_INDEX_FILE, 'utf8'))
+    TTS_CACHE_INDEX = parsed && typeof parsed === 'object' && parsed.entries ? parsed : { entries: {} }
+  } catch {
+    TTS_CACHE_INDEX = { entries: {} }
+  }
+  return TTS_CACHE_INDEX
+}
+
+function flushTtsCacheIndex() {
+  try {
+    ensureDirSync(dirname(TTS_CACHE_INDEX_FILE))
+    fs.writeFileSync(TTS_CACHE_INDEX_FILE, JSON.stringify(TTS_CACHE_INDEX ?? { entries: {} }, null, 2), 'utf8')
+  } catch (error) {
+    console.warn('[Google TTS cache] index write failed:', error.message)
+  }
+}
+
+function pruneTtsCacheIndex() {
+  try {
+    const store = ensureTtsCacheIndexLoaded()
+    const now = Date.now()
+    const entries = Object.entries(store.entries || {})
+    const liveEntries = []
+    for (const [cacheKey, entry] of entries) {
+      const filepath = getTtsCacheFilePath(cacheKey)
+      const ageMs = now - Number(entry?.lastAccessAt || entry?.createdAt || 0)
+      if (!fs.existsSync(filepath) || ageMs > TTS_CACHE_MAX_AGE_MS) {
+        try {
+          if (fs.existsSync(filepath)) fs.unlinkSync(filepath)
+        } catch {}
+        delete store.entries[cacheKey]
+        continue
+      }
+      liveEntries.push([cacheKey, entry])
+    }
+    if (liveEntries.length > TTS_CACHE_MAX_ENTRIES) {
+      liveEntries
+        .sort((a, b) => Number(a[1]?.lastAccessAt || a[1]?.createdAt || 0) - Number(b[1]?.lastAccessAt || b[1]?.createdAt || 0))
+        .slice(0, liveEntries.length - TTS_CACHE_MAX_ENTRIES)
+        .forEach(([cacheKey]) => {
+          const filepath = getTtsCacheFilePath(cacheKey)
+          try {
+            if (fs.existsSync(filepath)) fs.unlinkSync(filepath)
+          } catch {}
+          delete store.entries[cacheKey]
+        })
+    }
+    flushTtsCacheIndex()
+  } catch (error) {
+    console.warn('[Google TTS cache] prune failed:', error.message)
+  }
+}
+
+function touchTtsCacheEntry(cacheKey, patch = {}) {
+  const store = ensureTtsCacheIndexLoaded()
+  const now = Date.now()
+  const current = store.entries?.[cacheKey] || {}
+  store.entries[cacheKey] = {
+    ...current,
+    ...patch,
+    createdAt: current.createdAt || patch.createdAt || now,
+    lastAccessAt: patch.lastAccessAt || now,
+    hitCount: Number(current.hitCount || 0) + Number(patch.hitIncrement || 0),
+  }
+  delete store.entries[cacheKey].hitIncrement
+  flushTtsCacheIndex()
+}
+
 function readCachedTtsBuffer(cacheKey) {
   try {
     const filepath = getTtsCacheFilePath(cacheKey)
-    if (!fs.existsSync(filepath)) return null
+    if (!fs.existsSync(filepath)) {
+      const store = ensureTtsCacheIndexLoaded()
+      if (store.entries?.[cacheKey]) {
+        delete store.entries[cacheKey]
+        flushTtsCacheIndex()
+      }
+      return null
+    }
     const stats = fs.statSync(filepath)
     if (!stats.isFile() || stats.size <= 0) return null
+    touchTtsCacheEntry(cacheKey, {
+      lastAccessAt: Date.now(),
+      sizeBytes: stats.size,
+      hitIncrement: 1,
+    })
     return fs.readFileSync(filepath)
   } catch {
     return null
   }
 }
 
-function writeCachedTtsBuffer(cacheKey, buffer) {
+function writeCachedTtsBuffer(cacheKey, buffer, metadata = {}) {
   try {
     if (!Buffer.isBuffer(buffer) || buffer.length === 0) return
     const filepath = getTtsCacheFilePath(cacheKey)
     fs.writeFileSync(filepath, buffer)
+    touchTtsCacheEntry(cacheKey, {
+      createdAt: Date.now(),
+      lastAccessAt: Date.now(),
+      sizeBytes: buffer.length,
+      voiceName: metadata.voiceName || '',
+      languageCode: metadata.languageCode || '',
+      speakingRate: metadata.speakingRate || 1,
+      textLength: metadata.textLength || 0,
+    })
+    pruneTtsCacheIndex()
   } catch (error) {
     console.warn('[Google TTS cache] write failed:', error.message)
   }
@@ -2165,6 +2269,7 @@ app.post('/api/tts/google', express.json({ limit: '256kb' }), async (req, res) =
       .set('Content-Type', 'audio/mpeg')
       .set('Cache-Control', 'public, max-age=31536000, immutable')
       .set('X-TTS-Cache', 'HIT')
+      .set('X-TTS-Cache-Store', TTS_CACHE_DIR)
       .send(cachedBuffer)
   }
 
@@ -2191,12 +2296,18 @@ app.post('/api/tts/google', express.json({ limit: '256kb' }), async (req, res) =
     }
 
     const audioBuffer = Buffer.from(parsed.audioContent, 'base64')
-    writeCachedTtsBuffer(cacheKey, audioBuffer)
+    writeCachedTtsBuffer(cacheKey, audioBuffer, {
+      voiceName,
+      languageCode,
+      speakingRate,
+      textLength: text.length,
+    })
 
     return res
       .set('Content-Type', 'audio/mpeg')
       .set('Cache-Control', 'public, max-age=31536000, immutable')
       .set('X-TTS-Cache', 'MISS')
+      .set('X-TTS-Cache-Store', TTS_CACHE_DIR)
       .send(audioBuffer)
   } catch (error) {
     return res.status(502).json({ error: { code: 'GOOGLE_TTS_PROXY_ERROR', message: error.message } })

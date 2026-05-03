@@ -60,6 +60,8 @@ SMOKE_BASE_URL=https://260329tmapclone-production.up.railway.app npm run smoke:d
 ## Runtime Cache
 
 - `server.js`는 runtime root를 `/data` 우선, 없으면 `.runtime-cache`로 잡습니다.
+- Google TTS는 `tts-google/*.mp3` 파일 캐시와 `tts-google-index.json` 메타 인덱스를 함께 사용합니다.
+- 즉 같은 문구/목소리/속도 조합은 매번 다시 합성하지 않고, Railway 볼륨에 저장된 mp3를 재사용합니다.
 - Google TTS mp3 캐시 외에 `road-assets.json` 파일 캐시를 함께 사용합니다.
 - 이 파일에는 선택 도로 상세에서 조회한 아래 road asset이 저장됩니다.
   - 휴게소
@@ -69,6 +71,7 @@ SMOKE_BASE_URL=https://260329tmapclone-production.up.railway.app npm run smoke:d
   - 경로를 찾을 때마다 같은 도로 자산을 다시 조회해 API 호출 수가 늘어나는 문제를 줄임
   - 브라우저 새로고침이나 서버 재시작 뒤에도 같은 도로에 대한 재조회 빈도를 낮춤
 - 현재 TTL:
+  - Google TTS `180일`
   - 카메라 `30일`
   - 휴게소/졸음쉼터 `7일`
 - 전제:
