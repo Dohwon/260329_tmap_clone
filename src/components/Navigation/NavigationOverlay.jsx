@@ -333,48 +333,30 @@ function GuidanceInsetCard({ guidance, afterNextGuidance = null, focusSegments =
   if (!guidance) return null
 
   const nextRoadLabel = shortenRoadLabel(guidance.afterRoadName || guidance.nextRoadName || guidance.name || '')
-  const currentRoadLabel = shortenRoadLabel(focusSegments[0]?.name || '')
-  const previewSegments = focusSegments.slice(0, 3)
   const insetGeometry = buildInsetGeometryFromCorridor(corridorData, focusSegments)
   const guideLineMeta = getGuideLineMeta(guidance)
   const actualLanePreview = buildActualLanePreview(corridorData, insetGeometry, guidance)
   const nextActionLabel = getGuidanceInstruction(guidance)
-  const isHighwayStyle = isHighwayGuidance(guidance)
   const afterNextLabel = afterNextGuidance ? getGuidanceInstruction(afterNextGuidance) : null
-  const afterNextRoadLabel = shortenRoadLabel(
-    afterNextGuidance?.afterRoadName || afterNextGuidance?.nextRoadName || afterNextGuidance?.name || ''
-  )
   const shouldRenderCurrentPath = averagePathDeviationM(
     insetGeometry?.routePoints ?? [],
     insetGeometry?.currentPoints ?? []
   ) > 8
+  const activeLanes = actualLanePreview.filter((lane) => lane.state.startsWith('active'))
+  const laneGuideLabel = guideLineMeta?.text ?? `${nextActionLabel} 준비`
 
   return (
-    <div className="rounded-2xl bg-white/95 backdrop-blur shadow-xl border border-white/80 p-3">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className={`text-[11px] font-bold ${isHighwayStyle ? 'text-emerald-700' : 'text-sky-700'}`}>
-            {isHighwayStyle ? '분기 확대 안내' : '교차로 확대 안내'}
-          </div>
-          <div className="mt-0.5 text-[12px] font-black text-gray-900">
-            {formatGuidanceDistance(guidance.remainingDistanceKm)} 후 {nextActionLabel}
-          </div>
-        </div>
-        <div className="text-[10px] font-bold text-gray-400">
-          {insetGeometry?.source === 'corridor' ? 'corridor 확대' : '실제 경로 확대'}
-        </div>
-      </div>
-
-      <div className="mt-2 rounded-xl bg-slate-900 px-2 py-2">
-        <svg viewBox={`0 0 ${insetGeometry?.width ?? 204} ${insetGeometry?.height ?? 132}`} className="w-full h-[110px]">
+    <>
+      <div className="rounded-2xl bg-slate-950/28 backdrop-blur-[1px] px-2 py-2">
+        <svg viewBox={`0 0 ${insetGeometry?.width ?? 204} ${insetGeometry?.height ?? 132}`} className="w-full h-[92px]">
           {insetGeometry?.ghostPath && (
             <path
               d={insetGeometry.ghostPath}
               stroke="#CBD5E1"
-              strokeWidth="14"
+              strokeWidth="10"
               strokeLinecap="round"
               fill="none"
-              opacity="0.38"
+              opacity="0.28"
               strokeDasharray="10 9"
             />
           )}
@@ -382,27 +364,27 @@ function GuidanceInsetCard({ guidance, afterNextGuidance = null, focusSegments =
             <path
               d={insetGeometry.routePath}
               stroke="#334155"
-              strokeWidth="22"
+              strokeWidth="16"
               strokeLinecap="round"
               fill="none"
-              opacity="0.88"
+              opacity="0.78"
             />
           )}
           {shouldRenderCurrentPath && insetGeometry?.currentPath && (
             <path
               d={insetGeometry.currentPath}
               stroke="#22D3EE"
-              strokeWidth="10"
+              strokeWidth="7"
               strokeLinecap="round"
               fill="none"
-              opacity="0.92"
+              opacity="0.72"
             />
           )}
           {insetGeometry?.routePath && (
             <path
               d={insetGeometry.routePath}
               stroke="#FF89AC"
-              strokeWidth="8"
+              strokeWidth="6"
               strokeLinecap="round"
               fill="none"
             />
@@ -414,93 +396,38 @@ function GuidanceInsetCard({ guidance, afterNextGuidance = null, focusSegments =
             </>
           )}
         </svg>
+        <div className="mt-1 text-right text-[10px] font-black text-white/88">
+          {formatGuidanceDistance(guidance.remainingDistanceKm)} · {nextActionLabel}
+        </div>
+        {nextRoadLabel && (
+          <div className="mt-0.5 text-right text-[9px] font-bold text-white/62 truncate">
+            {nextRoadLabel}
+          </div>
+        )}
       </div>
-
-      {guideLineMeta && (
-        <div className={`mt-2 rounded-xl border px-3 py-2 ${guideLineMeta.bgClass}`}>
-          <div className="flex items-center gap-2">
-            <span
-              className="inline-flex h-2.5 w-8 rounded-full"
-              style={{ backgroundColor: guideLineMeta.color }}
-            />
-            <div className="text-[11px] font-black" style={{ color: guideLineMeta.textColor }}>
-              {guideLineMeta.text}
+      <div className="fixed left-1/2 bottom-40 z-30 -translate-x-1/2 pointer-events-none">
+        <div className="rounded-2xl bg-slate-950/36 backdrop-blur-[2px] px-4 py-2 shadow-lg">
+          <div className="flex items-center justify-center gap-3">
+            {(activeLanes.length > 0 ? activeLanes : actualLanePreview.slice(0, Math.min(3, actualLanePreview.length))).map((lane, index) => (
+              <div
+                key={`lane-hud-${lane.id}-${index}`}
+                className="flex h-11 w-9 items-center justify-center rounded-t-2xl border border-white/25 bg-white/10 text-lg font-black text-white"
+              >
+                {getLaneArrow(lane.state)}
+              </div>
+            ))}
+          </div>
+          <div className="mt-1 text-center text-[11px] font-black" style={{ color: guideLineMeta?.textColor ?? '#FFFFFF' }}>
+            {laneGuideLabel}
+          </div>
+          {afterNextGuidance && afterNextLabel && (
+            <div className="mt-0.5 text-center text-[9px] font-semibold text-white/68">
+              이어서 {afterNextLabel}
             </div>
-          </div>
-        </div>
-      )}
-
-      {actualLanePreview.length > 0 && (
-        <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-          <div className="text-[10px] font-bold text-slate-400">실차로 기준 준비</div>
-          <div className="mt-2 relative h-20 overflow-hidden rounded-xl border border-slate-200 bg-white">
-            <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-slate-200" />
-            {actualLanePreview.map((lane, index) => {
-              const isActive = lane.state.startsWith('active')
-              const isBus = lane.state === 'muted-bus'
-              const bgClass = isActive
-                ? 'bg-rose-500 text-white border-rose-400'
-                : isBus
-                  ? 'bg-amber-100 text-amber-700 border-amber-200'
-                  : 'bg-white text-slate-400 border-slate-200'
-              return (
-                <div
-                  key={`lane-${lane.id}-${index}`}
-                  className={`absolute bottom-0 h-16 w-10 -translate-x-1/2 rounded-t-2xl border flex items-center justify-center text-lg font-black shadow-sm ${bgClass}`}
-                  style={{ left: `${lane.leftPct}%` }}
-                >
-                  {getLaneArrow(lane.state)}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      <div className="mt-2 grid grid-cols-2 gap-2">
-        <div className="rounded-xl bg-gray-50 px-2.5 py-2">
-          <div className="text-[10px] font-bold text-gray-400">현재 본선</div>
-          <div className="mt-0.5 text-[11px] font-bold text-gray-800 truncate">{currentRoadLabel || '현재 주행 구간'}</div>
-        </div>
-        <div className={`rounded-xl px-2.5 py-2 ${isHighwayStyle ? 'bg-emerald-50' : 'bg-sky-50'}`}>
-          <div className={`text-[10px] font-bold ${isHighwayStyle ? 'text-emerald-600' : 'text-sky-600'}`}>다음 연결</div>
-          <div className={`mt-0.5 text-[11px] font-bold truncate ${isHighwayStyle ? 'text-emerald-800' : 'text-sky-800'}`}>
-            {nextRoadLabel || nextActionLabel}
-          </div>
+          )}
         </div>
       </div>
-
-      {afterNextGuidance && (
-        <div className="mt-2 rounded-xl bg-slate-50 px-2.5 py-2">
-          <div className="text-[10px] font-bold text-slate-400">이어서 다음</div>
-          <div className="mt-0.5 text-[11px] font-bold text-slate-800 truncate">
-            {formatGuidanceDistance(Math.max(0, Number(afterNextGuidance.remainingDistanceKm ?? 0) - Number(guidance.remainingDistanceKm ?? 0)))} 후 {afterNextLabel}
-          </div>
-          <div className="mt-0.5 text-[10px] text-slate-500 truncate">
-            {afterNextRoadLabel || '연결 도로'}
-          </div>
-        </div>
-      )}
-
-      {previewSegments.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {previewSegments.map((segment, index) => (
-            <span
-              key={`${segment.id}-${index}`}
-              className={`rounded-full px-2 py-1 text-[10px] font-bold ${
-                index === 0
-                  ? 'bg-cyan-100 text-cyan-800'
-                  : segment.roadType === 'junction'
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : 'bg-rose-100 text-rose-700'
-              }`}
-            >
-              {index === 0 ? '현재' : `다음${index}`} · {shortenRoadLabel(segment.name || segment.roadType)}
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
+    </>
   )
 }
 
@@ -1596,7 +1523,7 @@ export default function NavigationOverlay() {
 
       {showGuidanceInset && laneSource && (
         <div
-          className="absolute right-4 z-20 w-[228px]"
+          className="absolute right-3 z-20 w-[164px]"
           style={{ top: cameraBanner ? '164px' : '122px' }}
         >
           <GuidanceInsetCard

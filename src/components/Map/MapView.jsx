@@ -248,7 +248,7 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
     nextGuidance?.remainingDistanceKm,
     nextGuidance?.turnType,
   ])
-  const navZoom = cameraState.zoom
+  const navZoom = Math.max(Number(cameraState?.zoom ?? 18), 19.4)
   const smoothedHeadingRef = useRef(0)
   const programmaticMotionRef = useRef(false)
   const navStartFocusDoneRef = useRef(false)
@@ -310,7 +310,7 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
     const freshState = useAppStore.getState()
     const freshLoc = freshState.navigationMatchedLocation ?? freshState.userLocation
     const target = freshLoc
-      ? getLookAheadCenter(map, freshLoc, navZoom, settings.navigationLookAhead, cameraState)
+      ? L.latLng(freshLoc.lat, freshLoc.lng)
       : (Array.isArray(center) ? center : null)
     if (target) {
       const nextTarget = Array.isArray(target) ? L.latLng(target[0], target[1]) : target
@@ -334,7 +334,7 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
   useEffect(() => {
     const followLocation = navigationMatchedLocation ?? userLocation
     if (!isNavigating || !navAutoFollow || !followLocation) return
-    const target = getLookAheadCenter(map, followLocation, navZoom, settings.navigationLookAhead, cameraState) ?? L.latLng(followLocation.lat, followLocation.lng)
+    const target = L.latLng(followLocation.lat, followLocation.lng)
     if (isSameFollowTarget(target, navZoom)) return
     const centerDistance = map.distance(map.getCenter(), target)
     if (Math.abs(map.getZoom() - navZoom) > 0.04 || centerDistance > (cameraState.recenterThresholdM ?? 18)) {
@@ -403,8 +403,8 @@ function MapController({ center, zoom, darkMode, minimalMap }) {
       smoothedHeadingRef.current = smoothedHeading
 
       const rotationDeg = -smoothedHeading
-      rotationLayer.style.transformOrigin = '50% 68%'
-      rotationLayer.style.transform = `rotate(${rotationDeg}deg) scale(1.42)`
+      rotationLayer.style.transformOrigin = '50% 50%'
+      rotationLayer.style.transform = `rotate(${rotationDeg}deg) scale(1.24)`
       rotationLayer.style.setProperty('--driver-map-rotation', `${rotationDeg}deg`)
     } catch {
       rotationLayer.style.transformOrigin = '50% 50%'
