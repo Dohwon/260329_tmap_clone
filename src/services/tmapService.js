@@ -921,19 +921,18 @@ function normalizeRoadQueryText(value = '') {
 
 function buildRoadDescriptorsFromRoute(route = {}) {
   const segments = Array.isArray(route?.segmentStats) ? route.segmentStats : []
-  const segmentNames = segments
-    .map((segment) => String(segment?.name ?? '').trim())
-    .filter(Boolean)
-
-  const candidates = segmentNames
-    .map((name) => {
+  const candidates = segments
+    .map((segment) => {
+      const name = String(segment?.name ?? segment?.roadName ?? '').trim()
+      const roadNo = String(segment?.roadNo ?? segment?.number ?? '').trim()
       const matchedRoad = HIGHWAYS.find((road) =>
-        normalizeRoadQueryText(road.name).includes(normalizeRoadQueryText(name))
+        (roadNo && String(road.number ?? '') === roadNo)
+        || normalizeRoadQueryText(road.name).includes(normalizeRoadQueryText(name))
         || normalizeRoadQueryText(name).includes(normalizeRoadQueryText(road.name))
       )
       return {
         name: matchedRoad?.name ?? name,
-        number: matchedRoad?.number ?? '',
+        number: matchedRoad?.number ?? roadNo,
         roadClass: matchedRoad?.roadClass ?? '',
       }
     })
@@ -1123,14 +1122,22 @@ export async function fetchRoadActualMetaForRoad(road) {
   if (!road || !Array.isArray(road?.startCoord) || !Array.isArray(road?.endCoord)) return null
   const path = [
     road.startCoord,
+    ...((road.entryNodes ?? []).map((node) => node.coord ?? [node.lat, node.lng])),
+    ...((road.restStops ?? []).map((stop) => resolveRoadStopCoord(road, stop))),
+    ...((road.scenicEntryPoints ?? []).map((node) => node.coord ?? [node.lat, node.lng])),
+    ...((road.mainlineAnchors ?? []).map((node) => node.coord ?? [node.lat, node.lng])),
     ...((road.majorJunctions ?? []).map((junction) => junction.coord)),
     road.endCoord,
-  ].filter((coord) => Array.isArray(coord) && coord.length >= 2)
+  ]
+    .filter((coord) => Array.isArray(coord) && coord.length >= 2)
+    .filter((coord, index, all) =>
+      all.findIndex((other) => haversineKm(other[0], other[1], coord[0], coord[1]) <= 0.05) === index
+    )
 
   const metaMap = await fetchRouteActualMetaBatch([{
     id: `road-${road.id}`,
     polyline: path,
-    segmentStats: [{ name: road.name }],
+    segmentStats: [{ name: road.name, roadNo: road.number, roadName: road.name }],
   }])
 
   return metaMap.get(`road-${road.id}`) ?? null
@@ -2300,6 +2307,7 @@ async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
         reqCoordType: 'WGS84GEO',
         resCoordType: 'WGS84GEO',
         searchOption,
+        trafficInfo: 'Y',
       },
       {
         startX: String(startLng),
@@ -2309,6 +2317,7 @@ async function fetchSingleRoute(startLat, startLng, endLat, endLng, option) {
         reqCoordType: 'WGS84GEO',
         resCoordType: 'WGS84GEO',
         searchOption,
+        trafficInfo: 'Y',
       },
     ]
 
@@ -2398,6 +2407,8 @@ function parseRouteResponse(json, option) {
         liveSegmentStats.push({
           id: `live-segment-${liveSegmentStats.length}`,
           name: currentRoadName || props.roadName || props.description || (roadType === 'highway' ? '고속도로 본선' : roadType === 'national' ? '국도 구간' : '일반도로'),
+          roadName: currentRoadName || props.roadName || '',
+          roadNo: currentRoadNo || props.roadNo || '',
           positions,
           roadType,
           speedLimit,

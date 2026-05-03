@@ -796,14 +796,10 @@ function buildRoadQueryCandidates(roads = []) {
     .filter((road) => road.name || road.number)
 
   if (explicit.length > 0) {
-    return explicit.slice(0, 4)
+    return explicit.slice(0, 8)
   }
 
-  return HIGHWAYS.slice(0, 4).map((road) => ({
-    name: road.name,
-    number: road.number,
-    roadClass: road.roadClass,
-  }))
+  return []
 }
 
 function matchesRoadQuery(item = {}, query = {}) {
@@ -952,7 +948,7 @@ async function fetchItsRoadEvents({ bounds = null, roads = [] } = {}) {
     const normalized = items
       .map(normalizeItsEventItem)
       .filter(Boolean)
-      .filter((item) => queries.some((query) => matchesRoadQuery(item, query)))
+      .filter((item) => queries.length === 0 || queries.some((query) => matchesRoadQuery(item, query)))
     return setRuntimeCache(cacheKey, normalized.slice(0, 120))
   } catch {
     return []

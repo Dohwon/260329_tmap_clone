@@ -46,6 +46,8 @@ SMOKE_BASE_URL=https://260329tmapclone-production.up.railway.app npm run smoke:d
 - 루트 HTML 응답
 - `/api/meta/tmap-status`
 - `/api/road/corridor`
+- `/api/road/actual-meta`
+- `/api/road/events/nearby`
 - `/api/meta/tmap-diag`
 - `/api/tts/google` soft check
 
@@ -141,6 +143,12 @@ npm run build
 - `음식점` 주변 검색 fallback이 일반 TMAP POI 400을 반복해서 치지 않도록 경로맛집/로컬 fallback 우선으로 정리
 
 ## Current Open Tasks
+
+- 전국 road master coverage:
+  - `entryNodes`와 `scenicEntryPoints`는 전국 확장이 진행됐지만, 휴게소/졸음쉼터/정적 카메라 coverage는 아직 노선별 편차가 큼
+  - 대표 노선 우선 보강 단계에서 `전국 coverage 보강 + actual layer 병합` 단계로 넘어가는 중
+- ITS actual layer 정합성:
+  - `ITS_API_KEY` 기반 돌발/이벤트는 붙었지만, 전방 경고 우선순위와 장거리 경로 후반 coverage는 추가 검증이 필요
 
 - 차선 위치 표출:
   - 현재는 `차선 준비` 문구와 단순 차로 패턴까지만 제공하며, 지도 위 실제 차선 위치/포켓차선/직좌 분기 형상 표출은 미완료

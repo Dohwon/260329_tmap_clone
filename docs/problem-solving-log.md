@@ -308,6 +308,11 @@
 
 - road master에 `entryNodes`, `mainlineAnchors`, `scenicEntryPoints`, `cameras` 구조를 추가했다.
 - 대표 노선인 `서해안고속도로`, `서울양양고속도로`에 정적 보강 데이터를 먼저 넣었다.
+- scenic 세그먼트가 이미 있는데 road master가 없어서 연결되지 않던 `국도 2/5/14/35/44/59/416`을 새로 추가했다.
+- selected road actual meta는 `entryNodes + restStops + scenicEntryPoints + mainlineAnchors`까지 포함한 path로 조회하도록 넓혔다.
+- route segment가 `roadNo`를 유지하도록 바꿔 actual-meta가 이름 추정이 아니라 도로번호 우선으로 매칭되게 했다.
+- 일반 경로 요청에도 `trafficInfo: 'Y'`를 넣어 TMAP actual traffic 필드가 더 안정적으로 채워지게 했다.
+- ITS event 조회는 `roads` 후보가 비었을 때 상위 4개 도로로 축소하지 않고 `bounds-only` 전국 모드로 조회되게 바꿨다.
 - `searchRouteAlongRoad`는 이제 현재 위치에서 여러 진입 후보까지 실제 ETA를 계산한 뒤 가장 빠른 진입 후보를 고르고, 그 이후 본선 anchor를 waypoint로 이어 붙인다.
 - road drive 경로를 만들 때 `selectedRoadId`와 `roadDrivePlan`을 유지해서, 이후 route refresh에서도 도로 context가 사라지지 않게 했다.
 
@@ -316,9 +321,15 @@
 - 기존 road drive는 `시점/종점 + majorJunctions`만 보고 직선거리 위주로 entry를 골랐다.
 - 이를 `entry node 후보 -> ETA 측정 -> best entry 선택 -> mainline anchors/context 유지` 구조로 바꿨다.
 - 검색 fallback에도 `entryNodes`, `scenicEntryPoints`, `restStops`를 넣어서 도로/휴게소/경관 진입 검색 커버리지를 넓혔다.
+- 전국 road master coverage는 정적 수작업만으로 밀지 않고,
+  - `SCENIC_SEGMENTS -> scenicEntryPoints 자동 파생`
+  - `roadNo 유지 -> actual-meta 매칭 정확도 상승`
+  - `ITS bounds-only -> 전국 도로 이벤트 조회`
+  구조로 올렸다.
 
 ### 숨은 리스크
 
-- 이번 보강은 대표 노선 우선이다. 모든 민자도로/국도의 휴게소, 졸음쉼터, 카메라가 아직 다 채워진 상태는 아니다.
+- 이번 보강 이후에도 휴게소/졸음쉼터/정적 카메라는 전국 완성 상태가 아니다. 특히 국도는 `restStops/cameras`를 구조적으로 자동 생성할 원천 데이터가 부족하다.
 - 정적 master data는 결국 수작업/배치 보강이 필요하므로, 한국도로공사/민자 운영사 원본 목록과 맞춰 지속 업데이트해야 한다.
 - road drive entry ETA는 현재 direct route를 순차 호출하므로 후보 수를 과도하게 늘리면 다시 route 예산을 압박할 수 있다.
+- ITS event는 전국 모드로 열었지만, 장거리 경로 후반부 도로 이벤트 우선순위와 전방 안내 문구는 추가 조정이 필요하다.

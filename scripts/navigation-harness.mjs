@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { HIGHWAYS } from '../src/data/highwayData.js'
 import {
   buildRoadDriveContext,
   buildRoadDriveEntryCandidates,
@@ -948,6 +949,60 @@ run('road drive context keeps entry candidate and downstream road nodes', () => 
   assert.equal(context.entryCandidate.name, '동서울IC')
   assert.ok(context.contextNodes.length >= 3)
   assert.equal(context.contextNodes[0].name, '동서울IC')
+})
+
+run('nationwide scenic road masters exist for scenic-only road numbers', () => {
+  for (const roadNumber of ['2', '5', '14', '35', '44', '59', '416']) {
+    const matched = HIGHWAYS.find((road) => road.roadClass === 'national' && String(road.number) === roadNumber)
+    assert.ok(matched, `expected national road ${roadNumber}`)
+    assert.ok(Array.isArray(matched.entryNodes) && matched.entryNodes.length >= 2, `expected entryNodes for ${roadNumber}`)
+  }
+})
+
+run('route segments can preserve road number for nationwide actual-meta matching', () => {
+  const matched = HIGHWAYS.find((road) => road.number === '2' && road.roadClass === 'national')
+  assert.ok(matched, 'expected national road 2 master')
+
+  const route = ensureLiveRouteSource({
+    id: 'descriptor-test',
+    title: '테스트',
+    eta: 10,
+    distance: 10,
+    highwayRatio: 0,
+    nationalRoadRatio: 100,
+    localRoadRatio: 0,
+    mergeCount: 0,
+    congestionScore: 1,
+    congestionLabel: '원활',
+    fixedCameraCount: 0,
+    sectionCameraCount: 0,
+    sectionEnforcementDistance: 0,
+    dominantSpeedLimit: 60,
+    maxSpeedLimit: 60,
+    averageSpeed: 45,
+    tollFee: 0,
+    polyline: [[34.72, 127.78], [34.65, 127.86]],
+    segmentStats: [{
+      id: 'seg-1',
+      name: '여수 돌산 해안도로',
+      roadName: '국도 2호선',
+      roadNo: '2',
+      positions: [[34.72, 127.78], [34.65, 127.86]],
+      roadType: 'national',
+      speedLimit: 60,
+      averageSpeed: 45,
+      congestionScore: 1,
+      startProgressKm: 0,
+      endProgressKm: 10,
+      center: [34.685, 127.82],
+    }],
+    junctions: [],
+    cameras: [],
+    maneuvers: [],
+    source: 'live',
+  })
+
+  assert.equal(route.segmentStats[0].roadNo, '2')
 })
 
 if (process.exitCode) {

@@ -97,6 +97,41 @@ const checks = [
       throw new Error(`HTTP ${res.status}`)
     },
   },
+  {
+    label: 'road actual meta',
+    required: false,
+    run: async () => {
+      const res = await request('/api/road/actual-meta', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          routes: [{
+            routeId: 'smoke-road-actual',
+            roads: [{ name: '경부고속도로', number: '1', roadClass: 'expressway' }],
+            polyline: [
+              [37.5265, 127.0023],
+              [36.8317, 127.1536],
+              [36.3978, 127.3946],
+            ],
+          }],
+        }),
+      }, 25000)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const item = Array.isArray(res.body?.items) ? res.body.items[0] : null
+      if (!item) throw new Error('items missing')
+      const coverage = item.coverage ?? {}
+      return `camera=${coverage.cameraSource || 'unknown'},event=${coverage.eventSource || 'unknown'}`
+    },
+  },
+  {
+    label: 'road events nearby',
+    required: false,
+    run: async () => {
+      const res = await request('/api/road/events/nearby?lat=37.5665&lng=126.9780&radiusKm=8', {}, 20000)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return `source=${res.body?.source ?? 'unknown'}`
+    },
+  },
 ]
 
 let requiredFailures = 0
