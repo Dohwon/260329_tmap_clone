@@ -1369,13 +1369,13 @@ function LeafletMapView({ darkMode = false }) {
         </Marker>
       ))}
 
-      {userLocation && (
-        <Marker position={[userLocation.lat, userLocation.lng]} icon={currentLocationIcon}>
+      {guidanceLocation && (
+        <Marker position={[guidanceLocation.lat, guidanceLocation.lng]} icon={currentLocationIcon}>
           <Popup>
             <div className="text-sm font-bold">내 위치</div>
             {userAddress && <div className="text-xs text-gray-700 mt-0.5">{userAddress}</div>}
             <div className="text-xs text-gray-500 mt-0.5">
-              {Math.round(userLocation.speedKmh ?? 0)}km/h · 정확도 {Math.round(userLocation.accuracy ?? 0)}m
+              {Math.round(userLocation?.speedKmh ?? guidanceLocation?.speedKmh ?? 0)}km/h · 정확도 {Math.round(userLocation?.accuracy ?? guidanceLocation?.accuracy ?? 0)}m
             </div>
             {currentGuidance && (
               <div className="text-xs text-blue-600 mt-1">

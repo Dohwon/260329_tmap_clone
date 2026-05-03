@@ -1522,17 +1522,12 @@ export default function NavigationOverlay() {
       </div>
 
       {showGuidanceInset && laneSource && (
-        <div
-          className="absolute right-3 z-20 w-[164px]"
-          style={{ top: cameraBanner ? '164px' : '122px' }}
-        >
-          <GuidanceInsetCard
-            guidance={nextGuidance ?? laneSource}
-            afterNextGuidance={afterNextGuidance}
-            focusSegments={focusSegments}
-            corridorData={insetCorridorData}
-          />
-        </div>
+        <GuidanceInsetCard
+          guidance={nextGuidance ?? laneSource}
+          afterNextGuidance={afterNextGuidance}
+          focusSegments={focusSegments}
+          corridorData={insetCorridorData}
+        />
       )}
 
       {/* 하단 분기점 바 */}
