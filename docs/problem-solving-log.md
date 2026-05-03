@@ -404,3 +404,24 @@
 - 정적 master data는 결국 수작업/배치 보강이 필요하므로, 한국도로공사/민자 운영사 원본 목록과 맞춰 지속 업데이트해야 한다.
 - road drive entry ETA는 현재 direct route를 순차 호출하므로 후보 수를 과도하게 늘리면 다시 route 예산을 압박할 수 있다.
 - ITS event는 전국 모드로 열었지만, 장거리 경로 후반부 도로 이벤트 우선순위와 전방 안내 문구는 추가 조정이 필요하다.
+
+## 2026-05-04 회색 지도 / 분기 인셋 추가
+
+### 실제 반영 포인트
+
+- 안내 시작 후 `routes.find(...)`가 깨진 route를 먼저 집어서 `driveRouteSnapshot`을 못 쓰던 경로를 수정했다.
+- `NavigationMapLibreView`, `NavigationOverlay`, `HomeScreen`이 모두 `resolveRenderableNavigationRoute()`를 써서 현재 route가 비정상이더라도 마지막 유효 snapshot으로 렌더와 검증을 이어가게 바꿨다.
+- 분기 확대 인셋은 `corridor/segment` 점을 그대로 다 그리던 방식을 줄여 샘플 수를 압축했다.
+- 실차로 프리뷰는 corridor lane center의 정확한 x좌표를 그대로 쓰지 않고, 실제 lane 개수 순서를 유지한 채 균등 간격으로 재배치했다.
+- route와 current line이 거의 같은 형상일 때는 cyan current overlay를 숨겨 선 겹침을 줄였다.
+
+### 해결 방식
+
+- 회색 화면은 basemap 자체보다 `render route invalid -> placeholder` 경로일 가능성이 커서, 타일보다 route resolution을 먼저 고쳤다.
+- `source` 누락이나 route decoration 회귀로 invalid가 된 경우에도 snapshot 기반으로 render-safe route를 복구하도록 만들었다.
+- 분기 인셋은 실제 지오메트리를 더 많이 그릴수록 지렁이처럼 보였기 때문에, 샘플링/중복 제거/겹침 억제 쪽으로 단순화했다.
+
+### 숨은 리스크
+
+- 이 수정은 `회색 placeholder로 바로 빠지는 증상`을 줄이기 위한 경로 복구다. 실제 live route 자체가 잘못 내려오는 경우를 근본적으로 해결한 것은 아니다.
+- 인셋은 이전보다 단순해졌지만, 아직 `실제 차선 경계선` 기반 렌더링은 아니다.

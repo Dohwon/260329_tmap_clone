@@ -21,6 +21,7 @@ import {
   getUpcomingMergeOptions,
   haversineM,
 } from '../../utils/navigationLogic'
+import { resolveRenderableNavigationRoute } from '../../utils/routingGuards'
 
 const GOOGLE_TTS_SAFE_MODE_TTL_MS = 1000 * 60 * 3
 const GOOGLE_TTS_SAFE_MODE_FAILURES = 2
@@ -63,6 +64,12 @@ function samplePolyline(polyline = [], sampleSize = 12) {
     const ratio = index / Math.max(1, sampleSize - 1)
     return polyline[Math.min(polyline.length - 1, Math.round((polyline.length - 1) * ratio))]
   })
+}
+
+function compressInsetPoints(points = [], sampleSize = 6) {
+  const deduped = dedupeInsetPoints(points)
+  if (deduped.length <= sampleSize) return deduped
+  return samplePolyline(deduped, sampleSize)
 }
 
 function areSimilarPolylines(a = [], b = []) {
@@ -158,11 +165,11 @@ function pointsToSvgPath(points = [], projectPoint) {
 }
 
 function buildHighwayInsetGeometry(focusSegments = []) {
-  const currentPoints = dedupeInsetPoints(focusSegments[0]?.positions ?? [])
-  const upcomingPoints = dedupeInsetPoints(
+  const currentPoints = compressInsetPoints(focusSegments[0]?.positions ?? [], 6)
+  const upcomingPoints = compressInsetPoints(
     focusSegments.slice(1, 3).flatMap((segment) => segment?.positions ?? [])
-  )
-  const routePoints = dedupeInsetPoints([...currentPoints, ...upcomingPoints])
+  , 7)
+  const routePoints = compressInsetPoints([...currentPoints, ...upcomingPoints], 7)
 
   if (routePoints.length < 2) return null
 
@@ -205,6 +212,8 @@ function buildHighwayInsetGeometry(focusSegments = []) {
     width,
     height,
     projectPoint,
+    routePoints,
+    currentPoints,
     routePath: pointsToSvgPath(routePoints, projectPoint),
     currentPath: pointsToSvgPath(currentPoints, projectPoint),
     ghostPath: pointsToSvgPath(ghostMainline, projectPoint),
@@ -229,9 +238,9 @@ function buildInsetGeometryFromCorridor(corridorData = null, focusSegments = [])
   const routeFeature = connectorFeatures[0] ?? laneCenterFeatures[0] ?? null
   const currentFeature = laneCenterFeatures[0] ?? connectorFeatures[0] ?? null
   const ghostFeature = rampShapeFeatures[0] ?? laneCenterFeatures[1] ?? null
-  const routePoints = dedupeInsetPoints(featureCoordsToLatLngPairs(routeFeature))
-  const currentPoints = dedupeInsetPoints(featureCoordsToLatLngPairs(currentFeature))
-  const ghostMainline = dedupeInsetPoints(featureCoordsToLatLngPairs(ghostFeature))
+  const routePoints = compressInsetPoints(featureCoordsToLatLngPairs(routeFeature), 7)
+  const currentPoints = compressInsetPoints(featureCoordsToLatLngPairs(currentFeature), 6)
+  const ghostMainline = compressInsetPoints(featureCoordsToLatLngPairs(ghostFeature), 6)
 
   if (routePoints.length < 2) return buildHighwayInsetGeometry(focusSegments)
 
@@ -258,12 +267,25 @@ function buildInsetGeometryFromCorridor(corridorData = null, focusSegments = [])
     width,
     height,
     projectPoint,
+    routePoints,
+    currentPoints,
     routePath: pointsToSvgPath(routePoints, projectPoint),
     currentPath: pointsToSvgPath(currentPoints.length >= 2 ? currentPoints : routePoints, projectPoint),
     ghostPath: pointsToSvgPath(ghostMainline, projectPoint),
     junctionPoint: junctionPoint ? projectPoint(junctionPoint) : null,
     source: 'corridor',
   }
+}
+
+function averagePathDeviationM(a = [], b = []) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length < 2 || b.length < 2) return Infinity
+  const aSample = samplePolyline(a, Math.min(6, a.length))
+  const bSample = samplePolyline(b, aSample.length)
+  let sum = 0
+  for (let index = 0; index < Math.min(aSample.length, bSample.length); index += 1) {
+    sum += haversineM(aSample[index][0], aSample[index][1], bSample[index][0], bSample[index][1])
+  }
+  return sum / Math.max(1, Math.min(aSample.length, bSample.length))
 }
 
 function buildGuideLineSpeech(guidance) {
@@ -292,10 +314,18 @@ function buildActualLanePreview(corridorData = null, insetGeometry = null, guida
   const laneStates = buildActualLaneStates(guidance, projectedLanes.length)
   if (laneStates.length !== projectedLanes.length) return []
 
+  const normalizedPercents = projectedLanes.map((_, index) => {
+    const laneCount = projectedLanes.length
+    const startPct = laneCount >= 6 ? 12 : 16
+    const endPct = laneCount >= 6 ? 88 : 84
+    const step = laneCount <= 1 ? 0 : (endPct - startPct) / (laneCount - 1)
+    return Number((startPct + (step * index)).toFixed(2))
+  })
+
   return projectedLanes.map((lane, index) => ({
     ...lane,
     state: laneStates[index] ?? 'muted',
-    leftPct: Math.max(6, Math.min(94, (lane.x / Math.max(1, insetGeometry.width)) * 100)),
+    leftPct: normalizedPercents[index] ?? 50,
   }))
 }
 
@@ -314,6 +344,10 @@ function GuidanceInsetCard({ guidance, afterNextGuidance = null, focusSegments =
   const afterNextRoadLabel = shortenRoadLabel(
     afterNextGuidance?.afterRoadName || afterNextGuidance?.nextRoadName || afterNextGuidance?.name || ''
   )
+  const shouldRenderCurrentPath = averagePathDeviationM(
+    insetGeometry?.routePoints ?? [],
+    insetGeometry?.currentPoints ?? []
+  ) > 8
 
   return (
     <div className="rounded-2xl bg-white/95 backdrop-blur shadow-xl border border-white/80 p-3">
@@ -354,7 +388,7 @@ function GuidanceInsetCard({ guidance, afterNextGuidance = null, focusSegments =
               opacity="0.88"
             />
           )}
-          {insetGeometry?.currentPath && (
+          {shouldRenderCurrentPath && insetGeometry?.currentPath && (
             <path
               d={insetGeometry.currentPath}
               stroke="#22D3EE"
@@ -399,7 +433,7 @@ function GuidanceInsetCard({ guidance, afterNextGuidance = null, focusSegments =
       {actualLanePreview.length > 0 && (
         <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
           <div className="text-[10px] font-bold text-slate-400">실차로 기준 준비</div>
-          <div className="mt-2 relative h-16 overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="mt-2 relative h-20 overflow-hidden rounded-xl border border-slate-200 bg-white">
             <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-slate-200" />
             {actualLanePreview.map((lane, index) => {
               const isActive = lane.state.startsWith('active')
@@ -412,7 +446,7 @@ function GuidanceInsetCard({ guidance, afterNextGuidance = null, focusSegments =
               return (
                 <div
                   key={`lane-${lane.id}-${index}`}
-                  className={`absolute bottom-0 h-14 w-8 -translate-x-1/2 rounded-t-xl border flex items-center justify-center text-base font-black ${bgClass}`}
+                  className={`absolute bottom-0 h-16 w-10 -translate-x-1/2 rounded-t-2xl border flex items-center justify-center text-lg font-black shadow-sm ${bgClass}`}
                   style={{ left: `${lane.leftPct}%` }}
                 >
                   {getLaneArrow(lane.state)}
@@ -689,7 +723,10 @@ export default function NavigationOverlay() {
   // 카메라 근접 감지 (100m 이내 → 신고 프롬프트)
   useEffect(() => {
     if (!isNavigating || !userLocation) return
-    const route = routes.find(r => r.id === selectedRouteId) ?? driveRouteSnapshot
+    const route = resolveRenderableNavigationRoute(
+      routes.find((r) => r.id === selectedRouteId) ?? routes[0] ?? null,
+      driveRouteSnapshot
+    )
     const cameras = route?.cameras ?? []
     for (const cam of cameras) {
       if (!hasValidCoordPair(cam?.coord)) continue
@@ -701,7 +738,7 @@ export default function NavigationOverlay() {
         setTimeout(() => setShowCameraReport(cam), 1500)
       }
     }
-  }, [userLocation])
+  }, [driveRouteSnapshot, isNavigating, routes, selectedRouteId, userLocation])
 
   // 경관 구간 진입 감지 → 토스트 알림
   useEffect(() => {
@@ -719,7 +756,10 @@ export default function NavigationOverlay() {
     }
   }, [userLocation, isNavigating])
 
-  const route = routes.find(r => r.id === selectedRouteId) ?? driveRouteSnapshot ?? null
+  const route = resolveRenderableNavigationRoute(
+    routes.find((r) => r.id === selectedRouteId) ?? routes[0] ?? null,
+    driveRouteSnapshot
+  )
   const hasActiveRoute = Array.isArray(route?.polyline) && route.polyline.length > 1
   const guidanceLocation = navigationMatchedLocation ?? userLocation
   const navigationSnapshot = useMemo(() => {

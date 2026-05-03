@@ -15,7 +15,7 @@ import {
   haversineM,
   shouldUseRawRoutePolyline,
 } from '../../utils/navigationLogic'
-import { validateRouteForNavigation } from '../../utils/routingGuards'
+import { resolveRenderableNavigationRoute } from '../../utils/routingGuards'
 
 const COLORS = {
   selectedRoute: '#FF89AC',
@@ -439,9 +439,11 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     routeOrigin,
   } = useAppStore()
 
-  const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? driveRouteSnapshot ?? null
-  const routeValidity = useMemo(() => validateRouteForNavigation(selectedRoute, null), [selectedRoute])
-  const safeRoute = routeValidity.ok ? routeValidity.route : null
+  const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
+  const safeRoute = useMemo(
+    () => resolveRenderableNavigationRoute(selectedRoute, driveRouteSnapshot),
+    [driveRouteSnapshot, selectedRoute]
+  )
   const otherRoutes = useMemo(
     () => routes.filter((route) => route.id !== selectedRouteId),
     [routes, selectedRouteId]

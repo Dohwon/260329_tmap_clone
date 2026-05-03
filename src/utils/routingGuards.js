@@ -146,3 +146,36 @@ export function validateRouteForNavigation(route, userLocation = null) {
     },
   }
 }
+
+function coerceRenderableRoute(route, snapshotRoute = null) {
+  const baseRoute = route ?? snapshotRoute
+  if (!baseRoute) return null
+
+  return {
+    ...baseRoute,
+    source:
+      baseRoute?.source === 'live' || baseRoute?.source === 'recorded'
+        ? baseRoute.source
+        : (snapshotRoute?.source === 'recorded' ? 'recorded' : 'live'),
+    polyline: sanitizePolyline(baseRoute?.polyline ?? snapshotRoute?.polyline ?? []),
+    maneuvers: sanitizeRoutePointEntries(baseRoute?.maneuvers ?? snapshotRoute?.maneuvers, { allowDistanceOnly: true }),
+    junctions: sanitizeRoutePointEntries(baseRoute?.junctions ?? snapshotRoute?.junctions, { allowDistanceOnly: true }),
+    cameras: sanitizeRoutePointEntries(baseRoute?.cameras ?? snapshotRoute?.cameras).map((camera) => ({
+      ...camera,
+      endCoord: normalizeCoordPair(camera.endCoord),
+    })),
+  }
+}
+
+export function resolveRenderableNavigationRoute(route, snapshotRoute = null) {
+  const primaryValidity = validateRouteForNavigation(route, null)
+  if (primaryValidity.ok) return primaryValidity.route
+
+  const snapshotValidity = validateRouteForNavigation(snapshotRoute, null)
+  if (snapshotValidity.ok) return snapshotValidity.route
+
+  const coercedRoute = coerceRenderableRoute(route, snapshotRoute)
+  if (!coercedRoute) return null
+  const coercedValidity = validateRouteForNavigation(coercedRoute, null)
+  return coercedValidity.ok ? coercedValidity.route : null
+}
