@@ -24,6 +24,7 @@ import {
 
 const GOOGLE_TTS_SAFE_MODE_TTL_MS = 1000 * 60 * 3
 const GOOGLE_TTS_SAFE_MODE_FAILURES = 2
+const GOOGLE_TTS_FETCH_TIMEOUT_MS = 1200
 const googleTtsSafeModeState = {
   failures: 0,
   blockedUntil: 0,
@@ -647,6 +648,7 @@ export default function NavigationOverlay() {
   const speechBusyRef = useRef(false)
   const activeAudioRef = useRef(null)
   const activeAudioUrlRef = useRef(null)
+  const activeSpeechTextRef = useRef(null)
   const lastFuelRefreshAtRef = useRef(0)
   const lastFuelRefreshCoordRef = useRef(null)
   const lastRestaurantRefreshAtRef = useRef(0)
@@ -829,8 +831,10 @@ export default function NavigationOverlay() {
 
   const enqueueSpeech = (text) => {
     if (!settings.voiceGuidance || !text) return
+    if (activeSpeechTextRef.current === text) return
+    if (speechQueueRef.current.includes(text)) return
     if (speechQueueRef.current.length >= 4) {
-      speechQueueRef.current = speechQueueRef.current.slice(-3)
+      speechQueueRef.current = speechQueueRef.current.slice(-2)
     }
     speechQueueRef.current.push(text)
     flushSpeechQueue()
@@ -848,24 +852,36 @@ export default function NavigationOverlay() {
     }
   }
 
+  const playBrowserSpeech = async (text) => {
+    if (!window.speechSynthesis) return
+    window.speechSynthesis.cancel()
+    await new Promise((resolve) => {
+      const utterance = createBrowserSpeech(text)
+      utterance.onend = () => resolve()
+      utterance.onerror = () => resolve()
+      window.speechSynthesis.speak(utterance)
+    })
+  }
+
   const playSpeech = async (text) => {
-    if (isGoogleTtsSafeModeOpen()) {
-      if (!window.speechSynthesis) return
-      await new Promise((resolve) => {
-        const utterance = createBrowserSpeech(text)
-        utterance.onend = () => resolve()
-        utterance.onerror = () => resolve()
-        window.speechSynthesis.speak(utterance)
-      })
+    activeSpeechTextRef.current = text
+    const preferLowLatency = isDriveSimulation || speechQueueRef.current.length > 0
+    if (isGoogleTtsSafeModeOpen() || preferLowLatency) {
+      await playBrowserSpeech(text)
+      activeSpeechTextRef.current = null
       return
     }
 
     try {
+      const controller = new AbortController()
+      const timeoutId = window.setTimeout(() => controller.abort(), GOOGLE_TTS_FETCH_TIMEOUT_MS)
       const response = await fetch('/api/tts/google', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
+        signal: controller.signal,
       })
+      window.clearTimeout(timeoutId)
       if (response.ok) {
         const blob = await response.blob()
         if (blob.size > 0) {
@@ -881,6 +897,7 @@ export default function NavigationOverlay() {
             audio.play().catch(() => resolve())
           })
           stopActiveAudio()
+          activeSpeechTextRef.current = null
           return
         }
       }
@@ -889,13 +906,8 @@ export default function NavigationOverlay() {
       markGoogleTtsFailure()
     }
 
-    if (!window.speechSynthesis) return
-    await new Promise((resolve) => {
-      const utterance = createBrowserSpeech(text)
-      utterance.onend = () => resolve()
-      utterance.onerror = () => resolve()
-      window.speechSynthesis.speak(utterance)
-    })
+    await playBrowserSpeech(text)
+    activeSpeechTextRef.current = null
   }
 
   const speakAlert = (text, { chimeRepeat = 1, flashTone = null } = {}) => {
@@ -931,6 +943,7 @@ export default function NavigationOverlay() {
     setAlertFlash(null)
     speechQueueRef.current = []
     speechBusyRef.current = false
+    activeSpeechTextRef.current = null
     stopActiveAudio()
     if (window.speechSynthesis) window.speechSynthesis.cancel()
   }, [isNavigating])
@@ -1145,6 +1158,7 @@ export default function NavigationOverlay() {
           stopActiveAudio()
           if (window.speechSynthesis) window.speechSynthesis.cancel()
           speechQueueRef.current = []
+          activeSpeechTextRef.current = null
           enqueueSpeech('경로를 다시 탐색합니다')
         }
         s.refreshNavigationRoute('off-route')
@@ -1176,6 +1190,7 @@ export default function NavigationOverlay() {
         stopActiveAudio()
         if (window.speechSynthesis) window.speechSynthesis.cancel()
         speechQueueRef.current = []
+        activeSpeechTextRef.current = null
         enqueueSpeech('목적지에 도착했습니다')
       }
       // 저장 다이얼로그 표시 (drivePathHistory 있으면) 또는 바로 종료

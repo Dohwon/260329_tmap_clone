@@ -35,6 +35,7 @@ const MANUAL_RECENTER_DELAY_MS = 6000
 const NORTH_UP_RESTORE_DELAY_MS = 250
 const MAPTILER_SAFE_MODE_TTL_MS = 1000 * 60 * 3
 const MAPTILER_SAFE_MODE_FAILURES = 2
+const MAP_BOOTSTRAP_TIMEOUT_MS = 2500
 const mapTileSafeModeState = {
   failures: 0,
   blockedUntil: 0,
@@ -521,7 +522,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
   const tileQuery = maptilerKey ? new URLSearchParams({ key: maptilerKey }).toString() : ''
   const tileUrl = tileProvider === 'maptiler' && maptilerKey
     ? `https://api.maptiler.com/maps/streets-v4-pastel/{z}/{x}/{y}.png?${tileQuery}`
-    : 'https://tiles.osm.kr/hot/{z}/{x}/{y}.png'
+    : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
 
   useEffect(() => {
     if (!maptilerKey || isMapTileSafeModeOpen()) {
@@ -668,6 +669,23 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       dragRotate: false,
       touchPitch: false,
     })
+    const resizeObserver = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => {
+          try {
+            map.resize()
+          } catch {
+            // noop
+          }
+        })
+      : null
+    resizeObserver?.observe(containerRef.current)
+    const bootstrapTimer = window.setTimeout(() => {
+      if (loadedRef.current) return
+      if (tileProvider === 'maptiler') {
+        setTileProvider('osm')
+      }
+      setMapBootstrapKey((value) => value + 1)
+    }, MAP_BOOTSTRAP_TIMEOUT_MS)
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
 
@@ -688,7 +706,16 @@ export default function NavigationMapLibreView({ darkMode = false }) {
 
     map.on('load', () => {
       loadedRef.current = true
+      window.clearTimeout(bootstrapTimer)
       if (tileProvider === 'maptiler') markMapTileSuccess()
+      map.resize()
+      window.requestAnimationFrame(() => {
+        try {
+          map.resize()
+        } catch {
+          // noop
+        }
+      })
       upsertGeoJsonSource(map, 'remaining-route', routeCollection)
       upsertGeoJsonSource(map, 'preview-routes', otherRoutesCollection)
       upsertGeoJsonSource(map, 'active-route', activeCollection)
@@ -850,6 +877,8 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     mapRef.current = map
 
     return () => {
+      window.clearTimeout(bootstrapTimer)
+      resizeObserver?.disconnect()
       if (suppressTimerRef.current) window.clearTimeout(suppressTimerRef.current)
       if (manualRestoreTimerRef.current) window.clearTimeout(manualRestoreTimerRef.current)
       currentMarkerRef.current?.remove()

@@ -315,6 +315,9 @@
 - `scripts/prewarm_road_assets.mjs`를 추가했다.
   - `road-assets.json`을 대표 노선/자주 쓰는 노선 기준으로 미리 채울 수 있다.
   - route 시점에 매번 roadside asset을 처음부터 찾는 비용을 줄이는 용도다.
+- 시뮬레이터에서 지도 화면이 회색으로 남고 안내가 버퍼링처럼 밀리는 문제를 줄였다.
+  - MapLibre는 초기 bootstrap timeout과 `ResizeObserver`를 추가해 타일 로드/컨테이너 크기 반영이 늦을 때 OSM fallback + resize를 강제한다.
+  - 안내 음성은 시뮬레이터 또는 speech backlog가 있을 때 Google TTS를 오래 기다리지 않고 browser TTS 저지연 fallback을 우선 사용한다.
 
 ### 숨은 리스크
 
