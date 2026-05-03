@@ -328,6 +328,20 @@ function flushRoadAssetStore() {
   }
 }
 
+async function withSoftTimeout(task, timeoutMs, fallbackValue) {
+  let timer = null
+  try {
+    return await Promise.race([
+      Promise.resolve().then(task),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(fallbackValue), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 function buildRoadAssetKey(query = {}) {
   const roadClass = String(query?.roadClass ?? '').trim().toLowerCase()
   const number = String(query?.number ?? '').trim()
@@ -1211,7 +1225,15 @@ async function fetchItsRoadEvents({ bounds = null, roads = [] } = {}) {
   }
 }
 
-async function buildRoadActualMeta({ roads = [], polyline = [], nearbyCenter = null, nearbyRadiusKm = 8, includeRoadsideStops = false } = {}) {
+async function buildRoadActualMeta({
+  roads = [],
+  polyline = [],
+  nearbyCenter = null,
+  nearbyRadiusKm = 8,
+  includeRoadsideStops = false,
+  includeCameras = true,
+  includeEvents = true,
+} = {}) {
   const normalizedPolyline = samplePolyline(normalizePolyline(polyline), 220)
   const bounds = normalizedPolyline.length > 0
     ? getPolylineBounds(normalizedPolyline, 0.08)
@@ -1220,12 +1242,26 @@ async function buildRoadActualMeta({ roads = [], polyline = [], nearbyCenter = n
       : null)
 
   const [cameras, events, restStops] = await Promise.all([
-    normalizedPolyline.length > 1
-      ? fetchPublicMasterCameras({ roads, polyline: normalizedPolyline })
+    includeCameras && normalizedPolyline.length > 1
+      ? withSoftTimeout(
+        () => fetchPublicMasterCameras({ roads, polyline: normalizedPolyline }),
+        4500,
+        []
+      )
       : Promise.resolve([]),
-    fetchItsRoadEvents({ bounds, roads }),
+    includeEvents
+      ? withSoftTimeout(
+        () => fetchItsRoadEvents({ bounds, roads }),
+        3500,
+        []
+      )
+      : Promise.resolve([]),
     includeRoadsideStops && normalizedPolyline.length > 1
-      ? fetchRoadLocalRestStops({ roads, polyline: normalizedPolyline })
+      ? withSoftTimeout(
+        () => fetchRoadLocalRestStops({ roads, polyline: normalizedPolyline }),
+        5000,
+        []
+      )
       : Promise.resolve([]),
   ])
 
@@ -1245,9 +1281,9 @@ async function buildRoadActualMeta({ roads = [], polyline = [], nearbyCenter = n
     restStops,
     events: filteredEvents.slice(0, 40),
     coverage: {
-      cameraSource: MEDICAL_DATA_KEY ? 'public-master' : 'unavailable',
-      restStopSource: includeRoadsideStops && TMAP_KEY ? 'tmap-road-poi' : 'unavailable',
-      eventSource: ITS_KEY ? 'its-live' : 'unavailable',
+      cameraSource: includeCameras ? (MEDICAL_DATA_KEY ? 'public-master' : 'unavailable') : 'skipped',
+      restStopSource: includeRoadsideStops ? (TMAP_KEY ? 'tmap-road-poi' : 'unavailable') : 'skipped',
+      eventSource: includeEvents ? (ITS_KEY ? 'its-live' : 'unavailable') : 'skipped',
       cameraTtlHours: TMAP_CAMERA_CACHE_MAX_AGE_MS / (1000 * 60 * 60),
     },
   }
@@ -2039,6 +2075,8 @@ app.post('/api/road/actual-meta', express.json({ limit: '1mb' }), async (req, re
         roads,
         polyline,
         includeRoadsideStops: Boolean(route?.includeRoadsideStops),
+        includeCameras: route?.includeCameras !== false,
+        includeEvents: route?.includeEvents !== false,
       })
       return {
         routeId: route?.routeId ?? null,

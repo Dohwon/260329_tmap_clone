@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview --host",
     "start": "node server.js",
-    "smoke:dev": "node scripts/dev_smoke_check.mjs"
+    "smoke:dev": "node scripts/dev_smoke_check.mjs",
+    "prewarm:road-assets": "node scripts/prewarm_road_assets.mjs"
   },
   "dependencies": {
     "express": "^5.2.1",

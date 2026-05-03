@@ -948,9 +948,11 @@ function buildRoadDescriptorsFromRoute(route = {}) {
 
 function buildRouteActualMetaKey(route = {}) {
   return JSON.stringify({
-    version: route?.includeRoadsideStops ? 'roadside-v1' : 'base-v1',
+    version: route?.includeRoadsideStops ? 'roadside-v2' : 'base-v2',
     routeId: route?.id ?? 'route',
     includeRoadsideStops: Boolean(route?.includeRoadsideStops),
+    includeCameras: route?.includeCameras !== false,
+    includeEvents: route?.includeEvents !== false,
     roads: buildRoadDescriptorsFromRoute(route),
     polyline: samplePolyline(route?.polyline ?? [], 48),
   })
@@ -1029,6 +1031,8 @@ async function fetchRouteActualMetaBatch(routes = []) {
         roads: buildRoadDescriptorsFromRoute(route),
         polyline: samplePolyline(route.polyline ?? [], 180),
         includeRoadsideStops: Boolean(route?.includeRoadsideStops),
+        includeCameras: route?.includeCameras !== false,
+        includeEvents: route?.includeEvents !== false,
       })),
     }),
   })
@@ -1123,11 +1127,17 @@ export async function fetchRouteCorridor({
 
 export async function fetchRoadActualMetaForRoad(road) {
   if (!road || !Array.isArray(road?.startCoord) || !Array.isArray(road?.endCoord)) return null
+  const staticRestStopCount = Array.isArray(road?.restStops) ? road.restStops.length : 0
+  const staticCameraCount = Array.isArray(road?.cameras) ? road.cameras.length : 0
+  const includeRoadsideStops = road?.roadClass === 'expressway'
+    ? staticRestStopCount < 4
+    : staticRestStopCount < 1
+  const includeCameras = road?.roadClass === 'expressway'
+    ? staticCameraCount < 2
+    : staticCameraCount < 1
   const path = [
     road.startCoord,
     ...((road.entryNodes ?? []).map((node) => node.coord ?? [node.lat, node.lng])),
-    ...((road.restStops ?? []).map((stop) => resolveRoadStopCoord(road, stop))),
-    ...((road.scenicEntryPoints ?? []).map((node) => node.coord ?? [node.lat, node.lng])),
     ...((road.mainlineAnchors ?? []).map((node) => node.coord ?? [node.lat, node.lng])),
     ...((road.majorJunctions ?? []).map((junction) => junction.coord)),
     road.endCoord,
@@ -1141,10 +1151,38 @@ export async function fetchRoadActualMetaForRoad(road) {
     id: `road-${road.id}`,
     polyline: path,
     segmentStats: [{ name: road.name, roadNo: road.number, roadName: road.name }],
-    includeRoadsideStops: true,
+    includeRoadsideStops,
+    includeCameras,
+    includeEvents: false,
   }])
 
   return metaMap.get(`road-${road.id}`) ?? null
+}
+
+export async function fetchRoadEventsForRoad(road) {
+  if (!road || !Array.isArray(road?.startCoord) || !Array.isArray(road?.endCoord)) return null
+  const path = [
+    road.startCoord,
+    ...((road.entryNodes ?? []).map((node) => node.coord ?? [node.lat, node.lng])),
+    ...((road.mainlineAnchors ?? []).map((node) => node.coord ?? [node.lat, node.lng])),
+    ...((road.majorJunctions ?? []).map((junction) => junction.coord)),
+    road.endCoord,
+  ]
+    .filter((coord) => Array.isArray(coord) && coord.length >= 2)
+    .filter((coord, index, all) =>
+      all.findIndex((other) => haversineKm(other[0], other[1], coord[0], coord[1]) <= 0.05) === index
+    )
+
+  const metaMap = await fetchRouteActualMetaBatch([{
+    id: `road-events-${road.id}`,
+    polyline: path,
+    segmentStats: [{ name: road.name, roadNo: road.number, roadName: road.name }],
+    includeRoadsideStops: false,
+    includeCameras: false,
+    includeEvents: true,
+  }])
+
+  return metaMap.get(`road-events-${road.id}`) ?? null
 }
 
 function enrichFuelStops(results, routePolyline = [], settings = {}) {

@@ -73,6 +73,29 @@ SMOKE_BASE_URL=https://260329tmapclone-production.up.railway.app npm run smoke:d
   - 휴게소/졸음쉼터 `7일`
 - 전제:
   - Railway에서 `/data` 볼륨이 연결되어 있어야 재배포/재시작 후에도 캐시가 유지됩니다.
+- 선택 도로 상세는 `asset(rest/camera)`를 먼저 가져오고 `event`는 별도 후속 요청으로 붙입니다.
+  - 목적: 휴게소/졸음쉼터/카메라 때문에 selected road detail 전체가 느려지는 문제를 줄임
+
+## Road Asset Prewarm
+
+필요하면 아래 스크립트로 road asset cache를 미리 채울 수 있습니다.
+
+```bash
+npm run prewarm:road-assets
+```
+
+선택 실행 예시:
+
+```bash
+PREWARM_LIMIT=5 npm run prewarm:road-assets
+PREWARM_ROAD_IDS=seohaean,seoulYangyang npm run prewarm:road-assets
+PREWARM_BASE_URL=https://260329tmapclone-production.up.railway.app npm run prewarm:road-assets
+```
+
+주의:
+
+- 이 스크립트는 실제 `/api/road/actual-meta`를 호출하므로 API 예산을 사용합니다.
+- 기본 목적은 `대표 노선` 또는 `자주 쓰는 노선`을 미리 캐시해 route 시점 호출을 줄이는 것입니다.
 
 ## Structure
 

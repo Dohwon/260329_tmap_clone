@@ -308,6 +308,13 @@
 
 - route search/preview에는 무거운 roadside backfill을 붙이지 않고, 선택 도로 상세에서만 여는 식으로 비용을 격리했다.
 - route-level memory cache만으로는 브라우저 새로고침/서버 재시작 시 재조회가 반복되므로, runtime root(`/data` 또는 `.runtime-cache`)에 파일 캐시를 같이 뒀다.
+- selected road detail은 `asset(rest/camera)`와 `event`를 분리했다.
+  - 휴게소/졸음쉼터/카메라를 먼저 빠르게 붙이고
+  - ITS event는 후속 요청으로 merge한다.
+  - 즉 selected road detail 전체가 ITS latency 때문에 늦게 뜨는 문제를 줄이는 방향이다.
+- `scripts/prewarm_road_assets.mjs`를 추가했다.
+  - `road-assets.json`을 대표 노선/자주 쓰는 노선 기준으로 미리 채울 수 있다.
+  - route 시점에 매번 roadside asset을 처음부터 찾는 비용을 줄이는 용도다.
 
 ### 숨은 리스크
 

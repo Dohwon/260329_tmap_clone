@@ -5,7 +5,7 @@ let _simIntervalId = null
 import { HIGHWAYS } from '../data/highwayData'
 import { SCENIC_SEGMENTS_SORTED } from '../data/scenicRoads'
 import { PRESET_INFO, MOCK_RECENT_SEARCHES } from '../data/mockData'
-import { buildRoadDriveContext, buildRoadDriveEntryCandidates, buildRoadDriveWaypoints, enrichDestinationTarget, fetchDirectRoute, fetchRoadActualMetaForRoad, fetchRouteByWaypoints, fetchRoutes, fetchTmapStatus, searchNearbyPOIs, searchPOI, searchSafetyHazards } from '../services/tmapService'
+import { buildRoadDriveContext, buildRoadDriveEntryCandidates, buildRoadDriveWaypoints, enrichDestinationTarget, fetchDirectRoute, fetchRoadActualMetaForRoad, fetchRoadEventsForRoad, fetchRouteByWaypoints, fetchRoutes, fetchTmapStatus, searchNearbyPOIs, searchPOI, searchSafetyHazards } from '../services/tmapService'
 import { buildScenicAnchorSeeds, validateRouteForNavigation } from '../utils/routingGuards'
 import { analyzeRecordedDrive, analyzeRouteProgress, ensureLiveRouteSource, isUsableLiveRoute } from '../utils/navigationLogic'
 
@@ -2877,6 +2877,27 @@ const useAppStore = create((set, get) => ({
           [road.id]: meta,
         },
       }))
+      void fetchRoadEventsForRoad(road)
+        .then((eventMeta) => {
+          if (!eventMeta) return
+          set((state) => {
+            const previous = state.roadActualMetaById[road.id] ?? meta
+            return {
+              roadActualMetaById: {
+                ...state.roadActualMetaById,
+                [road.id]: {
+                  ...previous,
+                  events: Array.isArray(eventMeta.events) ? eventMeta.events : (previous.events ?? []),
+                  coverage: {
+                    ...(previous.coverage ?? {}),
+                    ...(eventMeta.coverage ?? {}),
+                  },
+                },
+              },
+            }
+          })
+        })
+        .catch(() => {})
       return meta
     } catch {
       return null
