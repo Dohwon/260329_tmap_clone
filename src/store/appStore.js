@@ -5,7 +5,7 @@ let _simIntervalId = null
 import { HIGHWAYS } from '../data/highwayData'
 import { SCENIC_SEGMENTS_SORTED } from '../data/scenicRoads'
 import { PRESET_INFO, MOCK_RECENT_SEARCHES } from '../data/mockData'
-import { buildRoadDriveEntryCandidates, buildRoadDriveWaypoints, enrichDestinationTarget, fetchDirectRoute, fetchRoadActualMetaForRoad, fetchRouteByWaypoints, fetchRoutes, fetchTmapStatus, searchNearbyPOIs, searchPOI, searchSafetyHazards } from '../services/tmapService'
+import { buildRoadDriveContext, buildRoadDriveEntryCandidates, buildRoadDriveWaypoints, enrichDestinationTarget, fetchDirectRoute, fetchRoadActualMetaForRoad, fetchRouteByWaypoints, fetchRoutes, fetchTmapStatus, searchNearbyPOIs, searchPOI, searchSafetyHazards } from '../services/tmapService'
 import { buildScenicAnchorSeeds, validateRouteForNavigation } from '../utils/routingGuards'
 import { analyzeRecordedDrive, analyzeRouteProgress, ensureLiveRouteSource, isUsableLiveRoute } from '../utils/navigationLogic'
 
@@ -813,6 +813,14 @@ function buildRoadSummary(road) {
         ? '서행'
         : '원활',
   }
+}
+
+function attachRoadDriveContextToRoutes(routes = [], roadDrivePlan = null) {
+  if (!roadDrivePlan) return routes
+  return (routes ?? []).map((route) => ({
+    ...route,
+    roadDriveContext: roadDrivePlan,
+  }))
 }
 
 /**
@@ -2676,6 +2684,7 @@ const useAppStore = create((set, get) => ({
 
     let bestEntry = entryCandidates[0] ?? null
     let bestEntryEta = Infinity
+    const scoredEntryCandidates = []
 
     for (const candidate of entryCandidates) {
       if (!Number.isFinite(candidate?.lat) || !Number.isFinite(candidate?.lng)) continue
@@ -2687,13 +2696,31 @@ const useAppStore = create((set, get) => ({
           tagColor: road.roadClass === 'national' ? 'green' : 'blue',
         })
         const candidateEta = Number(routeToEntry?.eta)
+        scoredEntryCandidates.push({
+          ...candidate,
+          etaMinutes: Number.isFinite(candidateEta) ? candidateEta : null,
+          routeToEntryDistanceKm: Number(routeToEntry?.distance ?? 0),
+        })
         if (Number.isFinite(candidateEta) && candidateEta < bestEntryEta) {
           bestEntryEta = candidateEta
-          bestEntry = candidate
+          bestEntry = {
+            ...candidate,
+            etaMinutes: candidateEta,
+            routeToEntryDistanceKm: Number(routeToEntry?.distance ?? 0),
+          }
         }
       } catch {
         // direct ETA 계산 실패 시 다음 후보 계속
       }
+    }
+
+    if (!bestEntry && scoredEntryCandidates.length > 0) {
+      bestEntry = scoredEntryCandidates
+        .sort((a, b) => {
+          const etaGap = Number(a.etaMinutes ?? Infinity) - Number(b.etaMinutes ?? Infinity)
+          if (etaGap !== 0) return etaGap
+          return Number(a.directDistanceKm ?? Infinity) - Number(b.directDistanceKm ?? Infinity)
+        })[0] ?? null
     }
 
     const autoWaypoints = bestEntry
@@ -2708,9 +2735,34 @@ const useAppStore = create((set, get) => ({
       .filter((point, index, all) =>
         all.findIndex((other) => haversineKm(point.lat, point.lng, other.lat, other.lng) <= 0.08) === index
       )
+    const roadDrivePlan = bestEntry
+      ? {
+          ...buildRoadDriveContext(road, bestEntry, direction),
+          entryCandidates: (scoredEntryCandidates.length > 0 ? scoredEntryCandidates : entryCandidates).map((candidate) => ({
+            id: candidate.id,
+            name: candidate.name,
+            address: candidate.address ?? null,
+            kind: candidate.kind ?? 'entry',
+            km: Number(candidate.km ?? 0),
+            lat: candidate.lat,
+            lng: candidate.lng,
+            etaMinutes: Number.isFinite(Number(candidate.etaMinutes)) ? Number(candidate.etaMinutes) : null,
+            directDistanceKm: Number.isFinite(Number(candidate.directDistanceKm)) ? Number(candidate.directDistanceKm) : null,
+          })),
+        }
+      : null
 
-    set({ waypoints: waypoint, selectedRoadId: road.id })
+    set({
+      waypoints: waypoint,
+      selectedRoadId: road.id,
+      roadDrivePlan,
+    })
     await get().searchRoute(destination)
+    set((state) => ({
+      selectedRoadId: road.id,
+      roadDrivePlan,
+      routes: attachRoadDriveContextToRoutes(state.routes, roadDrivePlan),
+    }))
   },
 
   safetyHazards: [],
@@ -2748,6 +2800,7 @@ const useAppStore = create((set, get) => ({
   },
 
   selectedRoadId: null,
+  roadDrivePlan: null,
   roadActualMetaById: {},
   selectRoad: (roadId) => {
     const road = getRoadById(roadId)
@@ -2761,11 +2814,12 @@ const useAppStore = create((set, get) => ({
       mapZoom: 7,
       showRoutePanel: false,
       routePanelMode: 'full',
+      roadDrivePlan: null,
       lastUserActivityAt: Date.now(),
     })
     void get().refreshSelectedRoadActualMeta(roadId)
   },
-  clearSelectedRoad: () => set({ selectedRoadId: null }),
+  clearSelectedRoad: () => set({ selectedRoadId: null, roadDrivePlan: null }),
   refreshSelectedRoadActualMeta: async (roadId = null) => {
     const resolvedRoadId = roadId ?? get().selectedRoadId
     const road = getRoadById(resolvedRoadId)
@@ -2810,6 +2864,9 @@ const useAppStore = create((set, get) => ({
       startAddress: selectedRoad.startAddress ?? selectedRoad.startName,
       endAddress: selectedRoad.endAddress ?? selectedRoad.endName,
       path: getRoadPath(selectedRoad),
+      entryNodes: selectedRoad.entryNodes ?? [],
+      scenicEntryPoints: selectedRoad.scenicEntryPoints ?? [],
+      mainlineAnchors: selectedRoad.mainlineAnchors ?? [],
       cameras: mergedCameras,
       congestionSegments: buildRoadSegments(selectedRoad),
       restStops: buildRoadRestStops(selectedRoad),
@@ -2822,7 +2879,9 @@ const useAppStore = create((set, get) => ({
   searchRoute: async (destination) => {
     const normalizedDestination = await enrichDestinationTarget(destination)
     const origin = await resolveRoutingOrigin(getActiveRoutingOrigin(get()))
-    const { routePreferences, driverPreset, scenicReferencePolyline, waypoints } = get()
+    const { routePreferences, driverPreset, scenicReferencePolyline, waypoints, selectedRoadId, roadDrivePlan } = get()
+    const roadDriveRoadId = (waypoints ?? []).find((point) => point?.roadDriveRoadId)?.roadDriveRoadId ?? selectedRoadId ?? null
+    const activeRoadDrivePlan = roadDriveRoadId ? roadDrivePlan : null
 
     if (!hasValidRouteTarget(normalizedDestination) || !hasValidRouteTarget(origin)) {
       set({
@@ -2833,7 +2892,8 @@ const useAppStore = create((set, get) => ({
         isLoadingRoutes: false,
         routes: [],
         selectedRouteId: null,
-        selectedRoadId: null,
+        selectedRoadId: roadDriveRoadId,
+        roadDrivePlan: activeRoadDrivePlan,
         scenicRoadSuggestions: [],
         scenicReferencePolyline: [],
         lastUserActivityAt: Date.now(),
@@ -2884,7 +2944,8 @@ const useAppStore = create((set, get) => ({
         isLoadingRoutes: true,
         routes: [],
         selectedRouteId: null,
-        selectedRoadId: null,
+        selectedRoadId: roadDriveRoadId,
+        roadDrivePlan: activeRoadDrivePlan,
         lastUserActivityAt: now,
       })
       get().addRecentSearch(normalizedDestination)
@@ -2927,13 +2988,16 @@ const useAppStore = create((set, get) => ({
             driverPreset,
           })), driverPreset)
         : fallbackRoutes
-      if (decoratedRoutes.length === 0) {
+      const contextualRoutes = attachRoadDriveContextToRoutes(decoratedRoutes, activeRoadDrivePlan)
+      if (contextualRoutes.length === 0) {
         set({
           routes: [],
           selectedRouteId: null,
           isLoadingRoutes: false,
           selectedMergeOptionId: 'merge-current',
           mergeOptions: [],
+          selectedRoadId: roadDriveRoadId,
+          roadDrivePlan: activeRoadDrivePlan,
           scenicRoadSuggestions: [],
           scenicReferencePolyline: [],
         })
@@ -2944,8 +3008,8 @@ const useAppStore = create((set, get) => ({
         })
         return []
       }
-      const selectedRouteId = decoratedRoutes[0]?.id ?? null
-      const selectedRoute = decoratedRoutes[0] ?? null
+      const selectedRouteId = contextualRoutes[0]?.id ?? null
+      const selectedRoute = contextualRoutes[0] ?? null
       const hasScenicWaypoint = (waypoints ?? []).some((point) => point?.scenicId)
       const referencePolyline = hasScenicWaypoint && Array.isArray(scenicReferencePolyline) && scenicReferencePolyline.length > 1
         ? scenicReferencePolyline
@@ -2961,13 +3025,15 @@ const useAppStore = create((set, get) => ({
       const scenicRoadSuggestions = await decorateScenicSuggestionsWithEntry(rawScenicRoadSuggestions)
 
       set({
-        routes: decoratedRoutes,
+        routes: contextualRoutes,
         selectedRouteId,
         isLoadingRoutes: false,
         selectedMergeOptionId: 'merge-current',
         mergeOptions: selectedRoute ? buildMergeOptions(selectedRoute, 'merge-current', driverPreset) : [],
         mapCenter: selectedRoute?.polyline?.[Math.floor(selectedRoute.polyline.length / 2)] ?? [normalizedDestination.lat, normalizedDestination.lng],
         mapZoom: selectedRoute ? 8 : 14,
+        selectedRoadId: roadDriveRoadId,
+        roadDrivePlan: activeRoadDrivePlan,
         scenicRoadSuggestions,
         scenicReferencePolyline: hasScenicWaypoint
           ? scenicReferencePolyline
@@ -2975,7 +3041,7 @@ const useAppStore = create((set, get) => ({
       })
       routeSearchLastCompletedKey = requestKey
       routeSearchLastCompletedAt = Date.now()
-      return decoratedRoutes
+      return contextualRoutes
     })()
 
     routeSearchInflightKey = requestKey
@@ -3007,12 +3073,12 @@ const useAppStore = create((set, get) => ({
       })
       if (liveRoutes.length === 0) throw new Error('TMAP 경로 응답 없음')
 
-      const routes = rankRoutesByDriverPreset(liveRoutes.map((route, index) => decorateRoute(route, index, {
+      const routes = attachRoadDriveContextToRoutes(rankRoutesByDriverPreset(liveRoutes.map((route, index) => decorateRoute(route, index, {
         origin,
         destination: state.destination,
         routePreferences: state.routePreferences,
         driverPreset: state.driverPreset,
-      })), state.driverPreset)
+      })), state.driverPreset), state.roadDrivePlan)
       const selectedRoute = routes.find((route) => route.id === state.selectedRouteId) ?? routes[0] ?? null
 
       set({

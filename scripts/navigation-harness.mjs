@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {
+  buildRoadDriveContext,
   buildRoadDriveEntryCandidates,
   buildRoadDriveWaypoints,
   buildSearchOptionAttempts,
@@ -845,7 +846,7 @@ run('instant search returns fast candidates for known places', () => {
   assert.ok(results.some((item) => item.name === '양화대교'), 'expected 양화대교 in results')
 })
 
-run('road drive entry candidates include the road start and nearby entry nodes', () => {
+run('road drive entry candidates prioritize valid entry nodes instead of only the road start', () => {
   const road = {
     id: 'test-road',
     name: '테스트고속도로',
@@ -862,12 +863,17 @@ run('road drive entry candidates include the road start and nearby entry nodes',
       { name: '중간JC', coord: [36.5, 127.5], km: 55 },
       { name: '먼IC', coord: [36.25, 127.75], km: 82 },
     ],
+    entryNodes: [
+      { id: 'test-road-start', name: '테스트 시점', lat: 37.0, lng: 127.0, km: 0, kind: 'start' },
+      { id: 'test-road-entry-1', name: '가까운IC', lat: 36.75, lng: 127.25, km: 28, kind: 'ic' },
+      { id: 'test-road-entry-2', name: '중간JC', lat: 36.5, lng: 127.5, km: 55, kind: 'jc' },
+    ],
   }
   const origin = { lat: 36.74, lng: 127.24 }
   const candidates = buildRoadDriveEntryCandidates(origin, road, 'forward', 3)
 
   assert.ok(candidates.length >= 2)
-  assert.equal(candidates[0].id, 'test-road-start')
+  assert.equal(candidates[0].name, '가까운IC')
   assert.ok(candidates.some((item) => item.name === '가까운IC'))
 })
 
@@ -888,6 +894,12 @@ run('road drive waypoints keep the chosen entry and downstream anchors', () => {
       { name: 'IC-2', coord: [36.6, 127.4], km: 40 },
       { name: 'IC-3', coord: [36.3, 127.7], km: 80 },
     ],
+    mainlineAnchors: [
+      { id: 'test-road-anchor-0', name: 'IC-1', lat: 36.8, lng: 127.2, km: 20, kind: 'ic' },
+      { id: 'test-road-anchor-1', name: '휴게소', lat: 36.5, lng: 127.5, km: 55, kind: 'rest' },
+      { id: 'test-road-anchor-2', name: 'IC-3', lat: 36.3, lng: 127.7, km: 80, kind: 'ic' },
+      { id: 'test-road-end', name: '종점', lat: 36.0, lng: 128.0, km: 120, kind: 'end' },
+    ],
   }
   const entry = {
     id: 'test-road-junction-1',
@@ -902,6 +914,40 @@ run('road drive waypoints keep the chosen entry and downstream anchors', () => {
   assert.equal(waypoints[0].roadDriveRole, 'entry')
   assert.equal(waypoints[0].name, 'IC-2')
   assert.ok(waypoints.every((item) => item.roadDriveRoadId === 'test-road'))
+  assert.ok(waypoints.some((item) => item.roadDriveNodeKind === 'rest'))
+})
+
+run('road drive context keeps entry candidate and downstream road nodes', () => {
+  const road = {
+    id: 'context-road',
+    name: '컨텍스트고속도로',
+    roadClass: 'expressway',
+    totalKm: 80,
+    entryNodes: [
+      { id: 'context-road-start', name: '시점', lat: 37.0, lng: 127.0, km: 0, kind: 'start' },
+      { id: 'context-road-ic', name: '동서울IC', lat: 36.8, lng: 127.2, km: 18, kind: 'ic' },
+    ],
+    mainlineAnchors: [
+      { id: 'context-road-ic', name: '동서울IC', lat: 36.8, lng: 127.2, km: 18, kind: 'ic' },
+      { id: 'context-road-jc', name: '중앙JC', lat: 36.6, lng: 127.4, km: 36, kind: 'jc' },
+      { id: 'context-road-rest', name: '테스트휴게소', lat: 36.45, lng: 127.55, km: 52, kind: 'rest' },
+      { id: 'context-road-end', name: '종점', lat: 36.2, lng: 127.8, km: 80, kind: 'end' },
+    ],
+  }
+  const context = buildRoadDriveContext(road, {
+    id: 'context-road-ic',
+    name: '동서울IC',
+    lat: 36.8,
+    lng: 127.2,
+    km: 18,
+    kind: 'ic',
+    etaMinutes: 12,
+  }, 'forward')
+
+  assert.equal(context.roadId, 'context-road')
+  assert.equal(context.entryCandidate.name, '동서울IC')
+  assert.ok(context.contextNodes.length >= 3)
+  assert.equal(context.contextNodes[0].name, '동서울IC')
 })
 
 if (process.exitCode) {

@@ -1,3 +1,5 @@
+import { SCENIC_SEGMENTS } from './scenicRoads.js'
+
 // 한국 주요 고속도로 데이터
 const ROAD_CLASS_COLORS = {
   expressway: '#FF89AC',
@@ -1041,8 +1043,180 @@ const RAW_HIGHWAYS = [
   },
 ]
 
-export const HIGHWAYS = RAW_HIGHWAYS.map((road) => ({
-  ...road,
-  color: road.color ?? ROAD_CLASS_COLORS[road.roadClass],
-  classColor: ROAD_CLASS_COLORS[road.roadClass] ?? road.color,
-}))
+const ROAD_MASTER_PATCHES = {
+  seohaean: {
+    aliases: ['서해안선', '서해안고속', '서해안 고속도로'],
+    entryNodes: [
+      { name: '금천IC', coord: [37.4567, 126.8957], km: 0, kind: 'ic' },
+      { name: '안산JC', coord: [37.3219, 126.8209], km: 39, kind: 'jc' },
+      { name: '서평택JC', coord: [36.9972, 127.0347], km: 77, kind: 'jc' },
+      { name: '서천JC', coord: [36.0787, 126.6916], km: 189, kind: 'jc' },
+      { name: '목포IC', coord: [34.8118, 126.4221], km: 340, kind: 'ic' },
+    ],
+    cameras: [
+      { id: 'seohaean-cam-hangdamdo', label: '행담도휴게소 인근 단속', km: 66, speedLimit: 100, type: 'fixed' },
+      { id: 'seohaean-cam-seosan', label: '서산휴게소 인근 단속', km: 99, speedLimit: 100, type: 'fixed' },
+      { id: 'seohaean-cam-daecheon', label: '대천휴게소 인근 단속', km: 141, speedLimit: 100, type: 'fixed' },
+      { id: 'seohaean-cam-hampyeong', label: '함평천지휴게소 인근 단속', km: 304, speedLimit: 100, type: 'fixed' },
+    ],
+    scenicEntryPoints: [
+      { id: 'seohaean-scenic-taean', name: '태안해안 진입', address: '충청남도 태안군 소원면 만리포해수욕장', lat: 36.7900, lng: 126.1400, km: 128, scenicType: 'coastal' },
+      { id: 'seohaean-scenic-daecheon', name: '대천해수욕장 진입', address: '충청남도 보령시 신흑동 대천해수욕장', lat: 36.3050, lng: 126.5070, km: 166, scenicType: 'coastal' },
+      { id: 'seohaean-scenic-byeonsan', name: '변산반도 진입', address: '전북특별자치도 부안군 변산면', lat: 35.6660, lng: 126.5300, km: 246, scenicType: 'coastal' },
+    ],
+  },
+  seoulYangyang: {
+    restStops: [
+      { id: 'sy-gapyeong', name: '가평휴게소', km: 34, type: 'service', address: '경기도 가평군 설악면 서울양양고속도로 57' },
+      { id: 'sy-naechon', name: '내촌휴게소', km: 71, type: 'service', address: '강원특별자치도 홍천군 내촌면 서울양양고속도로 93' },
+      { id: 'sy-inje', name: '인제양양터널 졸음쉼터', km: 126, type: 'drowsy', address: '강원특별자치도 인제군 상남면 서울양양고속도로 130' },
+    ],
+    entryNodes: [
+      { name: '강일IC', coord: [37.5695, 127.1732], km: 0, kind: 'ic' },
+      { name: '춘천JC', coord: [37.8220, 127.7600], km: 57, kind: 'jc' },
+      { name: '동홍천IC', coord: [37.6870, 128.1100], km: 92, kind: 'ic' },
+      { name: '인제IC', coord: [38.0390, 128.1700], km: 121, kind: 'ic' },
+      { name: '양양IC', coord: [38.0756, 128.6186], km: 150, kind: 'ic' },
+    ],
+    cameras: [
+      { id: 'sy-cam-chuncheon', label: '춘천JC 인근 단속', km: 58, speedLimit: 100, type: 'fixed' },
+      { id: 'sy-cam-donghongcheon', label: '동홍천IC 인근 단속', km: 92, speedLimit: 100, type: 'fixed' },
+      { id: 'sy-cam-injeyangyang', label: '인제양양터널 구간 단속', km: 130, speedLimit: 100, type: 'section', sectionLength: 11 },
+    ],
+    scenicEntryPoints: [
+      { id: 'sy-scenic-nami', name: '남이섬·자라섬 진입', address: '강원특별자치도 춘천시 남산면', lat: 37.7900, lng: 127.5250, km: 43, scenicType: 'mountain' },
+      { id: 'sy-scenic-sorak', name: '설악산 진입', address: '강원특별자치도 인제군 북면 설악로', lat: 38.1190, lng: 128.4650, km: 124, scenicType: 'mountain' },
+      { id: 'sy-scenic-naksansa', name: '낙산사·양양해안 진입', address: '강원특별자치도 양양군 강현면 낙산사로', lat: 38.1250, lng: 128.6280, km: 147, scenicType: 'coastal' },
+    ],
+  },
+}
+
+function uniqueBy(items = [], keyFn) {
+  const seen = new Set()
+  const result = []
+  for (const item of items) {
+    if (!item) continue
+    const key = keyFn(item)
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(item)
+  }
+  return result
+}
+
+function normalizeRoadNode(node = {}, fallbackId) {
+  const lat = Number(node?.lat ?? node?.coord?.[0])
+  const lng = Number(node?.lng ?? node?.coord?.[1])
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  const km = Number(node?.km ?? 0)
+  const kind = node?.kind ?? (/JC|분기/.test(String(node?.name ?? '')) ? 'jc' : /IC|TG|나들목/.test(String(node?.name ?? '')) ? 'ic' : 'anchor')
+  return {
+    id: node?.id ?? fallbackId,
+    name: node?.name ?? fallbackId,
+    address: node?.address ?? null,
+    lat,
+    lng,
+    coord: [lat, lng],
+    km: Number.isFinite(km) ? km : 0,
+    kind,
+    scenicType: node?.scenicType ?? null,
+  }
+}
+
+function deriveScenicEntryPoints(road) {
+  const roadNumber = String(road?.number ?? '')
+  const roadType = road?.roadClass === 'expressway' ? 'expressway' : 'national'
+  return SCENIC_SEGMENTS
+    .filter((segment) => String(segment.roadNumber ?? '') === roadNumber && String(segment.roadType ?? '') === roadType)
+    .flatMap((segment, segmentIndex) =>
+      (segment.viaPoints ?? []).map((point, pointIndex) => normalizeRoadNode({
+        id: `${road.id}-scenic-${segment.id}-${pointIndex}`,
+        name: point.name,
+        address: segment.roadLabel ?? segment.name,
+        lat: point.lat,
+        lng: point.lng,
+        km: null,
+        kind: 'scenic',
+        scenicType: segment.scenicType,
+      }, `${road.id}-scenic-${segmentIndex}-${pointIndex}`))
+    )
+    .filter(Boolean)
+}
+
+function buildRoadMaster(road) {
+  const patch = ROAD_MASTER_PATCHES[road.id] ?? {}
+  const mergedRoad = {
+    ...road,
+    ...patch,
+    aliases: uniqueBy([...(road.aliases ?? []), ...(patch.aliases ?? [])], (item) => String(item)).filter(Boolean),
+    restStops: [...(road.restStops ?? []), ...(patch.restStops ?? [])],
+    cameras: [...(road.cameras ?? []), ...(patch.cameras ?? [])],
+  }
+
+  const baseEntryNodes = [
+    normalizeRoadNode({
+      id: `${road.id}-start`,
+      name: road.startName ?? `${road.name} 시점`,
+      address: road.startAddress ?? null,
+      coord: road.startCoord,
+      km: 0,
+      kind: 'start',
+    }, `${road.id}-start`),
+    ...((road.majorJunctions ?? []).map((junction, index) => normalizeRoadNode({
+      id: `${road.id}-junction-${index}`,
+      name: junction.name,
+      coord: junction.coord,
+      km: junction.km,
+    }, `${road.id}-junction-${index}`))),
+    normalizeRoadNode({
+      id: `${road.id}-end`,
+      name: road.endName ?? `${road.name} 종점`,
+      address: road.endAddress ?? null,
+      coord: road.endCoord,
+      km: Number(road.totalKm ?? 0),
+      kind: 'end',
+    }, `${road.id}-end`),
+  ].filter(Boolean)
+
+  const patchEntryNodes = (patch.entryNodes ?? [])
+    .map((node, index) => normalizeRoadNode(node, `${road.id}-entry-${index}`))
+    .filter(Boolean)
+
+  const scenicEntryPoints = uniqueBy([
+    ...deriveScenicEntryPoints(mergedRoad),
+    ...((patch.scenicEntryPoints ?? []).map((node, index) => normalizeRoadNode(node, `${road.id}-scenic-patch-${index}`)).filter(Boolean)),
+  ], (node) => `${node.kind}:${node.name}:${node.lat.toFixed(4)}:${node.lng.toFixed(4)}`)
+
+  const entryNodes = uniqueBy([...baseEntryNodes, ...patchEntryNodes], (node) => `${node.name}:${node.lat.toFixed(4)}:${node.lng.toFixed(4)}`)
+    .sort((a, b) => Number(a.km ?? 0) - Number(b.km ?? 0))
+
+  const restContextNodes = (mergedRoad.restStops ?? [])
+    .map((stop, index) => normalizeRoadNode({
+      id: stop.id ?? `${road.id}-rest-${index}`,
+      name: stop.name,
+      address: stop.address ?? null,
+      coord: stop.coord,
+      km: stop.km,
+      kind: stop.type === 'drowsy' ? 'drowsy' : 'rest',
+    }, `${road.id}-rest-${index}`))
+    .filter(Boolean)
+
+  const mainlineAnchors = uniqueBy([
+    ...entryNodes,
+    ...restContextNodes,
+    ...scenicEntryPoints,
+  ], (node) => `${node.name}:${node.lat.toFixed(4)}:${node.lng.toFixed(4)}`)
+    .sort((a, b) => Number(a.km ?? 0) - Number(b.km ?? 0))
+
+  return {
+    ...mergedRoad,
+    color: mergedRoad.color ?? ROAD_CLASS_COLORS[mergedRoad.roadClass],
+    classColor: ROAD_CLASS_COLORS[mergedRoad.roadClass] ?? mergedRoad.color,
+    entryNodes,
+    scenicEntryPoints,
+    mainlineAnchors,
+    routeContextNodes: mainlineAnchors,
+  }
+}
+
+export const HIGHWAYS = RAW_HIGHWAYS.map((road) => buildRoadMaster(road))

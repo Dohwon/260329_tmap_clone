@@ -322,6 +322,30 @@ function getRoadAnchorNodes(road) {
     .sort((a, b) => a.km - b.km)
 }
 
+function getRoadMasterNodes(road, key = 'entryNodes') {
+  return (road?.[key] ?? [])
+    .map((node) => ({
+      ...node,
+      lat: Number(node?.lat ?? node?.coord?.[0]),
+      lng: Number(node?.lng ?? node?.coord?.[1]),
+      km: Number(node?.km ?? 0),
+    }))
+    .filter((node) => hasFiniteCoord(node.lat, node.lng))
+}
+
+function dedupeRoadNodes(nodes = [], radiusKm = 0.08) {
+  const unique = []
+  for (const node of nodes ?? []) {
+    const duplicated = unique.some((existing) =>
+      existing.id === node.id
+      || haversineKm(existing.lat, existing.lng, node.lat, node.lng) <= radiusKm
+    )
+    if (duplicated) continue
+    unique.push(node)
+  }
+  return unique
+}
+
 function getRoadCoordByKm(road, targetKm) {
   const km = Number(targetKm)
   if (!Number.isFinite(km)) return null
@@ -359,15 +383,8 @@ function buildRoadNodeAddress(road, node) {
 export function getRoadDriveOrderedNodes(road, direction = 'forward') {
   if (!road) return []
   const totalKm = Number(road.totalKm ?? 0)
-  const ordered = [
-    {
-      id: `${road.id}-start`,
-      name: road.startName ?? `${road.name} 시점`,
-      lat: Number(road.startCoord?.[0]),
-      lng: Number(road.startCoord?.[1]),
-      km: 0,
-      kind: 'start',
-    },
+  const baseNodes = [
+    ...getRoadMasterNodes(road, 'entryNodes'),
     ...((road.majorJunctions ?? [])
       .filter((junction) => Array.isArray(junction?.coord) && junction.coord.length >= 2)
       .map((junction, index) => ({
@@ -376,17 +393,10 @@ export function getRoadDriveOrderedNodes(road, direction = 'forward') {
         lat: Number(junction.coord[0]),
         lng: Number(junction.coord[1]),
         km: Number(junction.km ?? 0),
-        kind: 'junction',
+        kind: /JC|분기/.test(String(junction.name ?? '')) ? 'jc' : 'ic',
       }))),
-    {
-      id: `${road.id}-end`,
-      name: road.endName ?? `${road.name} 종점`,
-      lat: Number(road.endCoord?.[0]),
-      lng: Number(road.endCoord?.[1]),
-      km: totalKm,
-      kind: 'end',
-    },
   ]
+  const ordered = dedupeRoadNodes(baseNodes)
     .filter((node) => hasFiniteCoord(node.lat, node.lng))
     .sort((a, b) => a.km - b.km)
     .map((node, index) => ({
@@ -419,24 +429,25 @@ export function buildRoadDriveEntryCandidates(origin, road, direction = 'forward
   const orderedNodes = getRoadDriveOrderedNodes(road, direction)
   if (orderedNodes.length < 2) return []
 
-  const candidatePool = orderedNodes.slice(0, -1)
+  const candidatePool = orderedNodes
+    .filter((node) => node.kind !== 'end' && node.kind !== 'rest' && node.kind !== 'drowsy' && node.kind !== 'scenic')
   if (candidatePool.length === 0) return []
 
   const rankedByDistance = candidatePool
     .map((node) => ({
       ...node,
       directDistanceKm: Number(haversineKm(origin.lat, origin.lng, node.lat, node.lng).toFixed(1)),
+      roadJoinPriority: node.kind === 'start' ? 0 : node.kind === 'ic' ? 1 : node.kind === 'jc' ? 2 : 3,
     }))
     .sort((a, b) => {
       const distanceGap = a.directDistanceKm - b.directDistanceKm
-      if (distanceGap !== 0) return distanceGap
+      if (distanceGap !== 0 && Math.abs(distanceGap) > 2.5) return distanceGap
+      const joinGap = a.roadJoinPriority - b.roadJoinPriority
+      if (joinGap !== 0) return joinGap
       return a.directionOrderIndex - b.directionOrderIndex
     })
 
   const picks = []
-  const alwaysInclude = candidatePool[0]
-  if (alwaysInclude) picks.push(alwaysInclude)
-
   for (const candidate of rankedByDistance) {
     const duplicated = picks.some((picked) => picked.id === candidate.id)
     if (!duplicated) picks.push(candidate)
@@ -451,7 +462,11 @@ export function buildRoadDriveEntryCandidates(origin, road, direction = 'forward
 
 export function buildRoadDriveWaypoints(road, entryCandidate, direction = 'forward') {
   if (!road || !entryCandidate) return []
-  const orderedNodes = getRoadDriveOrderedNodes(road, direction)
+  const orderedNodes = dedupeRoadNodes([
+    ...getRoadMasterNodes(road, 'mainlineAnchors'),
+    ...getRoadDriveOrderedNodes(road, direction),
+  ], 0.05)
+    .sort((a, b) => Number(a.km ?? 0) - Number(b.km ?? 0))
   if (orderedNodes.length < 2) return []
 
   const destinationNode = orderedNodes[orderedNodes.length - 1]
@@ -462,7 +477,8 @@ export function buildRoadDriveWaypoints(road, entryCandidate, direction = 'forwa
   const anchorIndexes = [
     0,
     Math.min(futureNodes.length - 1, 1),
-    Math.max(0, Math.floor((futureNodes.length - 1) * 0.55)),
+    Math.max(0, Math.floor((futureNodes.length - 1) * 0.38)),
+    Math.max(0, Math.floor((futureNodes.length - 1) * 0.72)),
   ]
 
   const picked = []
@@ -486,8 +502,44 @@ export function buildRoadDriveWaypoints(road, entryCandidate, direction = 'forwa
     roadDriveRoadId: road.id,
     roadDriveRoadName: road.name,
     roadDriveDirection: direction,
+    roadDriveNodeKind: node.kind ?? 'anchor',
     routeOrderKm: Number(node.km ?? 0),
   }))
+}
+
+export function buildRoadDriveContext(road, entryCandidate, direction = 'forward') {
+  if (!road || !entryCandidate) return null
+  const orderedNodes = dedupeRoadNodes([
+    ...getRoadMasterNodes(road, 'mainlineAnchors'),
+    ...getRoadDriveOrderedNodes(road, direction),
+  ], 0.05)
+    .sort((a, b) => Number(a.km ?? 0) - Number(b.km ?? 0))
+  const entryIndex = orderedNodes.findIndex((node) => node.id === entryCandidate.id)
+  const futureNodes = entryIndex >= 0 ? orderedNodes.slice(entryIndex) : orderedNodes
+  return {
+    roadId: road.id,
+    roadName: road.name,
+    roadClass: road.roadClass,
+    direction,
+    entryCandidate: {
+      id: entryCandidate.id,
+      name: entryCandidate.name,
+      address: entryCandidate.address ?? null,
+      lat: entryCandidate.lat,
+      lng: entryCandidate.lng,
+      km: Number(entryCandidate.km ?? 0),
+      kind: entryCandidate.kind ?? 'entry',
+      etaMinutes: Number.isFinite(Number(entryCandidate.etaMinutes)) ? Number(entryCandidate.etaMinutes) : null,
+    },
+    contextNodes: futureNodes.slice(0, 8).map((node) => ({
+      id: node.id,
+      name: node.name,
+      kind: node.kind ?? 'anchor',
+      km: Number(node.km ?? 0),
+      lat: node.lat,
+      lng: node.lng,
+    })),
+  }
 }
 
 function buildRoadSearchPlaces() {
@@ -532,6 +584,24 @@ function buildRoadSearchPlaces() {
         aliases: [...(road.aliases ?? []), stop.name, `${road.name} ${stop.name}`],
       }]
     }),
+    ...((road.entryNodes ?? []).map((node) => ({
+      id: node.id ?? `${road.id}-entry-${node.name}`,
+      name: node.name,
+      address: node.address ?? `${road.name} ${node.name}`,
+      lat: node.lat,
+      lng: node.lng,
+      category: node.kind === 'jc' ? '분기점' : node.kind === 'ic' ? '진입IC' : '도로진입',
+      aliases: [...(road.aliases ?? []), node.name, `${road.name} ${node.name}`],
+    }))),
+    ...((road.scenicEntryPoints ?? []).map((node) => ({
+      id: node.id ?? `${road.id}-scenic-${node.name}`,
+      name: node.name,
+      address: node.address ?? `${road.name} ${node.name}`,
+      lat: node.lat,
+      lng: node.lng,
+      category: node.scenicType === 'mountain' ? '산악 진입' : '해안 진입',
+      aliases: [...(road.aliases ?? []), node.name, `${road.name} ${node.name}`],
+    }))),
   ])
 }
 
