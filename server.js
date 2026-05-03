@@ -2230,6 +2230,13 @@ app.get('/api/tmap/road/nearestRoad', async (req, res, next) => {
     res.set('Content-Type', result.rawHeaders['content-type'] || 'application/json')
     return res.send(result.body)
   } catch (error) {
+    if (shouldAbsorbBroadCategory400) {
+      console.warn('[TMAP pois] broad-category proxy error absorbed', {
+        searchKeyword,
+        message: error?.message ?? 'unknown',
+      })
+      return res.status(200).json(buildEmptyPoiResponse())
+    }
     return next(error)
   }
 })
@@ -2317,7 +2324,7 @@ app.use('/api/tmap', express.json({ limit: '2mb' }), async (req, res) => {
         return res.status(200).json({ resultData: { coordinate: null }, fallback: 'nearest-road-disabled' })
       }
     }
-    if (tmapPath.includes('/pois') && Number(result.status) === 400) {
+    if (tmapPath.includes('/pois') && Number(result.status) >= 400) {
       const url = new URL(`https://dummy.local${tmapPath}`)
       const searchKeyword = String(url.searchParams.get('searchKeyword') ?? '')
       if (['음식점', '맛집', '주유소', '휴게소', '주차장', '병원', '초등학교', '유치원', '방지턱'].includes(searchKeyword)) {
@@ -2347,6 +2354,18 @@ app.use('/api/tmap', express.json({ limit: '2mb' }), async (req, res) => {
     res.set('Content-Type', result.rawHeaders['content-type'] || 'application/json')
     res.send(result.body)
   } catch (err) {
+    if (tmapPath.includes('/pois')) {
+      const url = new URL(`https://dummy.local${tmapPath}`)
+      const searchKeyword = String(url.searchParams.get('searchKeyword') ?? '')
+      if (['음식점', '맛집', '주유소', '휴게소', '주차장', '병원', '초등학교', '유치원', '방지턱'].includes(searchKeyword)) {
+        console.warn('[TMAP proxy] broad-category pois error absorbed', {
+          path: tmapPath,
+          searchKeyword,
+          message: err?.message ?? 'unknown',
+        })
+        return res.status(200).json(buildEmptyPoiResponse())
+      }
+    }
     console.error('[TMAP proxy] error:', err.message)
     res.status(502).json({ error: { code: 'PROXY_ERROR', message: err.message } })
   }

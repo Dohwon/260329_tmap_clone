@@ -1700,6 +1700,10 @@ async function fetchPoiSearch(keyword, nearLat, nearLng, searchtypCd = 'A') {
     const errJson = await res.json().catch(() => ({}))
     lastError = new Error(errJson?.error?.errorMessage ?? errJson?.error?.code ?? `HTTP ${res.status}`)
 
+    if (isBroadCategory && [400, 502, 503, 504].includes(res.status)) {
+      return []
+    }
+
     if (res.status !== 400) {
       throw lastError
     }
