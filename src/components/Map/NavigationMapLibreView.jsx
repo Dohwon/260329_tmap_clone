@@ -343,11 +343,11 @@ function buildCurrentMarkerElement() {
 }
 
 function getNavPitch(mode = 'cruise') {
-  if (mode === 'confirm') return 58
-  if (mode === 'decision') return 55
-  if (mode === 'approach') return 50
-  if (mode === 'prepare') return 44
-  return 40
+  if (mode === 'confirm') return 64
+  if (mode === 'decision') return 60
+  if (mode === 'approach') return 55
+  if (mode === 'prepare') return 49
+  return 44
 }
 
 function getNavOffset(cameraState = {}) {
@@ -359,11 +359,11 @@ function getNavOffset(cameraState = {}) {
 function getNorthUpCamera(guidanceLocation, mapZoom = 17.4) {
   return {
     center: [guidanceLocation.lng, guidanceLocation.lat],
-    zoom: Math.max(16.6, Math.min(18.4, Number(mapZoom) || 17.4)),
+    zoom: Math.max(17.2, Math.min(19.2, Number(mapZoom) || 17.8)),
     bearing: 0,
     pitch: 0,
-    offset: [0, 0],
-    duration: 280,
+    offset: [0, -80],
+    duration: 220,
   }
 }
 
@@ -394,11 +394,11 @@ function shouldApplyCamera(lastCamera, nextCamera, thresholdM = 8) {
 
   return (
     movedM >= thresholdM ||
-    zoomDiff >= 0.08 ||
-    pitchDiff >= 1.5 ||
-    bearingDiff >= 3 ||
-    offsetXDiff >= 8 ||
-    offsetYDiff >= 8
+    zoomDiff >= 0.04 ||
+    pitchDiff >= 0.8 ||
+    bearingDiff >= 1.8 ||
+    offsetXDiff >= 4 ||
+    offsetYDiff >= 4
   )
 }
 
@@ -718,13 +718,13 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       })
       ensureLineLayer(map, 'corridor-connector-line', 'corridor-connector', {
         'line-color': '#B8FFE9',
-        'line-width': 7,
-        'line-opacity': 0.64,
+        'line-width': 9,
+        'line-opacity': 0.72,
       })
       ensureLineLayer(map, 'corridor-lane-center-line', 'corridor-lane-center', {
         'line-color': '#E2E8F0',
-        'line-width': 2.2,
-        'line-opacity': 0.34,
+        'line-width': 3,
+        'line-opacity': 0.44,
         'line-dasharray': [1.4, 1.2],
       })
       ensureLineLayer(map, 'drive-history-outline', 'drive-history', {
@@ -749,23 +749,23 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       })
       ensureLineLayer(map, 'guide-mainline-line', 'guide-mainline', {
         'line-color': ['coalesce', ['get', 'guideColor'], '#E5E7EB'],
-        'line-width': 10,
-        'line-opacity': 0.78,
+        'line-width': 12,
+        'line-opacity': 0.84,
       })
       ensureLineLayer(map, 'guide-mainline-dash', 'guide-mainline', {
         'line-color': '#94A3B8',
-        'line-width': 3.5,
-        'line-opacity': 0.7,
+        'line-width': 4,
+        'line-opacity': 0.78,
         'line-dasharray': [1.1, 1.5],
       })
       ensureLineLayer(map, 'guide-route-outline', 'guide-route', {
         'line-color': '#0F172A',
-        'line-width': 17,
-        'line-opacity': 0.4,
+        'line-width': 20,
+        'line-opacity': 0.46,
       })
       ensureLineLayer(map, 'guide-route-line', 'guide-route', {
         'line-color': ['coalesce', ['get', 'guideColor'], COLORS.navigationGuide],
-        'line-width': 13,
+        'line-width': 15,
         'line-opacity': 0.98,
       })
       ensureLineLayer(map, 'focus-route-outline', 'focus-route', {
@@ -785,8 +785,8 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       })
       ensureLineLayer(map, 'active-route-line', 'active-route', {
         'line-color': '#22D3EE',
-        'line-width': 8.5,
-        'line-opacity': 0.92,
+        'line-width': 10,
+        'line-opacity': 0.96,
       })
       ensureCircleLayer(map, 'camera-points-layer', 'camera-points', {
         'circle-radius': 5,

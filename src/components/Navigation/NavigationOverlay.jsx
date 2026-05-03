@@ -1082,7 +1082,7 @@ export default function NavigationOverlay() {
         nearSegmentIndex: s.navigationMatchedSegmentIndex,
         segmentWindow: 220,
       })
-      const distM = s.navigationMatchedLocation ? 0 : progress.distanceToRouteM
+      const distM = progress.distanceToRouteM
       const currentSegment = getCurrentRouteSegment(currentRoute, probeLocation)
       const now = Date.now()
       const prevMotion = offRouteMotionRef.current
