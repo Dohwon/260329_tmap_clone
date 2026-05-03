@@ -61,12 +61,18 @@ const DEFAULT_RUNTIME_CACHE_ROOT = fs.existsSync('/data')
 const TTS_CACHE_DIR = process.env.TTS_CACHE_DIR
   || localEnv.TTS_CACHE_DIR
   || join(DEFAULT_RUNTIME_CACHE_ROOT, 'tts-google')
+const ROAD_ASSET_CACHE_FILE = process.env.ROAD_ASSET_CACHE_FILE
+  || localEnv.ROAD_ASSET_CACHE_FILE
+  || join(DEFAULT_RUNTIME_CACHE_ROOT, 'road-assets.json')
 
 const WGS84 = 'EPSG:4326'
 const KATEC = 'KATEC'
 const ACTUAL_META_CACHE = new Map()
 const ACTUAL_META_CACHE_TTL_MS = 1000 * 60 * 10
 const TMAP_CAMERA_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 24
+const ROAD_CAMERA_ASSET_TTL_MS = 1000 * 60 * 60 * 24 * 30
+const ROAD_RESTSTOP_ASSET_TTL_MS = 1000 * 60 * 60 * 24 * 7
+let ROAD_ASSET_STORE = null
 
 proj4.defs(
   KATEC,
@@ -295,6 +301,65 @@ function writeCachedTtsBuffer(cacheKey, buffer) {
   } catch (error) {
     console.warn('[Google TTS cache] write failed:', error.message)
   }
+}
+
+function ensureRoadAssetStoreLoaded() {
+  if (ROAD_ASSET_STORE) return ROAD_ASSET_STORE
+  try {
+    ensureDirSync(dirname(ROAD_ASSET_CACHE_FILE))
+    if (!fs.existsSync(ROAD_ASSET_CACHE_FILE)) {
+      ROAD_ASSET_STORE = { roads: {} }
+      return ROAD_ASSET_STORE
+    }
+    const parsed = JSON.parse(fs.readFileSync(ROAD_ASSET_CACHE_FILE, 'utf8'))
+    ROAD_ASSET_STORE = parsed && typeof parsed === 'object' && parsed.roads ? parsed : { roads: {} }
+  } catch {
+    ROAD_ASSET_STORE = { roads: {} }
+  }
+  return ROAD_ASSET_STORE
+}
+
+function flushRoadAssetStore() {
+  try {
+    ensureDirSync(dirname(ROAD_ASSET_CACHE_FILE))
+    fs.writeFileSync(ROAD_ASSET_CACHE_FILE, JSON.stringify(ROAD_ASSET_STORE ?? { roads: {} }, null, 2), 'utf8')
+  } catch (error) {
+    console.warn('[road-asset-cache] write failed:', error.message)
+  }
+}
+
+function buildRoadAssetKey(query = {}) {
+  const roadClass = String(query?.roadClass ?? '').trim().toLowerCase()
+  const number = String(query?.number ?? '').trim()
+  const name = normalizeRoadQueryText(query?.name ?? '')
+  return [roadClass || 'any', number || 'no-number', name || 'no-name'].join(':')
+}
+
+function readRoadAssetCacheEntry(query = {}, assetType = 'cameras', ttlMs = ROAD_CAMERA_ASSET_TTL_MS) {
+  const store = ensureRoadAssetStoreLoaded()
+  const roadKey = buildRoadAssetKey(query)
+  const entry = store?.roads?.[roadKey]?.[assetType]
+  if (!entry || !Array.isArray(entry.items)) return null
+  if (Date.now() - Number(entry.savedAt ?? 0) > ttlMs) return null
+  return entry.items
+}
+
+function writeRoadAssetCacheEntry(query = {}, assetType = 'cameras', items = []) {
+  const store = ensureRoadAssetStoreLoaded()
+  const roadKey = buildRoadAssetKey(query)
+  if (!store.roads[roadKey]) {
+    store.roads[roadKey] = {
+      roadClass: String(query?.roadClass ?? '').trim(),
+      number: String(query?.number ?? '').trim(),
+      name: String(query?.name ?? '').trim(),
+    }
+  }
+  store.roads[roadKey][assetType] = {
+    savedAt: Date.now(),
+    items,
+  }
+  flushRoadAssetStore()
+  return items
 }
 
 function summarizeTmapBody(rawBody = null) {
@@ -904,6 +969,13 @@ async function fetchRoadLocalRestStops({ roads = [], polyline = [] } = {}) {
 
   const collected = []
   for (const query of queries) {
+    const persisted = readRoadAssetCacheEntry(query, 'restStops', ROAD_RESTSTOP_ASSET_TTL_MS)
+    if (persisted) {
+      collected.push(...persisted)
+      continue
+    }
+
+    const queryCollected = []
     const keywords = [...new Set([
       query.name ? `${query.name} 휴게소` : '',
       query.name ? `${query.name} 졸음쉼터` : '',
@@ -933,10 +1005,28 @@ async function fetchRoadLocalRestStops({ roads = [], polyline = [] } = {}) {
             rdnmadr: item.address,
             itlpc: item.name,
           }, query))
-        collected.push(...pois)
+        queryCollected.push(...pois)
       } catch {
         // 다음 키워드 계속
       }
+    }
+
+    if (queryCollected.length > 0) {
+      const queryDeduped = queryCollected.filter((item, index, all) =>
+        all.findIndex((other) =>
+          other.id === item.id
+          || (
+            Array.isArray(other.coord)
+            && haversineKm(other.coord[0], other.coord[1], item.coord[0], item.coord[1]) <= 0.12
+          )
+          || (
+            normalizeRoadPoiText(other.name) === normalizeRoadPoiText(item.name)
+            && haversineKm(other.coord[0], other.coord[1], item.coord[0], item.coord[1]) <= 0.3
+          )
+        ) === index
+      )
+      writeRoadAssetCacheEntry(query, 'restStops', queryDeduped.slice(0, 60))
+      collected.push(...queryDeduped)
     }
   }
 
@@ -1030,6 +1120,13 @@ async function fetchPublicMasterCameras({ roads = [], polyline = [] } = {}) {
 
   const collected = []
   for (const query of queries) {
+    const persisted = readRoadAssetCacheEntry(query, 'cameras', ROAD_CAMERA_ASSET_TTL_MS)
+    if (persisted) {
+      collected.push(...persisted)
+      continue
+    }
+
+    const queryCollected = []
     const requestQuery = {
       pageNo: '1',
       numOfRows: '200',
@@ -1051,9 +1148,23 @@ async function fetchPublicMasterCameras({ roads = [], polyline = [] } = {}) {
           return distance != null && distance <= 0.7
         })
 
-      collected.push(...normalized)
+      queryCollected.push(...normalized)
     } catch {
       // 다음 도로 계속
+    }
+
+    if (queryCollected.length > 0) {
+      const queryDeduped = queryCollected.filter((item, index, all) =>
+        all.findIndex((other) =>
+          other.id === item.id
+          || (
+            Array.isArray(other.coord)
+            && haversineKm(other.coord[0], other.coord[1], item.coord[0], item.coord[1]) <= 0.05
+          )
+        ) === index
+      )
+      writeRoadAssetCacheEntry(query, 'cameras', queryDeduped.slice(0, 180))
+      collected.push(...queryDeduped)
     }
   }
 

@@ -282,6 +282,12 @@
   - 즉 정적 master가 비어 있는 민자/국도도 선택 시점에는 실제 후보가 보일 수 있게 됐다.
 
 - actual meta cache key를 `includeRoadsideStops` 기준으로 분리해, 기존 카메라/이벤트 전용 캐시가 휴게소 backfill 결과를 가리는 문제를 막았다.
+- `road-assets.json` 기반 persistent road asset cache를 추가했다.
+  - 경로 요청마다 road-local POI / public camera를 다시 조회하지 않고
+  - 도로 단위로 파일 캐시에 저장한 뒤 TTL 동안 재사용한다.
+  - 현재 TTL:
+    - 카메라 `30일`
+    - 휴게소/졸음쉼터 `7일`
 
 ### 재확인된 병목
 
@@ -301,6 +307,7 @@
   를 `selected road detail`에서 합치는 방식으로 우선 전환했다.
 
 - route search/preview에는 무거운 roadside backfill을 붙이지 않고, 선택 도로 상세에서만 여는 식으로 비용을 격리했다.
+- route-level memory cache만으로는 브라우저 새로고침/서버 재시작 시 재조회가 반복되므로, runtime root(`/data` 또는 `.runtime-cache`)에 파일 캐시를 같이 뒀다.
 
 ### 숨은 리스크
 
