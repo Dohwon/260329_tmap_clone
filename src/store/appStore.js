@@ -1890,9 +1890,13 @@ const useAppStore = create((set, get) => ({
   },
   isLoadingRoutes: false,
   isNavigating: false,
+  navigationMapEngine: 'maplibre',
+  navigationMapReady: false,
   navAutoFollow: false,
   isRefreshingNavigation: false,
   navigationLastRefreshedAt: 0,
+  setNavigationMapEngine: (navigationMapEngine) => set({ navigationMapEngine }),
+  setNavigationMapReady: (navigationMapReady) => set({ navigationMapReady }),
   setNavAutoFollow: (val) => set((state) => (
     state.navAutoFollow === val ? state : { navAutoFollow: val }
   )),
@@ -1952,6 +1956,8 @@ const useAppStore = create((set, get) => ({
         ? Number(routeProgress?.progressKm ?? 0)
         : 0,
       isNavigating: true,
+      navigationMapEngine: 'maplibre',
+      navigationMapReady: false,
       navAutoFollow: true,
       isSearchOverlayOpen: false,
       showRoutePanel: false,
@@ -1987,6 +1993,8 @@ const useAppStore = create((set, get) => ({
     set({
       activeTab: 'home',
       isNavigating: false,
+      navigationMapEngine: 'maplibre',
+      navigationMapReady: false,
       isDriveSimulation: false,
       driveSimulationForcedOffRoute: null,
       navAutoFollow: false,
@@ -2023,6 +2031,8 @@ const useAppStore = create((set, get) => ({
     set({
       activeTab: 'home',
       isNavigating: false,
+      navigationMapEngine: 'maplibre',
+      navigationMapReady: false,
       isDriveSimulation: false,
       driveSimulationForcedOffRoute: null,
       navAutoFollow: false,

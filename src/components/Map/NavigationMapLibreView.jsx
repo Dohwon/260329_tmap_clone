@@ -431,6 +431,8 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     mergeOptions,
     navAutoFollow,
     setNavAutoFollow,
+    setNavigationMapEngine,
+    setNavigationMapReady,
     isNavigating,
     showRoutePanel,
     settings,
@@ -633,6 +635,13 @@ export default function NavigationMapLibreView({ darkMode = false }) {
   ), [activeSegmentPath, corridorData, currentGuidance, driverFocusSegments, guideLineMeta])
 
   useEffect(() => {
+    if (!isNavigating) {
+      setNavigationMapEngine('maplibre')
+      setNavigationMapReady(false)
+    }
+  }, [isNavigating, setNavigationMapEngine, setNavigationMapReady])
+
+  useEffect(() => {
     if (!safeRoute?.id || !Array.isArray(safeRoute?.polyline) || safeRoute.polyline.length < 2) {
       setCorridorData(null)
       return
@@ -683,10 +692,8 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     resizeObserver?.observe(containerRef.current)
     const bootstrapTimer = window.setTimeout(() => {
       if (loadedRef.current) return
-      if (tileProvider === 'maptiler') {
-        setTileProvider('osm')
-      }
-      setMapBootstrapKey((value) => value + 1)
+      setNavigationMapReady(false)
+      setNavigationMapEngine('leaflet')
     }, MAP_BOOTSTRAP_TIMEOUT_MS)
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
@@ -701,15 +708,20 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       )
       if (!message) return
       if (!/403|401|429|maptiler|raster|basemap|failed/i.test(message)) return
-      if (!markMapTileFailure()) return
-      setTileProvider('osm')
-      setMapBootstrapKey((value) => value + 1)
+      if (tileProvider === 'maptiler' && markMapTileFailure()) {
+        setTileProvider('osm')
+        return
+      }
+      setNavigationMapReady(false)
+      setNavigationMapEngine('leaflet')
     })
 
     map.on('load', () => {
       loadedRef.current = true
       window.clearTimeout(bootstrapTimer)
       if (tileProvider === 'maptiler') markMapTileSuccess()
+      setNavigationMapEngine('maplibre')
+      setNavigationMapReady(true)
       map.resize()
       window.requestAnimationFrame(() => {
         try {
@@ -886,10 +898,11 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       currentMarkerRef.current?.remove()
       currentMarkerRef.current = null
       loadedRef.current = false
+      setNavigationMapReady(false)
       map.remove()
       mapRef.current = null
     }
-  }, [mapBootstrapKey, tileProvider, tileUrl])
+  }, [mapBootstrapKey, setNavigationMapEngine, setNavigationMapReady, tileProvider, tileUrl])
 
   useEffect(() => {
     if (!isNavigating) {
@@ -1065,22 +1078,17 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     })
   }, [isNavigating, mapCenter, mapZoom])
 
-  if (!safeRoute && isNavigating) {
-    return (
-      <div className="absolute inset-0 bg-[#D8E4DE] flex items-center justify-center">
-        <div className="rounded-3xl bg-white/95 shadow-xl border border-gray-200 px-5 py-4 text-center max-w-xs">
-          <div className="text-sm font-bold text-red-500">안내 경로 복구 중</div>
-          <div className="text-xs text-gray-600 mt-2">
-            유효한 경로를 다시 확인하고 있습니다. 잠시 후 미리보기로 복귀합니다.
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="absolute inset-0">
       <div ref={containerRef} className="absolute inset-0" />
+      {!safeRoute && isNavigating && (
+        <div className="absolute left-4 top-4 z-30 rounded-2xl bg-white/94 border border-amber-200 px-3 py-2 shadow-lg">
+          <div className="text-[11px] font-black text-amber-700">안내 경로 복구 중</div>
+          <div className="mt-0.5 text-[10px] text-slate-600">
+            지도를 유지한 채 경로를 다시 맞추고 있습니다.
+          </div>
+        </div>
+      )}
       {shouldShowRecenterButton && (
         <button
           onClick={() => {

@@ -1,11 +1,10 @@
-import React, { Suspense, lazy, useEffect, useMemo, useRef } from 'react'
+import React, { useEffect, useMemo, useRef } from 'react'
 import { CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import useAppStore from '../../store/appStore'
 import { HIGHWAYS } from '../../data/highwayData'
 import { buildRemainingRoutePolyline, getCurrentRouteSegment, getGuidancePriority, getNavigationCameraState, getUpcomingGuidanceList, shouldUseRawRoutePolyline } from '../../utils/navigationLogic'
-
-const NavigationMapLibreView = lazy(() => import('./NavigationMapLibreView'))
+import NavigationMapLibreView from './NavigationMapLibreView'
 
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -1351,15 +1350,13 @@ function LeafletMapView({ darkMode = false }) {
 
 export default function MapView({ darkMode = false }) {
   const isNavigating = useAppStore((s) => s.isNavigating)
+  const navigationMapEngine = useAppStore((s) => s.navigationMapEngine)
   const routes = useAppStore((s) => s.routes)
   const selectedRouteId = useAppStore((s) => s.selectedRouteId)
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
   const shouldUseMapLibre = isNavigating || Boolean(selectedRoute)
+  const shouldUseLeafletFallback = isNavigating && navigationMapEngine === 'leaflet'
   return shouldUseMapLibre
-    ? (
-      <Suspense fallback={<div className="absolute inset-0 bg-[#D8E4DE]" />}>
-        <NavigationMapLibreView darkMode={darkMode} />
-      </Suspense>
-    )
+    ? (shouldUseLeafletFallback ? <LeafletMapView darkMode={darkMode} /> : <NavigationMapLibreView darkMode={darkMode} />)
     : <LeafletMapView darkMode={darkMode} />
 }
