@@ -948,7 +948,9 @@ function buildRoadDescriptorsFromRoute(route = {}) {
 
 function buildRouteActualMetaKey(route = {}) {
   return JSON.stringify({
+    version: route?.includeRoadsideStops ? 'roadside-v1' : 'base-v1',
     routeId: route?.id ?? 'route',
+    includeRoadsideStops: Boolean(route?.includeRoadsideStops),
     roads: buildRoadDescriptorsFromRoute(route),
     polyline: samplePolyline(route?.polyline ?? [], 48),
   })
@@ -1026,6 +1028,7 @@ async function fetchRouteActualMetaBatch(routes = []) {
         routeId: route.id,
         roads: buildRoadDescriptorsFromRoute(route),
         polyline: samplePolyline(route.polyline ?? [], 180),
+        includeRoadsideStops: Boolean(route?.includeRoadsideStops),
       })),
     }),
   })
@@ -1138,6 +1141,7 @@ export async function fetchRoadActualMetaForRoad(road) {
     id: `road-${road.id}`,
     polyline: path,
     segmentStats: [{ name: road.name, roadNo: road.number, roadName: road.name }],
+    includeRoadsideStops: true,
   }])
 
   return metaMap.get(`road-${road.id}`) ?? null

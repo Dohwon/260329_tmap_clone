@@ -258,6 +258,60 @@
 ### 다음 액션
 
 1. `searchNearbyPOIs`를 category별 lazy 전략으로 더 쪼개기
+
+## 2026-05-04
+
+### 실제 반영 포인트
+
+- selected road detail 기준 전국 road master 체감을 올리기 위해 `static + runtime backfill` 혼합 구조를 추가했다.
+  - `server.js`
+  - `src/services/tmapService.js`
+  - `src/store/appStore.js`
+
+- `buildRoadActualMeta()`가 이제 카메라/ITS 이벤트뿐 아니라 `휴게소`, `졸음쉼터`까지 함께 보강할 수 있다.
+  - 단, 이 보강은 모든 route 요청에 항상 붙지 않고 `selected road detail` 경로에서만 `includeRoadsideStops: true`로 열리도록 분리했다.
+
+- 휴게소/졸음쉼터는 broad category 검색이 아니라 `도로명 + 휴게소/졸음쉼터/쉼터` 키워드 기반 road-local POI backfill로 전환했다.
+  - `TMAP /pois`
+  - route polyline 인접도
+  - road name/road number 매칭
+  - 중복 좌표/유사 명칭 dedupe
+  를 같이 적용한다.
+
+- selected road detail은 static road master만 보지 않고, runtime actual meta의 `restStops`를 static `restStops`와 병합해 보여주도록 바꿨다.
+  - 즉 정적 master가 비어 있는 민자/국도도 선택 시점에는 실제 후보가 보일 수 있게 됐다.
+
+- actual meta cache key를 `includeRoadsideStops` 기준으로 분리해, 기존 카메라/이벤트 전용 캐시가 휴게소 backfill 결과를 가리는 문제를 막았다.
+
+### 재확인된 병목
+
+- 전국 정적 master 자체가 완성된 것은 아니다.
+  - 지금은 `selected road detail`에서만 runtime backfill을 써서 체감을 끌어올린 상태다.
+
+- `npm run smoke:dev` 기준 `road actual meta`, `road events nearby`는 여전히 timeout 경고가 남는다.
+  - 기능이 죽은 것은 아니고 dev 공공/ITS 응답 예산이 길다.
+
+### 해결 방식
+
+- 전국 static 파일을 한 번에 채우려 하지 않고,
+  - static road master
+  - public camera master
+  - ITS live event
+  - TMAP road-local POI
+  를 `selected road detail`에서 합치는 방식으로 우선 전환했다.
+
+- route search/preview에는 무거운 roadside backfill을 붙이지 않고, 선택 도로 상세에서만 여는 식으로 비용을 격리했다.
+
+### 숨은 리스크
+
+- road-local POI는 `실제 road 운영 master`가 아니라 검색 기반이라, 일부 국도/민자 노선에서는 과소/과대매칭 가능성이 남아 있다.
+- long route smoke는 여전히 `actual-meta/events latency`를 드러내며, 이건 다음 단계에서 timeout 예산과 cache 전략을 더 줄여야 한다.
+
+### 다음 액션
+
+1. `actual-meta/events` timeout을 줄이기 위한 road count / query budget 최적화
+2. 한국도로공사/민자 원본 기준 static rest stop / drowsy coverage를 계속 채우기
+3. selected road detail에서 backfill source 표시와 freshness 표시를 추가 검토
 2. `quota safe mode`를 붙여 enrichment를 단계적으로 꺼지게 만들기
 3. NGII 최소 레이어 확보 후 corridor fallback을 실제 geometry로 교체하기
 

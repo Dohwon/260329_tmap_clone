@@ -792,6 +792,7 @@ function buildRoadQueryCandidates(roads = []) {
       name: String(road?.name ?? '').trim(),
       number: String(road?.number ?? '').trim(),
       roadClass: String(road?.roadClass ?? '').trim(),
+      aliases: Array.isArray(road?.aliases) ? road.aliases.map((alias) => String(alias ?? '').trim()).filter(Boolean) : [],
     }))
     .filter((road) => road.name || road.number)
 
@@ -812,10 +813,154 @@ function matchesRoadQuery(item = {}, query = {}) {
     item.message,
   ].filter(Boolean).join(' '))
   const routeName = normalizeRoadQueryText(query?.name)
+  const routeAliases = Array.isArray(query?.aliases)
+    ? query.aliases.map((alias) => normalizeRoadQueryText(alias)).filter(Boolean)
+    : []
   const routeNumber = String(query?.number ?? '').trim()
   if (routeName && haystack.includes(routeName)) return true
+  if (routeAliases.some((alias) => haystack.includes(alias))) return true
   if (routeNumber && String(item?.roadRouteNo ?? item?.roadNo ?? '').trim() === routeNumber) return true
   return !routeName && !routeNumber
+}
+
+function extractTmapPoiItems(parsed = null) {
+  const poiRoot = parsed?.searchPoiInfo?.pois?.poi ?? null
+  if (Array.isArray(poiRoot)) return poiRoot
+  if (poiRoot && typeof poiRoot === 'object') {
+    return Object.values(poiRoot).filter((item) => item && typeof item === 'object')
+  }
+  return []
+}
+
+function normalizeRoadPoiText(value = '') {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[()\[\]\s\-_/.,]/g, '')
+}
+
+function estimateKmOnPolyline(lat, lng, polyline = []) {
+  const normalized = normalizePolyline(polyline)
+  if (normalized.length === 0) return null
+  let bestDistance = Infinity
+  let bestProgressKm = 0
+  let cumulativeKm = 0
+  for (let index = 0; index < normalized.length; index += 1) {
+    const point = normalized[index]
+    const distance = haversineKm(lat, lng, point[0], point[1])
+    if (distance < bestDistance) {
+      bestDistance = distance
+      bestProgressKm = cumulativeKm
+    }
+    if (index < normalized.length - 1) {
+      const next = normalized[index + 1]
+      cumulativeKm += haversineKm(point[0], point[1], next[0], next[1])
+    }
+  }
+  return Number(bestProgressKm.toFixed(1))
+}
+
+function normalizeTmapRoadPoiItem(item = {}, polyline = [], query = {}) {
+  const lat = Number(item.frontLat ?? item.noorLat ?? item.lat)
+  const lng = Number(item.frontLon ?? item.noorLon ?? item.lon ?? item.lng)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+
+  const roadAddress = [item.roadName, item.firstBuildNo, item.secondBuildNo].filter(Boolean).join(' ')
+  const jibunAddress = [item.upperAddrName, item.middleAddrName, item.lowerAddrName, item.legalDong, item.ri, item.firstNo, item.secondNo]
+    .filter(Boolean)
+    .join(' ')
+  const address = [roadAddress, jibunAddress, item.detailAddrName, item.address].filter(Boolean).join(' ').trim()
+  const name = String(item.name ?? '').trim()
+  const typeText = `${name} ${address} ${item.upperBizName ?? ''} ${item.middleBizName ?? ''} ${item.lowerBizName ?? ''}`
+  const compactTypeText = normalizeRoadPoiText(typeText)
+  if (!/(휴게소|졸음쉼터|쉼터|하이쉼마루)/.test(compactTypeText)) return null
+
+  return {
+    id: item.id ?? item.poiid ?? `road-poi-${lat}-${lng}-${name || 'stop'}`,
+    name,
+    address,
+    coord: [lat, lng],
+    km: estimateKmOnPolyline(lat, lng, polyline),
+    type: /(졸음|쉼터|하이쉼마루)/.test(compactTypeText) ? 'drowsy' : 'service',
+    roadName: query?.name ?? item.roadName ?? '',
+    roadNo: query?.number ?? '',
+    source: 'tmap-road-poi',
+  }
+}
+
+async function fetchRoadLocalRestStops({ roads = [], polyline = [] } = {}) {
+  if (!TMAP_KEY) return []
+
+  const queries = buildRoadQueryCandidates(roads)
+  const normalizedPolyline = samplePolyline(normalizePolyline(polyline), 180)
+  if (queries.length === 0 || normalizedPolyline.length < 2) return []
+
+  const cacheKey = JSON.stringify({
+    type: 'road-local-rest-stops',
+    roads: queries.map((query) => `${query.name}:${query.number}:${query.roadClass}`),
+    polyline: normalizedPolyline.slice(0, 40),
+  })
+  const cached = getRuntimeCache(cacheKey, 1000 * 60 * 30)
+  if (cached) return cached
+
+  const collected = []
+  for (const query of queries) {
+    const keywords = [...new Set([
+      query.name ? `${query.name} 휴게소` : '',
+      query.name ? `${query.name} 졸음쉼터` : '',
+      query.roadClass === 'national' && query.name ? `${query.name} 쉼터` : '',
+    ].filter(Boolean))]
+
+    for (const keyword of keywords) {
+      try {
+        const encodedKeyword = encodeURIComponent(keyword)
+        const response = await tmapFetch(
+          `/tmap/pois?version=1&searchKeyword=${encodedKeyword}&searchType=all&page=1&count=20&reqCoordType=WGS84GEO&resCoordType=WGS84GEO&multiPoint=N&poiGroupYn=N`,
+          'GET',
+          { origin: 'https://road-master.local', referer: 'https://road-master.local/' },
+          null
+        )
+        if (Number(response.status) !== 200) continue
+        const parsed = parseJsonBuffer(response.body)
+        const pois = extractTmapPoiItems(parsed)
+          .map((item) => normalizeTmapRoadPoiItem(item, normalizedPolyline, query))
+          .filter(Boolean)
+          .filter((item) => {
+            const distance = distanceKmToPolyline(item.coord[0], item.coord[1], normalizedPolyline)
+            return distance != null && distance <= 2.2
+          })
+          .filter((item) => matchesRoadQuery({
+            roadName: item.roadName,
+            rdnmadr: item.address,
+            itlpc: item.name,
+          }, query))
+        collected.push(...pois)
+      } catch {
+        // 다음 키워드 계속
+      }
+    }
+  }
+
+  const deduped = collected
+    .filter((item, index, all) =>
+      all.findIndex((other) =>
+        other.id === item.id
+        || (
+          Array.isArray(other.coord)
+          && haversineKm(other.coord[0], other.coord[1], item.coord[0], item.coord[1]) <= 0.12
+        )
+        || (
+          normalizeRoadPoiText(other.name) === normalizeRoadPoiText(item.name)
+          && haversineKm(other.coord[0], other.coord[1], item.coord[0], item.coord[1]) <= 0.3
+        )
+      ) === index
+    )
+    .sort((a, b) => {
+      const kmDiff = Number(a.km ?? Infinity) - Number(b.km ?? Infinity)
+      if (kmDiff !== 0) return kmDiff
+      return normalizeRoadPoiText(a.name).localeCompare(normalizeRoadPoiText(b.name))
+    })
+
+  return setRuntimeCache(cacheKey, deduped.slice(0, 60))
 }
 
 function normalizePublicCameraItem(item = {}) {
@@ -955,7 +1100,7 @@ async function fetchItsRoadEvents({ bounds = null, roads = [] } = {}) {
   }
 }
 
-async function buildRoadActualMeta({ roads = [], polyline = [], nearbyCenter = null, nearbyRadiusKm = 8 } = {}) {
+async function buildRoadActualMeta({ roads = [], polyline = [], nearbyCenter = null, nearbyRadiusKm = 8, includeRoadsideStops = false } = {}) {
   const normalizedPolyline = samplePolyline(normalizePolyline(polyline), 220)
   const bounds = normalizedPolyline.length > 0
     ? getPolylineBounds(normalizedPolyline, 0.08)
@@ -963,11 +1108,14 @@ async function buildRoadActualMeta({ roads = [], polyline = [], nearbyCenter = n
       ? buildNearbyBounds(nearbyCenter.lat, nearbyCenter.lng, nearbyRadiusKm)
       : null)
 
-  const [cameras, events] = await Promise.all([
+  const [cameras, events, restStops] = await Promise.all([
     normalizedPolyline.length > 1
       ? fetchPublicMasterCameras({ roads, polyline: normalizedPolyline })
       : Promise.resolve([]),
     fetchItsRoadEvents({ bounds, roads }),
+    includeRoadsideStops && normalizedPolyline.length > 1
+      ? fetchRoadLocalRestStops({ roads, polyline: normalizedPolyline })
+      : Promise.resolve([]),
   ])
 
   const filteredEvents = events.filter((event) => {
@@ -983,9 +1131,11 @@ async function buildRoadActualMeta({ roads = [], polyline = [], nearbyCenter = n
 
   return {
     cameras,
+    restStops,
     events: filteredEvents.slice(0, 40),
     coverage: {
       cameraSource: MEDICAL_DATA_KEY ? 'public-master' : 'unavailable',
+      restStopSource: includeRoadsideStops && TMAP_KEY ? 'tmap-road-poi' : 'unavailable',
       eventSource: ITS_KEY ? 'its-live' : 'unavailable',
       cameraTtlHours: TMAP_CAMERA_CACHE_MAX_AGE_MS / (1000 * 60 * 60),
     },
@@ -1774,10 +1924,15 @@ app.post('/api/road/actual-meta', express.json({ limit: '1mb' }), async (req, re
     const items = await Promise.all(routes.map(async (route) => {
       const polyline = normalizePolyline(route?.polyline)
       const roads = Array.isArray(route?.roads) ? route.roads.slice(0, 6) : []
-      const meta = await buildRoadActualMeta({ roads, polyline })
+      const meta = await buildRoadActualMeta({
+        roads,
+        polyline,
+        includeRoadsideStops: Boolean(route?.includeRoadsideStops),
+      })
       return {
         routeId: route?.routeId ?? null,
         cameras: meta.cameras,
+        restStops: meta.restStops,
         events: meta.events,
         coverage: meta.coverage,
       }

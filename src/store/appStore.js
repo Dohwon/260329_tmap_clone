@@ -76,6 +76,10 @@ function writeStorage(key, value) {
   }
 }
 
+function normalizeSearchText(value = '') {
+  return String(value ?? '').toLowerCase().replace(/[\s\-_/.,]/g, '')
+}
+
 function sanitizeFavorites(favorites) {
   return (favorites ?? DEFAULT_FAVORITES).map((favorite) => (
     LEGACY_FAVORITE_ADDRESSES.has(favorite.address)
@@ -787,6 +791,45 @@ function mergeRoadActualCameras(baseCameras = [], actualCameras = []) {
   }
 
   return merged
+}
+
+function mergeRoadActualRestStops(baseStops = [], actualStops = []) {
+  const merged = [...(baseStops ?? [])]
+
+  for (const stop of actualStops ?? []) {
+    const coord = normalizeCoordPair(stop?.coord)
+    if (!coord) continue
+    const normalizedStop = {
+      id: stop?.id ?? `actual-stop-${coord[0]}-${coord[1]}`,
+      name: stop?.name ?? '휴게소',
+      coord,
+      type: stop?.type === 'drowsy' ? 'drowsy' : 'service',
+      km: Number.isFinite(Number(stop?.km)) ? Number(stop.km) : null,
+      address: stop?.address ?? null,
+      source: stop?.source ?? 'tmap-road-poi',
+    }
+
+    const duplicated = merged.some((existing) =>
+      existing?.id === normalizedStop.id
+      || (
+        Array.isArray(existing?.coord)
+        && haversineKm(existing.coord[0], existing.coord[1], normalizedStop.coord[0], normalizedStop.coord[1]) <= 0.12
+      )
+      || (
+        normalizeSearchText(existing?.name) === normalizeSearchText(normalizedStop.name)
+        && Array.isArray(existing?.coord)
+        && haversineKm(existing.coord[0], existing.coord[1], normalizedStop.coord[0], normalizedStop.coord[1]) <= 0.3
+      )
+    )
+    if (duplicated) continue
+    merged.push(normalizedStop)
+  }
+
+  return merged.sort((a, b) => {
+    const kmDiff = Number(a?.km ?? Infinity) - Number(b?.km ?? Infinity)
+    if (kmDiff !== 0) return kmDiff
+    return normalizeSearchText(a?.name).localeCompare(normalizeSearchText(b?.name))
+  })
 }
 
 function buildRoadRestStops(road) {
@@ -2856,9 +2899,13 @@ const useAppStore = create((set, get) => ({
     if (!selectedRoad) return null
     const actualMeta = get().roadActualMetaById[selectedRoad.id] ?? null
     const staticCameras = buildRoadCameras(selectedRoad)
+    const staticRestStops = buildRoadRestStops(selectedRoad)
     const mergedCameras = actualMeta?.cameras?.length > 0
       ? mergeRoadActualCameras(staticCameras, actualMeta.cameras)
       : staticCameras
+    const mergedRestStops = actualMeta?.restStops?.length > 0
+      ? mergeRoadActualRestStops(staticRestStops, actualMeta.restStops)
+      : staticRestStops
     return {
       ...selectedRoad,
       startAddress: selectedRoad.startAddress ?? selectedRoad.startName,
@@ -2869,7 +2916,7 @@ const useAppStore = create((set, get) => ({
       mainlineAnchors: selectedRoad.mainlineAnchors ?? [],
       cameras: mergedCameras,
       congestionSegments: buildRoadSegments(selectedRoad),
-      restStops: buildRoadRestStops(selectedRoad),
+      restStops: mergedRestStops,
       actualEvents: actualMeta?.events ?? [],
       actualCoverage: actualMeta?.coverage ?? null,
       summary: buildRoadSummary(selectedRoad),
