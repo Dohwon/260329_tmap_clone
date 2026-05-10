@@ -1208,7 +1208,7 @@ export default function NavigationOverlay() {
   const isHighwayStyleGuidance = Boolean(
     nextGuidance && isHighwayGuidance(nextGuidance)
   )
-  const laneSource = nextGuidance ?? nextMergeOpt ?? null
+  const laneSource = nextGuidance ?? null
   const showGuidanceInset = shouldShowGuidanceInset(nextGuidance)
 
   useEffect(() => {
@@ -1446,10 +1446,8 @@ export default function NavigationOverlay() {
     setIsRouteSheetCollapsed((prev) => !prev)
   }
 
-  const routeSheetPeekTitle = nextMergeOpt?.name ?? '현재 경로 유지'
-  const routeSheetPeekMeta = nextMergeOpt
-    ? `${Number(nextMergeOpt.remainingDistanceKm ?? nextMergeOpt.distanceFromCurrent).toFixed(2)}km 앞`
-    : `${routeProgress.remainingKm != null ? Number(routeProgress.remainingKm).toFixed(2) : '--'}km 남음`
+  const routeSheetPeekTitle = destination?.name ?? '현재 경로 유지'
+  const routeSheetPeekMeta = `${routeProgress.remainingKm != null ? Number(routeProgress.remainingKm).toFixed(2) : '--'}km 남음`
   const nextRouteFuel = upcomingFuelContext?.nextRouteFuel ?? null
   const nextRestFuelStop = upcomingFuelContext?.nextRestFuelStops?.[0] ?? null
 
@@ -1699,46 +1697,6 @@ export default function NavigationOverlay() {
               </div>
             )}
           </div>
-          <button
-            className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 active:bg-gray-100"
-            onClick={handleOpenMerge}
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="text-base flex-shrink-0">🔀</span>
-              <div className="text-left min-w-0">
-                <div className="text-xs text-gray-500 leading-tight">다음 분기점</div>
-                {nextMergeOpt ? (
-                  <div className="text-sm font-bold text-gray-900 truncate">
-                    {nextMergeOpt.name}
-                    <span className="text-xs font-normal text-gray-500 ml-1">
-                      ({Number(nextMergeOpt.remainingDistanceKm ?? nextMergeOpt.distanceFromCurrent).toFixed(2)}km 앞)
-                    </span>
-                  </div>
-                ) : (
-                  <div className="text-sm font-bold text-gray-500">분기점 없음</div>
-                )}
-              </div>
-            </div>
-            <div className="flex items-center gap-1 flex-shrink-0 ml-2">
-              {nextMergeOpt && (
-                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${nextMergeOpt.afterRoadType === 'highway' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
-                  {nextMergeOpt.afterRoadType === 'highway' ? '고속' : '국도'}
-                </span>
-              )}
-              <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/>
-              </svg>
-            </div>
-          </button>
-
-          {liveMergeOptions.length > 0 && (
-            <div ref={segmentRef} onWheel={handleWheelScroll} className="flex overflow-x-auto no-scrollbar px-4 py-3 gap-2 snap-x">
-              {liveMergeOptions.slice(0, 4).map((opt) => (
-                <JunctionChip key={opt.id} opt={opt} onSelect={handleOpenMerge} />
-              ))}
-            </div>
-          )}
-
           <div className="flex items-center gap-4 px-4 pb-3">
             {nextCameraInfo && (
               <div className="flex items-center gap-1.5">

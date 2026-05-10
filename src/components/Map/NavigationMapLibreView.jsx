@@ -509,10 +509,8 @@ export default function NavigationMapLibreView({ darkMode = false }) {
 
   const historyCollection = useMemo(() => ({
     type: 'FeatureCollection',
-    features: drivePathHistory.length > 1
-      ? [buildLineFeature('drive-history', drivePathHistory, { color: COLORS.passedRoute })].filter(Boolean)
-      : [],
-  }), [drivePathHistory])
+    features: [],
+  }), [])
 
   const cameraCollection = useMemo(() => ({
     type: 'FeatureCollection',
@@ -810,19 +808,6 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       })
     })
 
-    map.on('dragstart', () => {
-      if (!isNavigating || suppressInteractionRef.current) return
-      if (manualRestoreTimerRef.current) window.clearTimeout(manualRestoreTimerRef.current)
-      setCameraMode('manual')
-      if (useAppStore.getState().navAutoFollow) setNavAutoFollow(false)
-    })
-    map.on('zoomstart', () => {
-      if (!isNavigating || suppressInteractionRef.current) return
-      if (manualRestoreTimerRef.current) window.clearTimeout(manualRestoreTimerRef.current)
-      setCameraMode('manual')
-      if (useAppStore.getState().navAutoFollow) setNavAutoFollow(false)
-    })
-
     const markerEl = buildCurrentMarkerElement()
     currentMarkerRef.current = new maplibregl.Marker({ element: markerEl, anchor: 'center' })
       .setLngLat(Array.isArray(mapCenter) ? [mapCenter[1], mapCenter[0]] : [126.978, 37.5665])
@@ -856,23 +841,8 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       return
     }
     if (manualRestoreTimerRef.current) window.clearTimeout(manualRestoreTimerRef.current)
-    const restoreDelayMs = getNavigationCameraRestoreDelay({
-      cameraMode,
-      isNavigating,
-      navAutoFollow,
-      showRoutePanel,
-      manualDelayMs: MANUAL_RECENTER_DELAY_MS,
-      northUpDelayMs: NORTH_UP_RESTORE_DELAY_MS,
-    })
-    if (restoreDelayMs != null) {
-      manualRestoreTimerRef.current = window.setTimeout(() => {
-        setCameraMode('nav')
-        setNavAutoFollow(true)
-      }, restoreDelayMs)
-    }
-    return () => {
-      if (manualRestoreTimerRef.current) window.clearTimeout(manualRestoreTimerRef.current)
-    }
+    if (cameraMode !== 'nav') setCameraMode('nav')
+    if (!navAutoFollow) setNavAutoFollow(true)
   }, [cameraMode, isNavigating, navAutoFollow, setNavAutoFollow, showRoutePanel])
 
   useEffect(() => {

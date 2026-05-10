@@ -1418,17 +1418,6 @@ export function getUpcomingGuidanceList(route, userLocation, mergeOptions = [], 
     }))
     .filter((junction) => junction.remainingDistanceKm > 0.01)
 
-  const mergeCandidates = (mergeOptions ?? [])
-    .map((option) => ({
-      ...option,
-      source: 'merge',
-      turnType: option.afterRoadType === 'highway' ? 17 : 19,
-      instructionText: `${option.name}에서 ${option.afterRoadName ?? (option.afterRoadType === 'highway' ? '고속도로' : '국도')} 방향`,
-      laneHint: option.afterRoadType === 'highway' ? '우측 차로 준비' : '진행 방향 차로 준비',
-      remainingDistanceKm: Math.max(0, (option.distanceFromCurrent ?? 0) - progress.progressKm),
-    }))
-    .filter((option) => option.remainingDistanceKm > 0.01 && !option.isCurrent)
-
   const syntheticCandidates = buildSyntheticGuidanceCandidates(route, userLocation, progress)
     .filter((candidate) => {
       if (!highwayContext) return true
@@ -1439,7 +1428,6 @@ export function getUpcomingGuidanceList(route, userLocation, mergeOptions = [], 
     ...maneuverCandidates,
     ...syntheticCandidates,
     ...junctionCandidates,
-    ...mergeCandidates,
   ]).slice(0, limit)
 }
 
