@@ -33,32 +33,8 @@ const COLORS = {
 
 const MANUAL_RECENTER_DELAY_MS = 6000
 const NORTH_UP_RESTORE_DELAY_MS = 250
-const MAPTILER_SAFE_MODE_TTL_MS = 1000 * 60 * 3
-const MAPTILER_SAFE_MODE_FAILURES = 2
 const MAP_BOOTSTRAP_TIMEOUT_MS = 2500
-const mapTileSafeModeState = {
-  failures: 0,
-  blockedUntil: 0,
-}
-
-function isMapTileSafeModeOpen() {
-  return Date.now() < Number(mapTileSafeModeState.blockedUntil ?? 0)
-}
-
-function markMapTileFailure() {
-  mapTileSafeModeState.failures += 1
-  if (mapTileSafeModeState.failures >= MAPTILER_SAFE_MODE_FAILURES) {
-    mapTileSafeModeState.blockedUntil = Date.now() + MAPTILER_SAFE_MODE_TTL_MS
-    mapTileSafeModeState.failures = 0
-    return true
-  }
-  return false
-}
-
-function markMapTileSuccess() {
-  mapTileSafeModeState.failures = 0
-  mapTileSafeModeState.blockedUntil = 0
-}
+const NAV_RASTER_TILE_URL = 'https://tiles.osm.kr/hot/{z}/{x}/{y}.png'
 
 function getBearingDeg(fromLat, fromLng, toLat, toLng) {
   const fromLatRad = (fromLat * Math.PI) / 180
@@ -364,7 +340,7 @@ function getNorthUpCamera(guidanceLocation, mapZoom = 17.4) {
     bearing: 0,
     pitch: 0,
     offset: [0, -80],
-    duration: 220,
+    duration: 600,
   }
 }
 
@@ -520,19 +496,8 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     [navigationProgressKm]
   )
 
-  const maptilerKey = import.meta.env.VITE_MAPTILER_KEY
-  const [tileProvider, setTileProvider] = useState(() => (maptilerKey && !isMapTileSafeModeOpen()) ? 'maptiler' : 'osm')
   const [mapBootstrapKey, setMapBootstrapKey] = useState(0)
-  const tileQuery = maptilerKey ? new URLSearchParams({ key: maptilerKey }).toString() : ''
-  const tileUrl = tileProvider === 'maptiler' && maptilerKey
-    ? `https://api.maptiler.com/maps/streets-v4-pastel/{z}/{x}/{y}.png?${tileQuery}`
-    : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
-
-  useEffect(() => {
-    if (!maptilerKey || isMapTileSafeModeOpen()) {
-      setTileProvider('osm')
-    }
-  }, [maptilerKey])
+  const tileUrl = NAV_RASTER_TILE_URL
 
   const routeCollection = useMemo(() => ({
     type: 'FeatureCollection',
@@ -698,28 +663,9 @@ export default function NavigationMapLibreView({ darkMode = false }) {
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
 
-    map.on('error', (event) => {
-      if (tileProvider !== 'maptiler') return
-      const message = String(
-        event?.error?.message ??
-        event?.sourceId ??
-        event?.tile?.state ??
-        ''
-      )
-      if (!message) return
-      if (!/403|401|429|maptiler|raster|basemap|failed/i.test(message)) return
-      if (tileProvider === 'maptiler' && markMapTileFailure()) {
-        setTileProvider('osm')
-        return
-      }
-      setNavigationMapReady(false)
-      setNavigationMapEngine('leaflet')
-    })
-
     map.on('load', () => {
       loadedRef.current = true
       window.clearTimeout(bootstrapTimer)
-      if (tileProvider === 'maptiler') markMapTileSuccess()
       setNavigationMapEngine('maplibre')
       setNavigationMapReady(true)
       map.resize()
@@ -728,6 +674,18 @@ export default function NavigationMapLibreView({ darkMode = false }) {
           map.resize()
         } catch {
           // noop
+        }
+        // 내비 중 지도가 로드됐을 때 즉시 운전자 시점 적용 (GPS 유무 무관)
+        const s = useAppStore.getState()
+        if (s.isNavigating && s.navAutoFollow && !s.showRoutePanel) {
+          const loc = s.navigationMatchedLocation ?? s.userLocation
+          const routeStart = s.driveRouteSnapshot?.polyline?.[0]
+          const center = loc
+            ? [loc.lng, loc.lat]
+            : (routeStart ? [routeStart[1], routeStart[0]] : null)
+          if (center) {
+            map.jumpTo({ center, zoom: 22.1, pitch: 44, bearing: 0 })
+          }
         }
       })
       upsertGeoJsonSource(map, 'remaining-route', routeCollection)
@@ -865,8 +823,13 @@ export default function NavigationMapLibreView({ darkMode = false }) {
         map.setPaintProperty('basemap', 'raster-saturation', -0.35)
         map.setPaintProperty('basemap', 'raster-brightness-max', 0.82)
       } else if (settings.navigationMinimalMap) {
-        map.setPaintProperty('basemap', 'raster-saturation', -0.72)
-        map.setPaintProperty('basemap', 'raster-brightness-max', 0.92)
+        map.setPaintProperty('basemap', 'raster-saturation', -0.35)
+        map.setPaintProperty('basemap', 'raster-brightness-max', 0.98)
+        map.setPaintProperty('basemap', 'raster-contrast', 1.08)
+      } else {
+        map.setPaintProperty('basemap', 'raster-saturation', -0.08)
+        map.setPaintProperty('basemap', 'raster-brightness-max', 1)
+        map.setPaintProperty('basemap', 'raster-contrast', 1.04)
       }
     })
 
@@ -902,7 +865,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       map.remove()
       mapRef.current = null
     }
-  }, [mapBootstrapKey, setNavigationMapEngine, setNavigationMapReady, tileProvider, tileUrl])
+  }, [mapBootstrapKey, setNavigationMapEngine, setNavigationMapReady, tileUrl])
 
   useEffect(() => {
     if (!isNavigating) {
@@ -1006,7 +969,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     )
     const previousHeading = smoothedHeadingRef.current
     const headingDelta = getHeadingDelta(nextHeading, previousHeading)
-    const smoothing = Math.abs(headingDelta) >= 30 ? 0.94 : 0.82
+    const smoothing = Math.abs(headingDelta) >= 40 ? 0.6 : 0.3
     const smoothedHeading = previousHeading + (headingDelta * smoothing)
     smoothedHeadingRef.current = smoothedHeading
 
@@ -1026,7 +989,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
           bearing: smoothedHeading,
           pitch: getNavPitch(cameraState.mode),
           offset: getNavOffset(cameraState),
-          duration: Math.max(180, Math.round(Number(cameraState.viewDuration ?? 0.28) * 1000)),
+          duration: 900,
         }
 
     const thresholdM = effectiveCameraMode === 'north-up'
