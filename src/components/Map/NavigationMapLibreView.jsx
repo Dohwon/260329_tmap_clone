@@ -34,8 +34,7 @@ const COLORS = {
 const MANUAL_RECENTER_DELAY_MS = 6000
 const NORTH_UP_RESTORE_DELAY_MS = 250
 const MAP_BOOTSTRAP_TIMEOUT_MS = 2500
-const NAV_RASTER_TILE_URL = 'https://tiles.osm.kr/hot/{z}/{x}/{y}.png'
-const RASTER_SOURCE_MAX_ZOOM = 19
+const NAV_VECTOR_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
 const MAP_VIEW_MAX_ZOOM = 22
 const MAP_VIEW_MIN_ZOOM = 6
 
@@ -67,30 +66,6 @@ function resolveDriverHeading(userLocation, locationHistory = []) {
   }
 
   return 0
-}
-
-function buildRasterStyle(tileUrl) {
-  return {
-    version: 8,
-    sources: {
-      basemap: {
-        type: 'raster',
-        tiles: [tileUrl],
-        tileSize: 256,
-        scheme: 'xyz',
-        maxzoom: RASTER_SOURCE_MAX_ZOOM,
-        attribution: '&copy; OpenStreetMap contributors &copy; OSM Korea',
-      },
-    },
-    layers: [
-      {
-        id: 'basemap',
-        type: 'raster',
-        source: 'basemap',
-        paint: {},
-      },
-    ],
-  }
 }
 
 function buildLineFeature(id, coordinates = [], properties = {}) {
@@ -508,8 +483,6 @@ export default function NavigationMapLibreView({ darkMode = false }) {
   )
 
   const [mapBootstrapKey, setMapBootstrapKey] = useState(0)
-  const tileUrl = NAV_RASTER_TILE_URL
-
   const routeCollection = useMemo(() => ({
     type: 'FeatureCollection',
     features: remainingRoutePath.length > 1
@@ -649,7 +622,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
 
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: buildRasterStyle(tileUrl),
+      style: NAV_VECTOR_STYLE_URL,
       center: Array.isArray(mapCenter) ? [mapCenter[1], mapCenter[0]] : [126.978, 37.5665],
       zoom: mapZoom,
       minZoom: MAP_VIEW_MIN_ZOOM,
@@ -701,6 +674,10 @@ export default function NavigationMapLibreView({ darkMode = false }) {
           }
         }
       })
+      if (map.getLayer('building-3d')) {
+        map.setLayoutProperty('building-3d', 'visibility', 'visible')
+        map.setPaintProperty('building-3d', 'fill-extrusion-opacity', 0.72)
+      }
       upsertGeoJsonSource(map, 'remaining-route', routeCollection)
       upsertGeoJsonSource(map, 'preview-routes', otherRoutesCollection)
       upsertGeoJsonSource(map, 'active-route', activeCollection)
@@ -831,22 +808,6 @@ export default function NavigationMapLibreView({ darkMode = false }) {
         'circle-stroke-color': '#ffffff',
         'circle-stroke-width': 3,
       })
-
-      if (darkMode) {
-        map.setPaintProperty('basemap', 'raster-saturation', -0.18)
-        map.setPaintProperty('basemap', 'raster-brightness-max', 0.88)
-        map.setPaintProperty('basemap', 'raster-contrast', 1.06)
-      } else if (settings.navigationMinimalMap) {
-        map.setPaintProperty('basemap', 'raster-saturation', 0.08)
-        map.setPaintProperty('basemap', 'raster-brightness-min', 0.02)
-        map.setPaintProperty('basemap', 'raster-brightness-max', 1.08)
-        map.setPaintProperty('basemap', 'raster-contrast', 1.12)
-      } else {
-        map.setPaintProperty('basemap', 'raster-saturation', 0.02)
-        map.setPaintProperty('basemap', 'raster-brightness-min', 0.03)
-        map.setPaintProperty('basemap', 'raster-brightness-max', 1.06)
-        map.setPaintProperty('basemap', 'raster-contrast', 1.08)
-      }
     })
 
     map.on('dragstart', () => {
@@ -881,7 +842,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       map.remove()
       mapRef.current = null
     }
-  }, [mapBootstrapKey, setNavigationMapEngine, setNavigationMapReady, tileUrl])
+  }, [mapBootstrapKey, setNavigationMapEngine, setNavigationMapReady])
 
   useEffect(() => {
     if (!isNavigating) {

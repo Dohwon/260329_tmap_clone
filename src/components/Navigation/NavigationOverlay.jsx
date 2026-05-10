@@ -576,7 +576,7 @@ export default function NavigationOverlay() {
     mergeOptions, userLocation, navigationMatchedLocation, saveRoute, savedRoutes, drivePathHistory, cameraReports, reportCamera,
     navAutoFollow, setNavAutoFollow, addWaypoint, searchRoute, waypoints,
     refreshNavigationRoute, navigationLastRefreshedAt, isRefreshingNavigation,
-    settings, driverPreset, setDriverPreset, showRoutePanel, openSearchOverlay, safetyHazards, refreshSafetyHazards,
+    settings, driverPreset, setDriverPreset, showRoutePanel, openSearchOverlay, isSearchOverlayOpen, safetyHazards, refreshSafetyHazards,
     setEnrichmentStatus,
     isDriveSimulation, startDriveSimulation, stopDriveSimulation, triggerDriveSimulationOffRoute,
   } = useAppStore()
@@ -618,6 +618,7 @@ export default function NavigationOverlay() {
   const offRouteEvidenceRef = useRef({ count: 0, reason: null })
   const offRouteMotionRef = useRef({ progressKm: 0, distanceToRouteM: null, capturedAt: 0 })
   const driveRouteSnapshot = useAppStore((s) => s.driveRouteSnapshot)
+  const floatingControlsBottom = isRouteSheetCollapsed ? 104 : 254
 
   // 화면 꺼짐 방지
   useEffect(() => {
@@ -934,6 +935,13 @@ export default function NavigationOverlay() {
     }
     setIsRouteSheetCollapsed(true)
   }, [isNavigating, selectedRouteId])
+
+  useEffect(() => {
+    if (!isNavigating) return
+    if (showMerge || showNearbyPanel || showSaveDialog || showCameraReport || isSearchOverlayOpen) {
+      setIsRouteSheetCollapsed(true)
+    }
+  }, [isNavigating, isSearchOverlayOpen, showCameraReport, showMerge, showNearbyPanel, showSaveDialog])
 
   useEffect(() => {
     if (!showCameraReport) return
@@ -1393,6 +1401,22 @@ export default function NavigationOverlay() {
     setShowNearbyPanel(false)
   }
 
+  const handleOpenSearchOverlay = () => {
+    setIsRouteSheetCollapsed(true)
+    openSearchOverlay()
+  }
+
+  const handleOpenMerge = () => {
+    setIsRouteSheetCollapsed(true)
+    setShowMerge(true)
+  }
+
+  const handleOpenNearbyPanel = (category) => {
+    setIsRouteSheetCollapsed(true)
+    setShowNearbyPanel(true)
+    searchNearby(category)
+  }
+
   const handleRouteSheetTouchStart = (e) => {
     routeSheetTouchHandledRef.current = false
     routeSheetTouchStartRef.current = e.touches?.[0]?.clientY ?? null
@@ -1457,7 +1481,7 @@ export default function NavigationOverlay() {
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               <button
-                onClick={openSearchOverlay}
+                onClick={handleOpenSearchOverlay}
                 className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center"
                 aria-label="안내 중 경로 검색"
               >
@@ -1677,7 +1701,7 @@ export default function NavigationOverlay() {
           </div>
           <button
             className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 active:bg-gray-100"
-            onClick={() => setShowMerge(true)}
+            onClick={handleOpenMerge}
           >
             <div className="flex items-center gap-2 min-w-0">
               <span className="text-base flex-shrink-0">🔀</span>
@@ -1710,7 +1734,7 @@ export default function NavigationOverlay() {
           {liveMergeOptions.length > 0 && (
             <div ref={segmentRef} onWheel={handleWheelScroll} className="flex overflow-x-auto no-scrollbar px-4 py-3 gap-2 snap-x">
               {liveMergeOptions.slice(0, 4).map((opt) => (
-                <JunctionChip key={opt.id} opt={opt} onSelect={() => setShowMerge(true)} />
+                <JunctionChip key={opt.id} opt={opt} onSelect={handleOpenMerge} />
               ))}
             </div>
           )}
@@ -1741,87 +1765,87 @@ export default function NavigationOverlay() {
 
       {showMerge && <MergeOptionsSheet onClose={() => setShowMerge(false)} />}
 
-      {/* 주유소/휴게소/주차장 빠른 추가 */}
-      <div className="absolute right-4 z-20 flex flex-col gap-2" style={{ bottom: '380px' }}>
-        <button
-          onClick={() => { setShowNearbyPanel(true); searchNearby('주유소') }}
-          className="w-11 h-11 rounded-full bg-orange-500 text-white shadow-lg flex items-center justify-center text-base active:scale-95 transition-all"
-          title="근처 주유소"
-        >
-          ⛽
-        </button>
-        <button
-          onClick={() => { setShowNearbyPanel(true); searchNearby('휴게소') }}
-          className="w-11 h-11 rounded-full bg-green-600 text-white shadow-lg flex items-center justify-center text-base active:scale-95 transition-all"
-          title="근처 휴게소"
-        >
-          🏪
-        </button>
-        <button
-          onClick={() => { setShowNearbyPanel(true); searchNearby('주차장') }}
-          className="w-11 h-11 rounded-full bg-slate-600 text-white shadow-lg flex items-center justify-center text-base active:scale-95 transition-all"
-          title="근처 주차장"
-        >
-          🅿️
-        </button>
-      </div>
-
-      {/* 내 위치로 재중심 버튼 (auto-follow 꺼졌을 때) */}
-      {!navAutoFollow && (
-        <button
-          onClick={() => setNavAutoFollow(true)}
-          className="absolute right-4 bottom-48 z-20 w-12 h-12 bg-white rounded-full shadow-lg flex items-center justify-center border border-gray-200 active:bg-gray-50"
-        >
-          <svg className="w-6 h-6 text-tmap-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <circle cx="12" cy="12" r="4" fill="currentColor" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 2v3m0 14v3M2 12h3m14 0h3"/>
-          </svg>
-        </button>
-      )}
-
-      {/* 주행 시뮬레이터 버튼 — 개발 환경에서만 표시 */}
-      {import.meta.env.VITE_SHOW_SIM_CONTROLS === 'true' && (
-        <div className="absolute right-4 bottom-64 z-20 flex flex-col gap-1 items-end">
-          {isDriveSimulation ? (
-            <>
-              <button
-                onClick={() => triggerDriveSimulationOffRoute(220, 8)}
-                className="px-3 py-1.5 bg-amber-500 text-white text-[11px] font-bold rounded-full shadow-lg active:bg-amber-600"
-              >
-                이탈 테스트
-              </button>
-              <button
-                onClick={stopDriveSimulation}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 text-white text-xs font-bold rounded-full shadow-lg active:bg-red-600"
-              >
-                <span className="w-2 h-2 bg-white rounded-sm inline-block" />
-                시뮬 정지
-              </button>
-            </>
-          ) : (
-            <div className="flex gap-1">
-              <button
-                onClick={() => startDriveSimulation(60)}
-                className="px-2.5 py-1.5 bg-gray-800 text-white text-[11px] font-bold rounded-full shadow-lg active:bg-gray-700"
-              >
-                시뮬 60
-              </button>
-              <button
-                onClick={() => startDriveSimulation(100)}
-                className="px-2.5 py-1.5 bg-gray-800 text-white text-[11px] font-bold rounded-full shadow-lg active:bg-gray-700"
-              >
-                100
-              </button>
-              <button
-                onClick={() => startDriveSimulation(200)}
-                className="px-2.5 py-1.5 bg-gray-800 text-white text-[11px] font-bold rounded-full shadow-lg active:bg-gray-700"
-              >
-                200
-              </button>
-            </div>
-          )}
+      <div className="absolute right-4 z-20 flex flex-col gap-2 items-end" style={{ bottom: `${floatingControlsBottom}px` }}>
+        {/* 주유소/휴게소/주차장 빠른 추가 */}
+        <div className="flex flex-col gap-2 items-end">
+          <button
+            onClick={() => handleOpenNearbyPanel('주유소')}
+            className="w-11 h-11 rounded-full bg-orange-500 text-white shadow-lg flex items-center justify-center text-base active:scale-95 transition-all"
+            title="근처 주유소"
+          >
+            ⛽
+          </button>
+          <button
+            onClick={() => handleOpenNearbyPanel('휴게소')}
+            className="w-11 h-11 rounded-full bg-green-600 text-white shadow-lg flex items-center justify-center text-base active:scale-95 transition-all"
+            title="근처 휴게소"
+          >
+            🏪
+          </button>
+          <button
+            onClick={() => handleOpenNearbyPanel('주차장')}
+            className="w-11 h-11 rounded-full bg-slate-600 text-white shadow-lg flex items-center justify-center text-base active:scale-95 transition-all"
+            title="근처 주차장"
+          >
+            🅿️
+          </button>
         </div>
-      )}
+
+        {!navAutoFollow && (
+          <button
+            onClick={() => setNavAutoFollow(true)}
+            className="w-12 h-12 bg-white rounded-full shadow-lg flex items-center justify-center border border-gray-200 active:bg-gray-50"
+          >
+            <svg className="w-6 h-6 text-tmap-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="4" fill="currentColor" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 2v3m0 14v3M2 12h3m14 0h3"/>
+            </svg>
+          </button>
+        )}
+
+        {import.meta.env.VITE_SHOW_SIM_CONTROLS === 'true' && (
+          <div className="flex flex-col gap-1 items-end">
+            {isDriveSimulation ? (
+              <>
+                <button
+                  onClick={() => triggerDriveSimulationOffRoute(220, 8)}
+                  className="px-3 py-1.5 bg-amber-500 text-white text-[11px] font-bold rounded-full shadow-lg active:bg-amber-600"
+                >
+                  이탈 테스트
+                </button>
+                <button
+                  onClick={stopDriveSimulation}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 text-white text-xs font-bold rounded-full shadow-lg active:bg-red-600"
+                >
+                  <span className="w-2 h-2 bg-white rounded-sm inline-block" />
+                  시뮬 정지
+                </button>
+              </>
+            ) : (
+              <div className="flex gap-1">
+                <button
+                  onClick={() => startDriveSimulation(60)}
+                  className="px-2.5 py-1.5 bg-gray-800 text-white text-[11px] font-bold rounded-full shadow-lg active:bg-gray-700"
+                >
+                  시뮬 60
+                </button>
+                <button
+                  onClick={() => startDriveSimulation(100)}
+                  className="px-2.5 py-1.5 bg-gray-800 text-white text-[11px] font-bold rounded-full shadow-lg active:bg-gray-700"
+                >
+                  100
+                </button>
+                <button
+                  onClick={() => startDriveSimulation(200)}
+                  className="px-2.5 py-1.5 bg-gray-800 text-white text-[11px] font-bold rounded-full shadow-lg active:bg-gray-700"
+                >
+                  200
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* 경관 구간 진입 토스트 */}
       {scenicToast && (
