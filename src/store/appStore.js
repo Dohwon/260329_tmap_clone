@@ -1963,7 +1963,7 @@ const useAppStore = create((set, get) => ({
       showRoutePanel: false,
       routePanelMode: 'full',
       mapCenter: center,
-      mapZoom: 18,
+      mapZoom: 19.6,
       drivePathHistory: userLocation ? [[userLocation.lat, userLocation.lng]] : [],
       driveSampleHistory: userLocation ? [{
         lat: userLocation.lat,
@@ -3138,8 +3138,11 @@ const useAppStore = create((set, get) => ({
   refreshNavigationRoute: async (reason = 'manual') => {
     const state = get()
     if (state.isRefreshingNavigation || !state.destination) return null
-    if ((reason === 'traffic-refresh' || reason === 'live-retry') && !shouldAllowBackgroundApi(state, { requireMovement: true, allowDuringNavigation: false })) {
-      return null
+    if (reason === 'traffic-refresh' || reason === 'live-retry') {
+      const allowLiveRefresh = state.isNavigating
+        ? true
+        : shouldAllowBackgroundApi(state, { requireMovement: true, allowDuringNavigation: false })
+      if (!allowLiveRefresh) return null
     }
 
     const origin = await resolveRoutingOrigin(getActiveRoutingOrigin(state))

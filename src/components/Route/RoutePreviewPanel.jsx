@@ -228,24 +228,18 @@ export default function RoutePreviewPanel() {
 
         {/* 스크롤 영역 */}
         <div className="flex-1 overflow-y-auto no-scrollbar px-5 py-4 space-y-4">
-          <div className={`rounded-2xl px-4 py-3 border ${
+          <div className={`rounded-xl px-3 py-2 border ${
             tmapStatus.mode === 'live'
               ? 'bg-blue-50 border-blue-100'
               : 'bg-amber-50 border-amber-100'
           }`}>
-            <div className="text-sm font-bold text-gray-900">
-              {tmapStatus.mode === 'live' ? '✅ TMAP 실시간 경로 적용 중' : '⚠️ TMAP 실시간 경로 미적용'}
+            <div className="flex items-center gap-2 text-[11px] leading-4 text-gray-700">
+              <span className="font-semibold text-gray-900 whitespace-nowrap">
+                {tmapStatus.mode === 'live' ? 'TMAP 실시간 경로 적용 중' : 'TMAP 실시간 경로 미적용'}
+              </span>
+              <span className="text-gray-500 truncate">{tmapStatusDetail}</span>
+              {compareLabel && <span className="text-tmap-blue font-semibold truncate">{compareLabel}</span>}
             </div>
-            <div className="text-xs text-gray-500 mt-1">{tmapStatusDetail}</div>
-            {tmapStatus.mode !== 'live' && tmapStatus.hasApiKey && (
-              <button
-                onClick={() => fetch('/api/meta/tmap-diag').then(r => r.json()).then(d => alert(JSON.stringify(d, null, 2)))}
-                className="mt-2 text-xs text-tmap-blue underline"
-              >
-                진단 실행 (탭하면 오류 원인 표시)
-              </button>
-            )}
-            {compareLabel && <div className="text-xs text-tmap-blue font-semibold mt-2">{compareLabel}</div>}
           </div>
 
           {/* 프리셋 */}

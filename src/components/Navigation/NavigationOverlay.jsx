@@ -886,10 +886,16 @@ export default function NavigationOverlay() {
 
   useEffect(() => {
     if (!isNavigating || route?.source !== 'live') return
+    const initialTimer = window.setTimeout(() => {
+      refreshNavigationRoute('traffic-refresh')
+    }, 15000)
     const timer = window.setInterval(() => {
       refreshNavigationRoute('traffic-refresh')
-    }, 120000)
-    return () => window.clearInterval(timer)
+    }, 30000)
+    return () => {
+      window.clearTimeout(initialTimer)
+      window.clearInterval(timer)
+    }
   }, [isNavigating, refreshNavigationRoute, route?.source])
 
   useEffect(() => {

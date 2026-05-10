@@ -35,6 +35,9 @@ const MANUAL_RECENTER_DELAY_MS = 6000
 const NORTH_UP_RESTORE_DELAY_MS = 250
 const MAP_BOOTSTRAP_TIMEOUT_MS = 2500
 const NAV_RASTER_TILE_URL = 'https://tiles.osm.kr/hot/{z}/{x}/{y}.png'
+const RASTER_SOURCE_MAX_ZOOM = 19
+const MAP_VIEW_MAX_ZOOM = 28.5
+const MAP_VIEW_MIN_ZOOM = 6
 
 function getBearingDeg(fromLat, fromLng, toLat, toLng) {
   const fromLatRad = (fromLat * Math.PI) / 180
@@ -74,6 +77,8 @@ function buildRasterStyle(tileUrl) {
         type: 'raster',
         tiles: [tileUrl],
         tileSize: 256,
+        scheme: 'xyz',
+        maxzoom: RASTER_SOURCE_MAX_ZOOM,
         attribution: '&copy; OpenStreetMap contributors &copy; OSM Korea',
       },
     },
@@ -333,14 +338,20 @@ function getNavOffset(cameraState = {}) {
   return [0, -520]
 }
 
+function clampMapZoom(zoom, { min = 18.4, max = MAP_VIEW_MAX_ZOOM } = {}) {
+  const numericZoom = Number(zoom)
+  if (!Number.isFinite(numericZoom)) return min
+  return Math.max(min, Math.min(max, numericZoom))
+}
+
 function getNorthUpCamera(guidanceLocation, mapZoom = 17.4) {
   return {
     center: [guidanceLocation.lng, guidanceLocation.lat],
-    zoom: Math.max(17.2, Math.min(19.2, Number(mapZoom) || 17.8)),
+    zoom: clampMapZoom(mapZoom, { min: 17.8, max: 20.6 }),
     bearing: 0,
-    pitch: 0,
-    offset: [0, -80],
-    duration: 600,
+    pitch: 10,
+    offset: [0, -110],
+    duration: 420,
   }
 }
 
@@ -641,6 +652,8 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       style: buildRasterStyle(tileUrl),
       center: Array.isArray(mapCenter) ? [mapCenter[1], mapCenter[0]] : [126.978, 37.5665],
       zoom: mapZoom,
+      minZoom: MAP_VIEW_MIN_ZOOM,
+      maxZoom: MAP_VIEW_MAX_ZOOM,
       attributionControl: true,
       dragRotate: false,
       touchPitch: false,
@@ -684,7 +697,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
             ? [loc.lng, loc.lat]
             : (routeStart ? [routeStart[1], routeStart[0]] : null)
           if (center) {
-            map.jumpTo({ center, zoom: 22.1, pitch: 44, bearing: 0 })
+            map.jumpTo({ center, zoom: 25.5, pitch: 58, bearing: 0 })
           }
         }
       })
@@ -733,8 +746,8 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       })
       ensureLineLayer(map, 'preview-routes-line', 'preview-routes', {
         'line-color': ['coalesce', ['get', 'color'], COLORS.routeLocal],
-        'line-width': 4,
-        'line-opacity': 0.28,
+        'line-width': 3,
+        'line-opacity': 0.22,
       })
       ensureLineLayer(map, 'drive-history-line', 'drive-history', {
         'line-color': COLORS.passedRoute,
@@ -743,49 +756,49 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       })
       ensureLineLayer(map, 'remaining-route-line', 'remaining-route', {
         'line-color': COLORS.navigationGuide,
-        'line-width': 9,
-        'line-opacity': 0.97,
+        'line-width': 7,
+        'line-opacity': 0.94,
       })
       ensureLineLayer(map, 'guide-mainline-line', 'guide-mainline', {
         'line-color': ['coalesce', ['get', 'guideColor'], '#E5E7EB'],
-        'line-width': 12,
-        'line-opacity': 0.84,
+        'line-width': 9,
+        'line-opacity': 0.7,
       })
       ensureLineLayer(map, 'guide-mainline-dash', 'guide-mainline', {
         'line-color': '#94A3B8',
-        'line-width': 4,
-        'line-opacity': 0.78,
+        'line-width': 3,
+        'line-opacity': 0.62,
         'line-dasharray': [1.1, 1.5],
       })
       ensureLineLayer(map, 'guide-route-outline', 'guide-route', {
         'line-color': '#0F172A',
-        'line-width': 20,
-        'line-opacity': 0.46,
+        'line-width': 14,
+        'line-opacity': 0.34,
       })
       ensureLineLayer(map, 'guide-route-line', 'guide-route', {
         'line-color': ['coalesce', ['get', 'guideColor'], COLORS.navigationGuide],
-        'line-width': 15,
-        'line-opacity': 0.98,
+        'line-width': 11,
+        'line-opacity': 0.92,
       })
       ensureLineLayer(map, 'focus-route-outline', 'focus-route', {
         'line-color': '#0F172A',
-        'line-width': 8,
-        'line-opacity': 0.2,
+        'line-width': 7,
+        'line-opacity': 0.14,
       })
       ensureLineLayer(map, 'focus-route-line', 'focus-route', {
         'line-color': ['coalesce', ['get', 'color'], COLORS.selectedRoute],
-        'line-width': ['interpolate', ['linear'], ['get', 'order'], 0, 6, 1, 5],
-        'line-opacity': ['interpolate', ['linear'], ['get', 'order'], 0, 0.86, 1, 0.62],
+        'line-width': ['interpolate', ['linear'], ['get', 'order'], 0, 5, 1, 4],
+        'line-opacity': ['interpolate', ['linear'], ['get', 'order'], 0, 0.72, 1, 0.5],
       })
       ensureLineLayer(map, 'active-route-outline', 'active-route', {
         'line-color': '#0F172A',
-        'line-width': 10,
-        'line-opacity': 0.34,
+        'line-width': 8,
+        'line-opacity': 0.24,
       })
       ensureLineLayer(map, 'active-route-line', 'active-route', {
         'line-color': '#22D3EE',
-        'line-width': 10,
-        'line-opacity': 0.96,
+        'line-width': 7,
+        'line-opacity': 0.92,
       })
       ensureCircleLayer(map, 'camera-points-layer', 'camera-points', {
         'circle-radius': 5,
@@ -820,16 +833,19 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       })
 
       if (darkMode) {
-        map.setPaintProperty('basemap', 'raster-saturation', -0.35)
-        map.setPaintProperty('basemap', 'raster-brightness-max', 0.82)
+        map.setPaintProperty('basemap', 'raster-saturation', -0.18)
+        map.setPaintProperty('basemap', 'raster-brightness-max', 0.88)
+        map.setPaintProperty('basemap', 'raster-contrast', 1.06)
       } else if (settings.navigationMinimalMap) {
-        map.setPaintProperty('basemap', 'raster-saturation', -0.35)
-        map.setPaintProperty('basemap', 'raster-brightness-max', 0.98)
-        map.setPaintProperty('basemap', 'raster-contrast', 1.08)
+        map.setPaintProperty('basemap', 'raster-saturation', 0.08)
+        map.setPaintProperty('basemap', 'raster-brightness-min', 0.02)
+        map.setPaintProperty('basemap', 'raster-brightness-max', 1.08)
+        map.setPaintProperty('basemap', 'raster-contrast', 1.12)
       } else {
-        map.setPaintProperty('basemap', 'raster-saturation', -0.08)
-        map.setPaintProperty('basemap', 'raster-brightness-max', 1)
-        map.setPaintProperty('basemap', 'raster-contrast', 1.04)
+        map.setPaintProperty('basemap', 'raster-saturation', 0.02)
+        map.setPaintProperty('basemap', 'raster-brightness-min', 0.03)
+        map.setPaintProperty('basemap', 'raster-brightness-max', 1.06)
+        map.setPaintProperty('basemap', 'raster-contrast', 1.08)
       }
     })
 
@@ -952,7 +968,14 @@ export default function NavigationMapLibreView({ darkMode = false }) {
 
     lastPreviewFitRouteIdRef.current = safeRoute.id
     map.fitBounds(bounds, {
-      padding: { top: 120, right: 40, bottom: 260, left: 40 },
+      padding: { top: 96, right: 28, bottom: 220, left: 28 },
+      maxZoom: 17.8,
+      duration: 0,
+      essential: true,
+    })
+    map.easeTo({
+      pitch: 8,
+      bearing: 0,
       duration: 0,
       essential: true,
     })
@@ -985,11 +1008,11 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       ? getNorthUpCamera(guidanceLocation, mapZoom)
       : {
           center: [guidanceLocation.lng, guidanceLocation.lat],
-          zoom: cameraState.zoom,
+          zoom: clampMapZoom(cameraState.zoom, { min: 19.4 }),
           bearing: smoothedHeading,
           pitch: getNavPitch(cameraState.mode),
           offset: getNavOffset(cameraState),
-          duration: 900,
+          duration: 520,
         }
 
     const thresholdM = effectiveCameraMode === 'north-up'
@@ -1033,13 +1056,14 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     const map = mapRef.current
     if (!map || !loadedRef.current || !Array.isArray(mapCenter)) return
     if (isNavigating) return
+    if (safeRoute?.id && Array.isArray(safeRoute?.polyline) && safeRoute.polyline.length > 1) return
     map.easeTo({
       center: [mapCenter[1], mapCenter[0]],
-      zoom: mapZoom,
+      zoom: clampMapZoom(mapZoom, { min: 10, max: 18.2 }),
       duration: 400,
       essential: true,
     })
-  }, [isNavigating, mapCenter, mapZoom])
+  }, [isNavigating, mapCenter, mapZoom, safeRoute?.id, safeRoute?.polyline])
 
   return (
     <div className="absolute inset-0">
