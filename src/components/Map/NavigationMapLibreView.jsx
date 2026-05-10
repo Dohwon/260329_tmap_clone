@@ -36,7 +36,7 @@ const NORTH_UP_RESTORE_DELAY_MS = 250
 const MAP_BOOTSTRAP_TIMEOUT_MS = 2500
 const NAV_RASTER_TILE_URL = 'https://tiles.osm.kr/hot/{z}/{x}/{y}.png'
 const RASTER_SOURCE_MAX_ZOOM = 19
-const MAP_VIEW_MAX_ZOOM = 28.5
+const MAP_VIEW_MAX_ZOOM = 22
 const MAP_VIEW_MIN_ZOOM = 6
 
 function getBearingDeg(fromLat, fromLng, toLat, toLng) {
@@ -338,7 +338,7 @@ function getNavOffset(cameraState = {}) {
   return [0, -520]
 }
 
-function clampMapZoom(zoom, { min = 18.4, max = MAP_VIEW_MAX_ZOOM } = {}) {
+function clampMapZoom(zoom, { min = 17.6, max = MAP_VIEW_MAX_ZOOM } = {}) {
   const numericZoom = Number(zoom)
   if (!Number.isFinite(numericZoom)) return min
   return Math.max(min, Math.min(max, numericZoom))
@@ -347,10 +347,10 @@ function clampMapZoom(zoom, { min = 18.4, max = MAP_VIEW_MAX_ZOOM } = {}) {
 function getNorthUpCamera(guidanceLocation, mapZoom = 17.4) {
   return {
     center: [guidanceLocation.lng, guidanceLocation.lat],
-    zoom: clampMapZoom(mapZoom, { min: 17.8, max: 20.6 }),
+    zoom: clampMapZoom(mapZoom, { min: 17.4, max: 18.6 }),
     bearing: 0,
-    pitch: 10,
-    offset: [0, -110],
+    pitch: 8,
+    offset: [0, -90],
     duration: 420,
   }
 }
@@ -697,7 +697,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
             ? [loc.lng, loc.lat]
             : (routeStart ? [routeStart[1], routeStart[0]] : null)
           if (center) {
-            map.jumpTo({ center, zoom: 25.5, pitch: 58, bearing: 0 })
+            map.jumpTo({ center, zoom: 18.9, pitch: 58, bearing: 0 })
           }
         }
       })
@@ -969,7 +969,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     lastPreviewFitRouteIdRef.current = safeRoute.id
     map.fitBounds(bounds, {
       padding: { top: 96, right: 28, bottom: 220, left: 28 },
-      maxZoom: 17.8,
+      maxZoom: 16.8,
       duration: 0,
       essential: true,
     })
@@ -1008,7 +1008,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       ? getNorthUpCamera(guidanceLocation, mapZoom)
       : {
           center: [guidanceLocation.lng, guidanceLocation.lat],
-          zoom: clampMapZoom(cameraState.zoom, { min: 19.4 }),
+          zoom: clampMapZoom(cameraState.zoom, { min: 18.3, max: 20.2 }),
           bearing: smoothedHeading,
           pitch: getNavPitch(cameraState.mode),
           offset: getNavOffset(cameraState),

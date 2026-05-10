@@ -1963,7 +1963,7 @@ const useAppStore = create((set, get) => ({
       showRoutePanel: false,
       routePanelMode: 'full',
       mapCenter: center,
-      mapZoom: 19.6,
+      mapZoom: 18.9,
       drivePathHistory: userLocation ? [[userLocation.lat, userLocation.lng]] : [],
       driveSampleHistory: userLocation ? [{
         lat: userLocation.lat,
@@ -3028,7 +3028,10 @@ const useAppStore = create((set, get) => ({
       })
       get().addRecentSearch(normalizedDestination)
 
-      const tmapStatusPromise = fetchTmapStatus()
+      const tmapStatusPromise = fetchTmapStatus().catch(() => ({
+        hasApiKey: get().tmapStatus.hasApiKey,
+        mode: get().tmapStatus.mode,
+      }))
 
       let liveRoutes = []
       let fallbackRoutes = []
@@ -3037,14 +3040,16 @@ const useAppStore = create((set, get) => ({
         liveRoutes = await loadLiveRoutes(origin, normalizedDestination, get().waypoints, routePreferences, {
           routeRequestMode: 'preview',
         })
-        resolvedTmapStatus = await tmapStatusPromise
-        get().setTmapStatus({ ...resolvedTmapStatus, lastError: null })
         if (liveRoutes.length > 0) {
           const reusedRoute = liveRoutes.find((route) => route.reusedFromCache)
           get().setTmapStatus({
             hasApiKey: true,
             mode: 'live',
             lastError: reusedRoute ? buildRouteBudgetStatusMessage(reusedRoute.cacheRetryAfterMs) : null,
+          })
+        } else {
+          tmapStatusPromise.then((status) => {
+            get().setTmapStatus({ ...status, lastError: null })
           })
         }
       } catch (error) {
@@ -3100,7 +3105,6 @@ const useAppStore = create((set, get) => ({
             .map((suggestion) => ({ ...suggestion, referencePolyline }))
             .filter((suggestion) => suggestion.scenicType === 'coastal' ? wantsCoastal : wantsMountain)
         : []
-      const scenicRoadSuggestions = await decorateScenicSuggestionsWithEntry(rawScenicRoadSuggestions)
 
       set({
         routes: contextualRoutes,
@@ -3112,11 +3116,24 @@ const useAppStore = create((set, get) => ({
         mapZoom: selectedRoute ? 8 : 14,
         selectedRoadId: roadDriveRoadId,
         roadDrivePlan: activeRoadDrivePlan,
-        scenicRoadSuggestions,
+        scenicRoadSuggestions: [],
         scenicReferencePolyline: hasScenicWaypoint
           ? scenicReferencePolyline
           : (selectedRoute?.polyline?.slice(0, 400) ?? []),
       })
+      if (rawScenicRoadSuggestions.length > 0) {
+        decorateScenicSuggestionsWithEntry(rawScenicRoadSuggestions)
+          .then((scenicRoadSuggestions) => {
+            const latest = get()
+            if (latest.destination?.name !== normalizedDestination.name) return
+            set({ scenicRoadSuggestions })
+          })
+          .catch(() => {
+            const latest = get()
+            if (latest.destination?.name !== normalizedDestination.name) return
+            set({ scenicRoadSuggestions: [] })
+          })
+      }
       routeSearchLastCompletedKey = requestKey
       routeSearchLastCompletedAt = Date.now()
       return contextualRoutes
