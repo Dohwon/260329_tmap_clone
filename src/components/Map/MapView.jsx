@@ -812,11 +812,7 @@ function LeafletMapView({ darkMode = false }) {
   )
 
   // OSM Korea HOT 타일은 현재 유효한 한국어 라벨 베이스맵을 제공한다.
-  const maptilerKey = import.meta.env.VITE_MAPTILER_KEY
-  const tileQuery = maptilerKey ? new URLSearchParams({ key: maptilerKey }).toString() : ''
-  const tileUrl = maptilerKey
-    ? `https://api.maptiler.com/maps/streets-v4-pastel/{z}/{x}/{y}.png?${tileQuery}`
-    : 'https://tiles.osm.kr/hot/{z}/{x}/{y}.png'
+  const tileUrl = 'https://tiles.osm.kr/hot/{z}/{x}/{y}.png'
   const labelUrl = null
 
   return (
