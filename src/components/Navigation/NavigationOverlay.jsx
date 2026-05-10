@@ -125,6 +125,21 @@ function isHighwayGuidance(guidance) {
   )
 }
 
+function isMergeLikeGuidance(guidance) {
+  if (!guidance) return false
+  const turnType = Number(guidance?.turnType)
+  const text = `${guidance?.instructionText ?? ''} ${guidance?.description ?? ''} ${guidance?.afterRoadName ?? ''}`
+  if (/좌회전|우회전|유턴/.test(text)) return false
+  return (
+    turnType === 16 ||
+    turnType === 17 ||
+    turnType === 18 ||
+    turnType === 19 ||
+    turnType >= 100 ||
+    /합류|분기|진출|출구|IC|JC|램프|본선|나들목|톨게이트/.test(text)
+  )
+}
+
 function getHighwayInsetDirection(turnType) {
   const t = Number(turnType)
   if (t === 16 || t === 18) return 'left'
@@ -833,7 +848,7 @@ export default function NavigationOverlay() {
 
   const playSpeech = async (text) => {
     activeSpeechTextRef.current = text
-    const preferLowLatency = isDriveSimulation || speechQueueRef.current.length > 0
+    const preferLowLatency = isDriveSimulation
     if (isGoogleTtsSafeModeOpen() || preferLowLatency) {
       await playBrowserSpeech(text)
       activeSpeechTextRef.current = null
@@ -1180,8 +1195,8 @@ export default function NavigationOverlay() {
   }, [isNavigating])
 
   // 상단 배너: 다음 조작을 목적지보다 우선 표시
-  const nextGuidance = nextAction
-  const afterNextGuidance = guidanceList.find((action) => action.id !== nextGuidance?.id) ?? null
+  const nextGuidance = guidanceList.find((action) => !isMergeLikeGuidance(action)) ?? nextAction
+  const afterNextGuidance = guidanceList.find((action) => action.id !== nextGuidance?.id && !isMergeLikeGuidance(action)) ?? null
   const nextGuidanceText = nextGuidance ? getGuidanceInstruction(nextGuidance) : null
   const cleanedInstructionText = stripLaneMention(nextGuidance?.instructionText)
   const afterNextText = afterNextGuidance ? getGuidanceInstruction(afterNextGuidance) : null
@@ -1208,8 +1223,8 @@ export default function NavigationOverlay() {
   const isHighwayStyleGuidance = Boolean(
     nextGuidance && isHighwayGuidance(nextGuidance)
   )
-  const laneSource = nextGuidance ?? null
-  const showGuidanceInset = shouldShowGuidanceInset(nextGuidance)
+  const laneSource = nextAction ?? nextGuidance ?? null
+  const showGuidanceInset = shouldShowGuidanceInset(laneSource)
 
   useEffect(() => {
     if (!showGuidanceInset || !route?.id || !Array.isArray(route?.polyline) || route.polyline.length < 2) {
@@ -1247,13 +1262,14 @@ export default function NavigationOverlay() {
     : null
 
   useEffect(() => {
-    if (!isNavigating || !settings.voiceGuidance || startedVoiceRef.current || !window.speechSynthesis) return
+    if (!isNavigating || !settings.voiceGuidance || startedVoiceRef.current) return
     startedVoiceRef.current = true
     enqueueSpeech('안내를 시작합니다.')
   }, [isNavigating, settings.voiceGuidance])
 
   useEffect(() => {
-    if (!isNavigating || !settings.voiceGuidance || !nextGuidance || !window.speechSynthesis) return
+    if (!isNavigating || !settings.voiceGuidance || !nextGuidance) return
+    if (isMergeLikeGuidance(nextGuidance)) return
     const remainingM = Math.round((nextGuidance.remainingDistanceKm ?? 0) * 1000)
     const threshold = remainingM <= 120 ? '100m' : remainingM <= 350 ? '300m' : remainingM <= 750 ? '700m' : null
     if (!threshold) return

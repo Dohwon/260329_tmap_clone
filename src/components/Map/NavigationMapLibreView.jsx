@@ -5,7 +5,6 @@ import useAppStore from '../../store/appStore'
 import { fetchRouteCorridor } from '../../services/tmapService'
 import {
   buildRemainingRoutePolyline,
-  getNavigationCameraRestoreDelay,
   getCurrentRouteSegment,
   getGuideLineMeta,
   resolveNavigationCameraMode,
@@ -31,7 +30,7 @@ const COLORS = {
   guidance: '#10B981',
 }
 
-const MANUAL_RECENTER_DELAY_MS = 6000
+const MANUAL_RECENTER_DELAY_MS = 3000
 const NORTH_UP_RESTORE_DELAY_MS = 250
 const MAP_BOOTSTRAP_TIMEOUT_MS = 2500
 const NAV_VECTOR_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
@@ -300,17 +299,17 @@ function buildCurrentMarkerElement() {
 }
 
 function getNavPitch(mode = 'cruise') {
-  if (mode === 'confirm') return 64
-  if (mode === 'decision') return 60
-  if (mode === 'approach') return 55
-  if (mode === 'prepare') return 49
-  return 44
+  if (mode === 'confirm') return 68
+  if (mode === 'decision') return 65
+  if (mode === 'approach') return 62
+  if (mode === 'prepare') return 58
+  return 54
 }
 
 function getNavOffset(cameraState = {}) {
   const offsetY = Number(cameraState?.lookAheadOffsetY)
   if (Number.isFinite(offsetY)) return [0, offsetY]
-  return [0, -520]
+  return [0, -260]
 }
 
 function clampMapZoom(zoom, { min = 17.6, max = MAP_VIEW_MAX_ZOOM } = {}) {
@@ -625,7 +624,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       zoom: mapZoom,
       minZoom: MAP_VIEW_MIN_ZOOM,
       maxZoom: MAP_VIEW_MAX_ZOOM,
-      attributionControl: true,
+      attributionControl: false,
       dragRotate: false,
       touchPitch: false,
     })
@@ -664,11 +663,15 @@ export default function NavigationMapLibreView({ darkMode = false }) {
         if (s.isNavigating && s.navAutoFollow && !s.showRoutePanel) {
           const loc = s.navigationMatchedLocation ?? s.userLocation
           const routeStart = s.driveRouteSnapshot?.polyline?.[0]
+          const initialBearing = resolveDriverHeading(
+            s.navigationMatchedLocation ?? s.userLocation,
+            s.locationHistory ?? []
+          )
           const center = loc
             ? [loc.lng, loc.lat]
             : (routeStart ? [routeStart[1], routeStart[0]] : null)
           if (center) {
-            map.jumpTo({ center, zoom: 18.9, pitch: 58, bearing: 0 })
+            map.jumpTo({ center, zoom: 18.6, pitch: 64, bearing: initialBearing })
           }
         }
       })
@@ -808,6 +811,19 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       })
     })
 
+    map.on('dragstart', () => {
+      if (!isNavigating || suppressInteractionRef.current) return
+      if (manualRestoreTimerRef.current) window.clearTimeout(manualRestoreTimerRef.current)
+      setCameraMode('manual')
+      if (useAppStore.getState().navAutoFollow) setNavAutoFollow(false)
+    })
+    map.on('zoomstart', () => {
+      if (!isNavigating || suppressInteractionRef.current) return
+      if (manualRestoreTimerRef.current) window.clearTimeout(manualRestoreTimerRef.current)
+      setCameraMode('manual')
+      if (useAppStore.getState().navAutoFollow) setNavAutoFollow(false)
+    })
+
     const markerEl = buildCurrentMarkerElement()
     currentMarkerRef.current = new maplibregl.Marker({ element: markerEl, anchor: 'center' })
       .setLngLat(Array.isArray(mapCenter) ? [mapCenter[1], mapCenter[0]] : [126.978, 37.5665])
@@ -841,8 +857,16 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       return
     }
     if (manualRestoreTimerRef.current) window.clearTimeout(manualRestoreTimerRef.current)
+    if (cameraMode === 'manual' || !navAutoFollow) {
+      manualRestoreTimerRef.current = window.setTimeout(() => {
+        setCameraMode('nav')
+        setNavAutoFollow(true)
+      }, MANUAL_RECENTER_DELAY_MS)
+      return () => {
+        if (manualRestoreTimerRef.current) window.clearTimeout(manualRestoreTimerRef.current)
+      }
+    }
     if (cameraMode !== 'nav') setCameraMode('nav')
-    if (!navAutoFollow) setNavAutoFollow(true)
   }, [cameraMode, isNavigating, navAutoFollow, setNavAutoFollow, showRoutePanel])
 
   useEffect(() => {
@@ -939,7 +963,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       ? getNorthUpCamera(guidanceLocation, mapZoom)
       : {
           center: [guidanceLocation.lng, guidanceLocation.lat],
-          zoom: clampMapZoom(cameraState.zoom, { min: 18.3, max: 20.2 }),
+          zoom: clampMapZoom(cameraState.zoom, { min: 18.1, max: 19.6 }),
           bearing: smoothedHeading,
           pitch: getNavPitch(cameraState.mode),
           offset: getNavOffset(cameraState),
@@ -1014,7 +1038,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
             setCameraMode('nav')
             setNavAutoFollow(true)
           }}
-          className="absolute right-4 bottom-36 z-20 rounded-full bg-white/96 border border-slate-200 px-3 py-2 shadow-lg text-[12px] font-bold text-slate-800 active:bg-slate-50"
+          className="absolute left-4 bottom-36 z-20 rounded-full bg-white/96 border border-slate-200 px-3 py-2 shadow-lg text-[12px] font-bold text-slate-800 active:bg-slate-50"
         >
           운전자 시점 복귀
         </button>
