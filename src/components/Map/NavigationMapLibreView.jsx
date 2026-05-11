@@ -900,7 +900,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       map.remove()
       mapRef.current = null
     }
-  }, [initialMapCenter, mapBootstrapKey, mapZoom, setNavigationMapEngine, setNavigationMapReady])
+  }, [mapBootstrapKey, setNavigationMapEngine, setNavigationMapReady])
 
   useEffect(() => {
     if (!isNavigating) {
