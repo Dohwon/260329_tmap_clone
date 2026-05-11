@@ -37,10 +37,15 @@ export default function useGeolocation() {
     }
 
     const filterLocation = (nextLoc) => {
+      const navigating = useAppStore.getState().isNavigating
       const prev = lastAcceptedRef.current
       if (!prev) {
-        lastAcceptedRef.current = { ...nextLoc, time: Date.now() }
-        return nextLoc
+        const firstAccepted = {
+          ...nextLoc,
+          heading: normalizeHeading(nextLoc.heading, 0),
+        }
+        lastAcceptedRef.current = { ...firstAccepted, time: Date.now() }
+        return firstAccepted
       }
 
       const now = Date.now()
@@ -63,6 +68,45 @@ export default function useGeolocation() {
       const isStationaryOrSlow = speedKmh <= 8
       const keepPreviousForPoorFix = isVeryPoorFix && isStationaryOrSlow && distanceFromPrevM <= Math.max(18, nextAccuracy * 1.2)
       const rejectAsJump = elapsedSec <= 4 && distanceFromPrevM > plausibleJumpM && nextAccuracy >= Math.min(60, prevAccuracy + 6)
+
+      if (navigating) {
+        const shouldRejectImpossibleJump =
+          elapsedSec <= 2 &&
+          distanceFromPrevM > 280 &&
+          nextAccuracy >= 70 &&
+          speedKmh <= 30
+
+        if (shouldRejectImpossibleJump) {
+          const held = {
+            ...nextLoc,
+            lat: prev.lat,
+            lng: prev.lng,
+            heading: normalizeHeading(nextLoc.heading, prev.heading ?? 0),
+            accuracy: Math.min(nextAccuracy, prevAccuracy),
+            gpsJumpFiltered: true,
+          }
+          lastAcceptedRef.current = {
+            ...prev,
+            speedKmh: Number(held.speedKmh ?? prev.speedKmh ?? 0),
+            heading: normalizeHeading(held.heading, prev.heading ?? 0),
+            accuracy: held.accuracy,
+            time: now,
+          }
+          return held
+        }
+
+        const immediate = {
+          ...nextLoc,
+          heading: normalizeHeading(nextLoc.heading, prev.heading ?? 0),
+        }
+        lastAcceptedRef.current = {
+          ...immediate,
+          speedKmh: Number(immediate.speedKmh ?? 0),
+          accuracy: clamp(Math.min(nextAccuracy, prevAccuracy + 20), 3, 999),
+          time: now,
+        }
+        return immediate
+      }
 
       if (keepPreviousForPoorFix || rejectAsJump) {
         const held = {
@@ -165,8 +209,8 @@ export default function useGeolocation() {
       watchIdRef.current = navigator.geolocation.watchPosition(success, error, {
         enableHighAccuracy: Boolean(navigating),
         // 일반 화면은 과도한 GPS 흔들림을 줄이기 위해 약간의 캐시를 허용
-        maximumAge: navigating ? 500 : 3000,
-        timeout: navigating ? 7000 : 10000,
+        maximumAge: navigating ? 0 : 3000,
+        timeout: navigating ? 5000 : 10000,
       })
     }
 
@@ -183,6 +227,14 @@ export default function useGeolocation() {
     const unsubscribe = useAppStore.subscribe(
       (state, prevState) => {
         if (state.isNavigating !== prevState.isNavigating) {
+          if (state.isNavigating) {
+            lastAcceptedRef.current = null
+            navigator.geolocation.getCurrentPosition(success, error, {
+              enableHighAccuracy: true,
+              timeout: 5000,
+              maximumAge: 0,
+            })
+          }
           restartWatch(state.isNavigating)
         }
       },

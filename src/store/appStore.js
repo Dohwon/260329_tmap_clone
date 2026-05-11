@@ -1806,12 +1806,23 @@ const useAppStore = create((set, get) => ({
                 lastSeenAt: sampleCapturedAt,
                 dwellMinutes: 0,
               }
+      const liveUserLocation = state.isNavigating
+        ? {
+            ...effectiveLocation,
+            lat: location.lat,
+            lng: location.lng,
+            rawLat: location.lat,
+            rawLng: location.lng,
+          }
+        : {
+            ...effectiveLocation,
+            rawLat: effectiveLocation.rawLat ?? location.lat,
+            rawLng: effectiveLocation.rawLng ?? location.lng,
+          }
 
       return {
         userLocation: {
-          ...effectiveLocation,
-          rawLat: effectiveLocation.rawLat ?? location.lat,
-          rawLng: effectiveLocation.rawLng ?? location.lng,
+          ...liveUserLocation,
           capturedAt: sampleCapturedAt,
           gpsJumpFiltered: Boolean(shouldFilterRawJump),
         },
