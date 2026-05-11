@@ -403,6 +403,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
   const lastCameraRef = useRef(null)
   const smoothedHeadingRef = useRef(0)
   const lastPreviewFitRouteIdRef = useRef(null)
+  const prevNavigatingRef = useRef(false)
   const [corridorData, setCorridorData] = useState(null)
   const [cameraMode, setCameraMode] = useState('nav')
 
@@ -513,6 +514,10 @@ export default function NavigationMapLibreView({ darkMode = false }) {
   )
 
   const [mapBootstrapKey, setMapBootstrapKey] = useState(0)
+  const initialMapCenter = useMemo(() => {
+    if (isNavigating && guidanceLocation) return [guidanceLocation.lng, guidanceLocation.lat]
+    return Array.isArray(mapCenter) ? [mapCenter[1], mapCenter[0]] : [126.978, 37.5665]
+  }, [guidanceLocation, isNavigating, mapCenter])
   const routeCollection = useMemo(() => ({
     type: 'FeatureCollection',
     features: remainingRoutePath.length > 1
@@ -619,6 +624,19 @@ export default function NavigationMapLibreView({ darkMode = false }) {
   }, [isNavigating, setNavigationMapEngine, setNavigationMapReady])
 
   useEffect(() => {
+    if (prevNavigatingRef.current === isNavigating) return
+    prevNavigatingRef.current = isNavigating
+
+    if (!isNavigating) return
+
+    lastPreviewFitRouteIdRef.current = null
+    lastCameraRef.current = null
+    smoothedHeadingRef.current = resolveDriverHeading(guidanceLocation ?? userLocation, locationHistory)
+    setCameraMode('nav')
+    setMapBootstrapKey((value) => value + 1)
+  }, [guidanceLocation, isNavigating, locationHistory, userLocation])
+
+  useEffect(() => {
     if (!safeRoute?.id || !Array.isArray(safeRoute?.polyline) || safeRoute.polyline.length < 2) {
       setCorridorData(null)
       return
@@ -651,7 +669,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: NAV_VECTOR_STYLE_URL,
-      center: Array.isArray(mapCenter) ? [mapCenter[1], mapCenter[0]] : [126.978, 37.5665],
+      center: initialMapCenter,
       zoom: mapZoom,
       minZoom: MAP_VIEW_MIN_ZOOM,
       maxZoom: MAP_VIEW_MAX_ZOOM,
@@ -882,7 +900,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       map.remove()
       mapRef.current = null
     }
-  }, [mapBootstrapKey, setNavigationMapEngine, setNavigationMapReady])
+  }, [initialMapCenter, mapBootstrapKey, mapZoom, setNavigationMapEngine, setNavigationMapReady])
 
   useEffect(() => {
     if (!isNavigating) {
