@@ -338,8 +338,6 @@ function resolveDriverCameraLocation(userLocation, matchedLocation, navigationPr
   const rawLng = Number(userLocation.rawLng ?? userLocation.lng)
   const matchedLat = Number(matchedLocation.lat)
   const matchedLng = Number(matchedLocation.lng)
-  const speedKmh = Number(userLocation.speedKmh ?? matchedLocation.speedKmh ?? 0)
-  const progressKm = Number(navigationProgressKm ?? 0)
 
   if (
     !Number.isFinite(rawLat) || !Number.isFinite(rawLng) ||
@@ -348,21 +346,13 @@ function resolveDriverCameraLocation(userLocation, matchedLocation, navigationPr
     return matchedLocation
   }
 
-  const rawGapM = haversineM(rawLat, rawLng, matchedLat, matchedLng)
-  const shouldPreferRaw =
-    speedKmh <= 12 ||
-    progressKm <= 0.08 ||
-    rawGapM >= 18
-
-  if (!shouldPreferRaw) return matchedLocation
-
   return {
     ...matchedLocation,
     lat: rawLat,
     lng: rawLng,
     rawLat,
     rawLng,
-    snappedToRoute: false,
+    snappedToRoute: Number(navigationProgressKm ?? 0) > 0.08,
     cameraLocationSource: 'raw-driver',
   }
 }
@@ -702,10 +692,14 @@ export default function NavigationMapLibreView({ darkMode = false }) {
         // 내비 중 지도가 로드됐을 때 즉시 운전자 시점 적용 (GPS 유무 무관)
         const s = useAppStore.getState()
         if (s.isNavigating && s.navAutoFollow && !s.showRoutePanel) {
-          const loc = s.navigationMatchedLocation ?? s.userLocation
+          const loc = resolveDriverCameraLocation(
+            s.userLocation,
+            s.navigationMatchedLocation,
+            s.navigationProgressKm
+          )
           const routeStart = s.driveRouteSnapshot?.polyline?.[0]
           const initialBearing = resolveDriverHeading(
-            s.navigationMatchedLocation ?? s.userLocation,
+            loc ?? s.userLocation ?? s.navigationMatchedLocation,
             s.locationHistory ?? []
           )
           const center = loc
@@ -867,7 +861,11 @@ export default function NavigationMapLibreView({ darkMode = false }) {
 
     const markerEl = buildCurrentMarkerElement()
     currentMarkerRef.current = new maplibregl.Marker({ element: markerEl, anchor: 'center' })
-      .setLngLat(Array.isArray(mapCenter) ? [mapCenter[1], mapCenter[0]] : [126.978, 37.5665])
+      .setLngLat(
+        guidanceLocation
+          ? [guidanceLocation.lng, guidanceLocation.lat]
+          : (Array.isArray(mapCenter) ? [mapCenter[1], mapCenter[0]] : [126.978, 37.5665])
+      )
       .addTo(map)
 
     mapRef.current = map
