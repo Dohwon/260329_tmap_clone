@@ -2076,7 +2076,11 @@ const useAppStore = create((set, get) => ({
       clearInterval(_simIntervalId)
       _simIntervalId = null
     }
-    set({ isDriveSimulation: true, driveSimulationForcedOffRoute: null })
+    set({
+      isDriveSimulation: true,
+      driveSimulationForcedOffRoute: null,
+      navAutoFollow: true,
+    })
 
     const INTERVAL_MS = 250
     const cruiseSpeedKmh = speedKmh

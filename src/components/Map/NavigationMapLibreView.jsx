@@ -429,6 +429,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     safetyHazards,
     destination,
     routeOrigin,
+    isDriveSimulation,
   } = useAppStore()
 
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? null
@@ -997,14 +998,18 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     const map = mapRef.current
     if (!map || !loadedRef.current || !currentMarkerRef.current || !guidanceLocation) return
 
-    const nextHeading = getRouteLookAheadHeading(
-      safeRoute,
-      guidanceLocation,
-      resolveDriverHeading(userLocation, locationHistory)
-    )
+    const nextHeading = isDriveSimulation
+      ? resolveDriverHeading(userLocation, locationHistory)
+      : getRouteLookAheadHeading(
+          safeRoute,
+          guidanceLocation,
+          resolveDriverHeading(userLocation, locationHistory)
+        )
     const previousHeading = smoothedHeadingRef.current
     const headingDelta = getHeadingDelta(nextHeading, previousHeading)
-    const smoothing = Math.abs(headingDelta) >= 40 ? 0.6 : 0.3
+    const smoothing = isDriveSimulation
+      ? (Math.abs(headingDelta) >= 45 ? 0.42 : 0.24)
+      : (Math.abs(headingDelta) >= 40 ? 0.6 : 0.3)
     const smoothedHeading = previousHeading + (headingDelta * smoothing)
     smoothedHeadingRef.current = smoothedHeading
 
@@ -1024,12 +1029,12 @@ export default function NavigationMapLibreView({ darkMode = false }) {
           bearing: smoothedHeading,
           pitch: getNavPitch(cameraState.mode),
           offset: getNavOffset(cameraState),
-          duration: 520,
+          duration: isDriveSimulation ? 0 : 520,
         }
 
     const thresholdM = effectiveCameraMode === 'north-up'
       ? 14
-      : Number(cameraState.recenterThresholdM ?? 8)
+      : (isDriveSimulation ? 1.2 : Number(cameraState.recenterThresholdM ?? 8))
     if (!shouldApplyCamera(lastCameraRef.current, nextCamera, thresholdM)) return
 
     suppressInteractionRef.current = true
@@ -1039,15 +1044,24 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     }, 240)
     lastCameraRef.current = nextCamera
 
-    map.easeTo({
-      center: nextCamera.center,
-      zoom: nextCamera.zoom,
-      bearing: nextCamera.bearing,
-      pitch: nextCamera.pitch,
-      offset: nextCamera.offset,
-      duration: nextCamera.duration,
-      essential: true,
-    })
+    if (isDriveSimulation) {
+      map.jumpTo({
+        center: nextCamera.center,
+        zoom: nextCamera.zoom,
+        bearing: nextCamera.bearing,
+        pitch: nextCamera.pitch,
+      })
+    } else {
+      map.easeTo({
+        center: nextCamera.center,
+        zoom: nextCamera.zoom,
+        bearing: nextCamera.bearing,
+        pitch: nextCamera.pitch,
+        offset: nextCamera.offset,
+        duration: nextCamera.duration,
+        essential: true,
+      })
+    }
   }, [
     cameraMode,
     cameraState.mode,
@@ -1056,6 +1070,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     cameraState.zoom,
     effectiveCameraMode,
     guidanceLocation,
+    isDriveSimulation,
     locationHistory,
     mapZoom,
     navAutoFollow,
