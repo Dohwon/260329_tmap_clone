@@ -404,6 +404,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
   const smoothedHeadingRef = useRef(0)
   const lastPreviewFitRouteIdRef = useRef(null)
   const prevNavigatingRef = useRef(false)
+  const prevSimulationRef = useRef(false)
   const [corridorData, setCorridorData] = useState(null)
   const [cameraMode, setCameraMode] = useState('nav')
 
@@ -500,6 +501,18 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     currentGuidance?.remainingDistanceKm,
     currentGuidance?.turnType,
   ])
+  const activeCameraState = useMemo(() => (
+    isDriveSimulation
+      ? {
+          mode: 'simulation',
+          zoom: 17.8,
+          lookAheadOffsetY: -760,
+          recenterThresholdM: 0.8,
+          panDuration: 0,
+          viewDuration: 0,
+        }
+      : cameraState
+  ), [cameraState, isDriveSimulation])
   const effectiveCameraMode = useMemo(() => (
     resolveNavigationCameraMode({
       isNavigating,
@@ -636,6 +649,18 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     setCameraMode('nav')
     setMapBootstrapKey((value) => value + 1)
   }, [guidanceLocation, isNavigating, locationHistory, userLocation])
+
+  useEffect(() => {
+    if (prevSimulationRef.current === isDriveSimulation) return
+    prevSimulationRef.current = isDriveSimulation
+
+    lastCameraRef.current = null
+    smoothedHeadingRef.current = resolveDriverHeading(guidanceLocation ?? userLocation, locationHistory)
+    if (isDriveSimulation) {
+      setCameraMode('nav')
+      setNavAutoFollow(true)
+    }
+  }, [guidanceLocation, isDriveSimulation, locationHistory, setNavAutoFollow, userLocation])
 
   useEffect(() => {
     if (!safeRoute?.id || !Array.isArray(safeRoute?.polyline) || safeRoute.polyline.length < 2) {
@@ -1025,16 +1050,16 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       ? getNorthUpCamera(guidanceLocation, mapZoom)
       : {
           center: [guidanceLocation.lng, guidanceLocation.lat],
-          zoom: clampMapZoom(cameraState.zoom, { min: 17.6, max: 19.2 }),
+          zoom: clampMapZoom(activeCameraState.zoom, { min: 17.4, max: 19.2 }),
           bearing: smoothedHeading,
-          pitch: getNavPitch(cameraState.mode),
-          offset: getNavOffset(cameraState),
+          pitch: getNavPitch(activeCameraState.mode),
+          offset: getNavOffset(activeCameraState),
           duration: isDriveSimulation ? 0 : 520,
         }
 
     const thresholdM = effectiveCameraMode === 'north-up'
       ? 14
-      : (isDriveSimulation ? 1.2 : Number(cameraState.recenterThresholdM ?? 8))
+      : Number(activeCameraState.recenterThresholdM ?? 8)
     if (!shouldApplyCamera(lastCameraRef.current, nextCamera, thresholdM)) return
 
     suppressInteractionRef.current = true
@@ -1067,10 +1092,10 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     }
   }, [
     cameraMode,
-    cameraState.mode,
-    cameraState.recenterThresholdM,
-    cameraState.viewDuration,
-    cameraState.zoom,
+    activeCameraState.mode,
+    activeCameraState.recenterThresholdM,
+    activeCameraState.viewDuration,
+    activeCameraState.zoom,
     effectiveCameraMode,
     guidanceLocation,
     isDriveSimulation,
