@@ -329,6 +329,44 @@ function getNorthUpCamera(guidanceLocation, mapZoom = 17.4) {
   }
 }
 
+function resolveDriverCameraLocation(userLocation, matchedLocation, navigationProgressKm = 0) {
+  if (!matchedLocation && !userLocation) return null
+  if (!matchedLocation) return userLocation
+  if (!userLocation) return matchedLocation
+
+  const rawLat = Number(userLocation.rawLat ?? userLocation.lat)
+  const rawLng = Number(userLocation.rawLng ?? userLocation.lng)
+  const matchedLat = Number(matchedLocation.lat)
+  const matchedLng = Number(matchedLocation.lng)
+  const speedKmh = Number(userLocation.speedKmh ?? matchedLocation.speedKmh ?? 0)
+  const progressKm = Number(navigationProgressKm ?? 0)
+
+  if (
+    !Number.isFinite(rawLat) || !Number.isFinite(rawLng) ||
+    !Number.isFinite(matchedLat) || !Number.isFinite(matchedLng)
+  ) {
+    return matchedLocation
+  }
+
+  const rawGapM = haversineM(rawLat, rawLng, matchedLat, matchedLng)
+  const shouldPreferRaw =
+    speedKmh <= 12 ||
+    progressKm <= 0.08 ||
+    rawGapM >= 18
+
+  if (!shouldPreferRaw) return matchedLocation
+
+  return {
+    ...matchedLocation,
+    lat: rawLat,
+    lng: rawLng,
+    rawLat,
+    rawLng,
+    snappedToRoute: false,
+    cameraLocationSource: 'raw-driver',
+  }
+}
+
 function normalizeBearingDeg(value = 0) {
   return ((Number(value) % 360) + 360) % 360
 }
@@ -411,7 +449,10 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     () => routes.filter((route) => route.id !== selectedRouteId),
     [routes, selectedRouteId]
   )
-  const guidanceLocation = navigationMatchedLocation ?? userLocation
+  const guidanceLocation = useMemo(
+    () => resolveDriverCameraLocation(userLocation, navigationMatchedLocation, navigationProgressKm),
+    [navigationMatchedLocation, navigationProgressKm, userLocation]
+  )
   const currentRouteSegment = useMemo(
     () => getCurrentRouteSegment(safeRoute, guidanceLocation),
     [guidanceLocation, safeRoute]
