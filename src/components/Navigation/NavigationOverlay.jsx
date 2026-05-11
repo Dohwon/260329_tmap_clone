@@ -768,12 +768,13 @@ export default function NavigationOverlay() {
       .filter((segment) => Array.isArray(segment?.positions) && segment.positions.length > 1)
   ), [currentSegmentIndex, route?.segmentStats])
   const nextCameraInfo = useMemo(() => {
-    if (!userLocation) return null
+    const probe = guidanceLocation ?? userLocation
+    if (!probe) return null
     const nearest = (route?.cameras ?? [])
       .filter((camera) => hasValidCoordPair(camera?.coord))
       .map((camera) => ({
         ...camera,
-        distanceM: haversineM(userLocation.lat, userLocation.lng, camera.coord[0], camera.coord[1]),
+        distanceM: haversineM(probe.lat, probe.lng, camera.coord[0], camera.coord[1]),
       }))
       .filter((camera) => camera.distanceM >= 0 && camera.distanceM <= 8000)
       .sort((a, b) => a.distanceM - b.distanceM)[0]
@@ -784,7 +785,7 @@ export default function NavigationOverlay() {
         ? `${Math.max(50, Math.round(nearest.distanceM / 10) * 10)}m`
         : `${Number((nearest.distanceM / 1000).toFixed(1))}km`,
     }
-  }, [route?.cameras, userLocation])
+  }, [guidanceLocation, route?.cameras, userLocation])
   const nextSectionInfo = useMemo(
     () => (nextCameraInfo?.type === 'section_start' ? nextCameraInfo : null),
     [nextCameraInfo]
@@ -922,6 +923,7 @@ export default function NavigationOverlay() {
     startedVoiceRef.current = false
     spokenGuidanceRef.current.clear()
     spokenSafetyRef.current.clear()
+    nearCameraNotifiedRef.current.clear()
     if (flashTimerRef.current) window.clearTimeout(flashTimerRef.current)
     setAlertFlash(null)
     speechQueueRef.current = []
@@ -930,6 +932,11 @@ export default function NavigationOverlay() {
     stopActiveAudio()
     if (window.speechSynthesis) window.speechSynthesis.cancel()
   }, [isNavigating])
+
+  useEffect(() => {
+    spokenSafetyRef.current.clear()
+    nearCameraNotifiedRef.current.clear()
+  }, [isDriveSimulation, selectedRouteId])
 
   useEffect(() => {
     if (!isNavigating || showRoutePanel || hasActiveRoute) return
@@ -1292,13 +1299,14 @@ export default function NavigationOverlay() {
   }, [isNavigating, nextGuidance, settings.voiceGuidance])
 
   useEffect(() => {
-    if (!isNavigating || !userLocation) return
+    const probe = guidanceLocation ?? userLocation
+    if (!isNavigating || !probe) return
     const cameras = route?.cameras ?? []
     const isHighwaySegment = currentRouteSegment?.roadType === 'highway' || currentRouteSegment?.roadType === 'junction'
 
     for (const camera of cameras) {
       if (!hasValidCoordPair(camera?.coord)) continue
-      const distanceM = haversineM(userLocation.lat, userLocation.lng, camera.coord[0], camera.coord[1])
+      const distanceM = haversineM(probe.lat, probe.lng, camera.coord[0], camera.coord[1])
       const threshold = getCameraAlertThreshold(distanceM, camera?.speedLimit, isHighwaySegment)
       if (!threshold) continue
 
@@ -1312,7 +1320,7 @@ export default function NavigationOverlay() {
       })
       break
     }
-  }, [currentRouteSegment?.roadType, isNavigating, route?.cameras, settings.voiceGuidance, userLocation])
+  }, [currentRouteSegment?.roadType, guidanceLocation, isNavigating, route?.cameras, settings.voiceGuidance, userLocation])
 
   useEffect(() => {
     if (!isNavigating || !userLocation) return

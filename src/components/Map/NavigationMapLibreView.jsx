@@ -299,11 +299,11 @@ function buildCurrentMarkerElement() {
 }
 
 function getNavPitch(mode = 'cruise') {
-  if (mode === 'confirm') return 68
-  if (mode === 'decision') return 65
-  if (mode === 'approach') return 62
-  if (mode === 'prepare') return 58
-  return 54
+  if (mode === 'confirm') return 66
+  if (mode === 'decision') return 63
+  if (mode === 'approach') return 60
+  if (mode === 'prepare') return 56
+  return 52
 }
 
 function getNavOffset(cameraState = {}) {
@@ -725,7 +725,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
             ? [loc.lng, loc.lat]
             : (routeStart ? [routeStart[1], routeStart[0]] : null)
           if (center) {
-            map.jumpTo({ center, zoom: 18.6, pitch: 64, bearing: initialBearing })
+            map.jumpTo({ center, zoom: 17.9, pitch: 62, bearing: initialBearing })
           }
         }
       })
@@ -1025,7 +1025,7 @@ export default function NavigationMapLibreView({ darkMode = false }) {
       ? getNorthUpCamera(guidanceLocation, mapZoom)
       : {
           center: [guidanceLocation.lng, guidanceLocation.lat],
-          zoom: clampMapZoom(cameraState.zoom, { min: 18.1, max: 19.6 }),
+          zoom: clampMapZoom(cameraState.zoom, { min: 17.6, max: 19.2 }),
           bearing: smoothedHeading,
           pitch: getNavPitch(cameraState.mode),
           offset: getNavOffset(cameraState),
@@ -1045,11 +1045,14 @@ export default function NavigationMapLibreView({ darkMode = false }) {
     lastCameraRef.current = nextCamera
 
     if (isDriveSimulation) {
-      map.jumpTo({
+      map.easeTo({
         center: nextCamera.center,
         zoom: nextCamera.zoom,
         bearing: nextCamera.bearing,
         pitch: nextCamera.pitch,
+        offset: nextCamera.offset,
+        duration: 0,
+        essential: true,
       })
     } else {
       map.easeTo({
