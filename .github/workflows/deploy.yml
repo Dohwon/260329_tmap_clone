@@ -1,11 +1,20 @@
 name: Dev → Prod 배포 파이프라인
 
-# development 브랜치 푸시 시 실행
-# development → (헬스체크) → (수동 승인) → main 머지 → Railway prod 자동 배포
+# development 브랜치 푸시 시 dev 헬스체크만 수행
+# 필요할 때만 Actions 탭에서 수동 실행해 production 승격 진행
 on:
   push:
     branches:
       - development
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: "prod로 승격할 소스 브랜치"
+        required: true
+        default: development
+
+permissions:
+  contents: write
 
 jobs:
   # ── 1단계: dev Railway 배포 확인 ───────────────────
@@ -24,19 +33,21 @@ jobs:
             echo "헬스체크 실패 (HTTP $STATUS)" && exit 1
           fi
 
-  # ── 2단계: 수동 승인 대기 ───────────────────────────
+  # ── 2단계: 수동 실행일 때만 운영 승인 대기 ─────────────────
   await-approval:
     name: 운영 배포 승인 대기
     needs: health-check-dev
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: production   # GitHub Environment 보호 규칙 — 수동 승인 필요
     steps:
       - run: echo "승인 완료 — main 머지 진행"
 
-  # ── 3단계: development → main 머지 ──────────────────
+  # ── 3단계: 수동 실행일 때만 source branch → main 머지 ───────
   merge-to-main:
-    name: development → main 머지
+    name: source branch → main 머지
     needs: await-approval
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,11 +55,12 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: development를 main에 fast-forward 머지
+      - name: source branch를 main에 fast-forward 머지
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin "${{ inputs.source_branch }}" main
           git checkout main
-          git merge --ff-only origin/development
+          git merge --ff-only "origin/${{ inputs.source_branch }}"
           git push origin main
-          echo "main이 development로 업데이트됨 → Railway prod 자동 배포 시작"
+          echo "main이 ${{ inputs.source_branch }}로 업데이트됨 → Railway prod 자동 배포 시작"
